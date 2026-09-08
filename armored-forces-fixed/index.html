@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<!-- 合并版 2026-09-04:基线=UI重构.html;回补V2桌面版对局内渲染(biome地面/天候/残骸烟/焦土槽位与重锚/木纹/阴影dirty/vH-aRock管线/军漫贴图美术/A2定标);雾战玩法未回补;贴图美术取V2军漫版;地形镜像/INNER/定标外其余数值为U侧 ;2026-09-06:并入物理版定长履带包络求解器/悬挂fdir/动态路径纹理/贴地高度(base其余特性原样保留) ;2026-09-06 P0:对局描边改深度剪影(VEH_INK_MODE=1,?ink=0回滚)+迷彩深色上提 ;2026-09-06 P1:对局几何折边墨线(EdgesGeometry 22°,玩家常挂/AI 80m×16 LOD) ;2026-09-06 P1fix:墨线脱离INST_TPL/hull只抽静止装甲/depthWrite关 ;P1fix2:AI hull去掉aTrkSlot(16槽)车体恢复 ;2026-09-06 P2:近景减弱分档+关排线(bMix×0.4 / hatchW*(1-nearK)) ;2026-09-06 视觉重构:车库滤镜豁免+FXAA+补光+±45阴影+玩家自投影;折边沿用P1fix装甲静止件;烟雾下亮度描边仍关 -->
+
+<html lang="zh-CN">
+<head>
+
+<link id="mm-skin-css" rel="stylesheet" href="css/mm-skin.css">
+
+
+<meta charset="UTF-8">
+<!-- 装甲部队 · 桌面版(单文件发行)WZ10-tail-insignia-detail-fix-20260826 -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>装甲部队</title>
+<link rel="stylesheet" href="css/main.css">
+
+<link id="game-boot-loader-css" rel="stylesheet" href="css/boot-loader.css">
+
+</head>
+<body>
+
+<!-- 游戏启动加载画面 (Game Boot Loading Screen: 纯黑屏 + 战术BIOS同款加载进度条) -->
+<div id="game-boot-loader">
+  <div class="loader-container">
+    <div class="loader-header">
+      <span class="loader-title">TACTICAL SYSTEM // INITIALIZING</span>
+      <span id="loader-pct" class="loader-pct">0%</span>
+    </div>
+    <div class="loader-track">
+      <div id="loader-fill" class="loader-fill"></div>
+      <div class="loader-grid-overlay"></div>
+    </div>
+    <div class="loader-footer">
+      <span id="loader-status" class="loader-status">LOADING ASSETS &amp; COMPILED SHADERS...</span>
+      <span class="loader-cursor blink">_</span>
+    </div>
+  </div>
+  <!-- 加载完成提示层: 等待真实用户按键/点击后再进入主菜单(兼作浏览器 Autoplay 手势解锁) -->
+  <div id="boot-pak">
+    <div class="pak-title">按任意键开始游戏</div>
+    <div class="pak-sub">PRESS ANY KEY / CLICK TO START</div>
+  </div>
+</div>
+<script src="js/boot-loader.js"></script>
+
+
+
+
+<!-- ==================== HUD ==================== -->
+<div id="hud" class="hidden">
+  <div class="hud-corners" aria-hidden="true"><span class="tl"></span><span class="tr"></span><span class="bl"></span><span class="br"></span></div>
+  <div id="fps">-- fps</div>
+  <div id="topbar">
+    <div id="winfo">兵力 <span id="poola" style="color:#d43a25">200</span> : <span id="poole" style="color:#1f5fd6">200</span> · 存活 <span id="allies" style="color:#d43a25">88</span> : <span id="enemies" style="color:#1f5fd6">88</span> · 个人击毁 <span id="kills">0</span> · 重新部署 <span id="respawns">0</span></div>
+  </div>
+
+  <div id="aimdot" title="鼠标光标"></div>
+  <div id="helipitchinfo"></div>
+  <div id="helimissileinfol"></div>
+  <div id="helimissileinfor"></div>
+  <div id="aimhint"></div>
+  <!-- 雷达预警与导弹告警系统 (RWR & MAWS) -->
+  <div id="rwr-warning" class="hidden"><div id="rwr-tag">敌导弹</div></div>
+  <div id="maws-edge-flash" class="hidden"></div>
+  <div id="maws-hud-layer"></div>
+  <div id="lwr-hud-layer"></div>
+  <div id="boundwarn" class="hidden">
+    <div class="bound-stripe"></div>
+    <div class="bound-content">
+      <div class="bound-text">你正在离开作战区域，立刻返回战场！</div>
+    </div>
+    <div class="bound-stripe"></div>
+  </div>
+  <div id="abandonring"></div><div id="abandontxt"></div>
+  <div id="sqarrows"></div>
+  <div id="ch">
+    <div id="ringbk"></div>
+    <div id="ring"></div>
+    <div id="lwsring" class="hidden"></div>
+    <div class="dot"></div>
+    <div class="tick t1"></div><div class="tick t2"></div>
+    <div class="tick t3"></div><div class="tick t4"></div>
+  </div>
+  <div id="chRkL" class="ch-rocket"><div class="ch-rk-dot"></div></div>
+  <div id="chRkR" class="ch-rocket"><div class="ch-rk-dot"></div></div>
+  <div id="hitm"></div>
+
+  <div id="flash"></div>
+  <div id="log"></div>
+  <div id="lockhint" class="hidden"></div>
+
+  <!-- 直升机武器切换栏 (1:导弹, 2:火箭弹, 3:机炮) -->
+  <div id="heliweaponbar" class="hidden">
+    <div class="hwp-item active" id="hwp-1">
+      <span class="hwp-key">1</span>
+      <span class="hwp-name">导弹</span>
+      <span class="hwp-ammo" id="hwp-ammo-1">∞</span>
+    </div>
+    <div class="hwp-item" id="hwp-2">
+      <span class="hwp-key">2</span>
+      <span class="hwp-name">火箭弹</span>
+      <span class="hwp-ammo" id="hwp-ammo-2">14/14</span>
+    </div>
+    <div class="hwp-item" id="hwp-3">
+      <span class="hwp-key">3</span>
+      <span class="hwp-name">机炮</span>
+      <span class="hwp-ammo" id="hwp-ammo-3">2/2</span>
+    </div>
+  </div>
+
+  <!-- 直升机导弹雷达扫描视场与锁定指示器 -->
+  <div id="heliradarlock" class="hidden">
+    <div id="heliradarboxes"></div>
+  </div>
+
+  <!-- 直升机右侧方形战术火控雷达 MFD (FCR 态势显示器) -->
+  <div id="heliradarmfd" class="hidden">
+    <div class="mfd-bezel">
+      <div class="mfd-topbar">
+        <span class="mfd-status" id="mfd-status-lbl">FCR: STANDBY</span>
+        <span class="mfd-rng" id="mfd-rng-lbl">30km</span>
+      </div>
+      <div class="mfd-display-area">
+        <canvas id="mfd-radar-cvs" width="180" height="180"></canvas>
+      </div>
+      <div class="mfd-botbar">
+        <div id="mfd-tgt-text">TGT: NONE</div>
+        <div id="mfd-tele-text">AZ: 00°  EL: 00°</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 夜视仪罩层(绿洗+噪点):#hud 直属=第三人称与炮镜同显(炮镜暗角在 #scope 内其上层压住) -->
+  <div id="nvd" class="hidden"><div class="nvd-wash"></div><canvas id="nvn" width="192" height="108"></canvas></div>
+  <div id="scope" class="hidden">
+    <div class="scope-vig"></div>
+    <div class="scope-ring"></div>
+    <div id="zoomedge">x1.0</div>
+    <div id="scoperet">
+      <div class="sl s-b"></div>
+      <div class="sl s-l"></div>
+      <div class="sl s-r"></div>
+    </div>
+    <div id="rangeinfo">测距 --- m</div>
+    <div id="artyring" class="hidden"></div>
+    <div id="artyringbk"></div>
+    <div id="impact"></div>
+    <div id="impactRkL" class="impact-rocket"></div>
+    <div id="impactRkR" class="impact-rocket"></div>
+  </div>
+
+  <div id="mods">
+    <div id="phud3d">
+      <canvas id="phudcv"></canvas>
+      <span class="phlab" id="ph-gun">炮管</span><span class="phlab" id="ph-turret">炮塔</span>
+      <span class="phlab" id="ph-trackL">履带</span><span class="phlab" id="ph-trackR">履带</span>
+      <span class="phlab" id="ph-engine">发动机</span><span class="phlab" id="ph-fuel">油箱</span><span class="phlab" id="ph-ammo">弹药架</span>
+    </div>
+  </div>
+</div>
+<!-- CRT 全屏叠加层:压在 HUD 与菜单之上(z-index 200),comic.js 滑块驱动强度 -->
+<div id="crtfx"></div>
+<!-- 触屏操控层:返回菜单(左上)+摇杆/感应圈(左)+炮镜/夜视/开火键(右下)+小队标识(右中)+弃车键(右上);flow.js 触控区段驱动,桌面恒 hidden -->
+<div id="btnfx"><i class="f0"></i><i class="f1"></i><i class="f2"></i><span id="btnfxlab"></span></div>
+<div id="tsense" class="hidden"></div>
+<div id="tjoy" class="hidden"><div id="tjoyknob"></div></div>
+<button id="tth" class="tbtn hidden" aria-label="热成像">
+  <svg width="38" height="38" viewBox="0 0 40 40">
+    <circle cx="20" cy="20" r="15.5" fill="#9aa0a6" stroke="#141414" stroke-width="3"/>
+    <path d="M20 6.5 V15 M20 25 V33.5 M6.5 20 H15 M25 20 H33.5" stroke="#141414" stroke-width="2.6" stroke-linecap="round"/>
+    <circle cx="20" cy="20" r="2" fill="#141414"/>
+  </svg>
+</button>
+<button id="tnv" class="tbtn hidden" aria-label="夜视仪">
+  <svg width="38" height="38" viewBox="0 0 40 40">
+    <circle cx="20" cy="20" r="15.5" fill="#2f9e44" stroke="#141414" stroke-width="3"/>
+    <path d="M20 6.5 V15 M20 25 V33.5 M6.5 20 H15 M25 20 H33.5" stroke="#141414" stroke-width="2.6" stroke-linecap="round"/>
+    <circle cx="20" cy="20" r="2" fill="#141414"/>
+  </svg>
+</button>
+<button id="tmenu" class="tbtn hidden" aria-label="返回菜单">
+  <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#141414" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 20 V10 a6 6 0 0 1 12 0 v3"/>
+    <path d="M3.5 15.5 L7 20 L10.5 15.5"/>
+  </svg>
+</button>
+<button id="tsqb" class="tbtn hidden" aria-label="指挥模式">
+  <svg width="38" height="38" viewBox="0 0 40 40">
+    <path d="M20 3 L34 8.5 V20 C34 29.5 27.5 35.5 20 38.5 C12.5 35.5 6 29.5 6 20 V8.5 Z"
+          fill="none" stroke="#141414" stroke-width="5" stroke-linejoin="round"/>
+    <path id="tsqbfill" d="M20 3 L34 8.5 V20 C34 29.5 27.5 35.5 20 38.5 C12.5 35.5 6 29.5 6 20 V8.5 Z"
+          fill="#c81e12" stroke="#ffffff" stroke-width="2.4" stroke-linejoin="round"/>
+    <text x="20" y="26" text-anchor="middle" font-family="system-ui,sans-serif" font-size="16" font-weight="900" fill="#ffffff">1</text>
+  </svg>
+</button>
+<button id="tcap" class="tbtn hidden" aria-label="占领">
+  <svg width="38" height="38" viewBox="0 0 40 40">
+    <circle cx="20" cy="20" r="15.5" fill="rgba(252,249,240,.35)" stroke="#c81e12" stroke-width="4"/>
+    <path d="M13.5 13.5 L26.5 26.5 M26.5 13.5 L13.5 26.5" stroke="#c81e12" stroke-width="4.6" stroke-linecap="round"/>
+  </svg>
+</button>
+<button id="tfol" class="tbtn hidden" aria-label="跟随">
+  <svg width="38" height="38" viewBox="0 0 40 40" fill="none" stroke="#141414" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="13" cy="9.5" r="3.2" fill="#141414" stroke="none"/>
+    <path d="M13 13.5 V23 M13 16.5 L8.5 20.5 M13 16.5 L17.5 20.5 M13 23 L9.5 30.5 M13 23 L16.5 30.5"/>
+    <circle cx="27" cy="9.5" r="3.2" fill="#141414" stroke="none"/>
+    <path d="M27 13.5 V23 M27 16.5 L22.5 20.5 M27 16.5 L31.5 20.5 M27 23 L23.5 30.5 M27 23 L30.5 30.5"/>
+  </svg>
+</button>
+<button id="tfire" class="tbtn hidden" aria-label="开火">
+  <svg width="34" height="52" viewBox="0 0 24 40" style="transform:rotate(18deg)">
+    <path d="M12 2 C15.5 8 17 12 17 18 L17 31 L7 31 L7 18 C7 12 8.5 8 12 2 Z"
+          fill="#c81e12" stroke="#141414" stroke-width="2"/>
+    <rect x="5.6" y="31" width="12.8" height="6" fill="#b58a3a" stroke="#141414" stroke-width="2"/>
+  </svg>
+</button>
+<button id="tscope" class="tbtn hidden" aria-label="炮镜">
+  <svg width="38" height="38" viewBox="0 0 40 40">
+    <circle cx="20" cy="20" r="15.5" fill="#ffffff" stroke="#141414" stroke-width="3"/>
+    <path d="M20 6.5 V15 M20 25 V33.5 M6.5 20 H15 M25 20 H33.5" stroke="#141414" stroke-width="2.6" stroke-linecap="round"/>
+    <circle cx="20" cy="20" r="2" fill="#141414"/>
+  </svg>
+</button>
+<button id="tquit" class="tbtn hidden" aria-label="弃车">
+  <svg width="36" height="36" viewBox="0 0 40 40" fill="none" stroke="#141414" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="25" y="4" width="11" height="32" rx="1.5" fill="#2e8b3c"/>
+    <circle cx="12" cy="8.5" r="3.2" fill="#141414" stroke="none"/>
+    <path d="M6 19 L11 13.5 L16 16 L20 21 M11 13.5 L10.5 21 L15 26 L12.5 34 M10.5 21 L5.5 27"/>
+    <path d="M18 8 L27 8 M24 5 L27 8 L24 11" stroke="#c81e12"/>
+  </svg>
+</button>
+<!-- 自定义按钮布局界面:拖动移动/按住+双指缩放;flow.js 触控区段驱动 -->
+<div id="tcustomov" class="hidden">
+  <div id="tchint">拖动按钮移动位置 · 按住按钮后双指开合调整大小</div>
+  <div id="tcrow">
+    <button id="tcreset" class="optbtn">重置</button>
+    <button id="tcsave" class="optbtn">保存并退出</button>
+  </div>
+</div>
+
+<!-- ==================== 主菜单(主/遭遇战参数/操作手册/游戏设置 四视图) ==================== -->
+<div id="startov" class="overlay mm-skin mm-on-main">
+  <div class="mm-grid"></div>
+  <div class="mm-halftone"></div>
+  <div class="mm-vignette"></div>
+  <div class="mm-page-frame"></div>
+  <div class="mm-corner mm-c-tl"></div>
+  <div class="mm-corner mm-c-tr"></div>
+  <div class="mm-corner mm-c-bl"></div>
+  <div class="mm-corner mm-c-br"></div>
+  <div class="mm-app mm-fullscreen-hangar">
+    <!-- 3D 核心整备机库展示场景 (主体全屏) -->
+    <section id="mm-cover" class="mm-hangar-box theme-cartoon">
+      <!-- 3D WebGL 车库画布 -->
+      <canvas id="hangar-canvas"></canvas>
+      
+      <!-- 战术半色调/网格与四角军规标 -->
+      <div class="mm-hangar-grid-overlay"></div>
+      <div class="mm-hangar-corner mm-hangar-c-tl"></div>
+      <div class="mm-hangar-corner mm-hangar-c-tr"></div>
+      <div class="mm-hangar-corner mm-hangar-c-bl"></div>
+      <div class="mm-hangar-corner mm-hangar-c-br"></div>
+
+      <!-- ① 顶部左侧战术卡头 (悬浮) -->
+      <div class="mm-hangar-head">
+        <div class="mm-hangar-head-l">
+          <div class="mm-hangar-tag"><span class="mm-dot"></span> SECTOR 07 · 战术整备机库</div>
+          <div class="mm-hangar-title-wrap">
+            <h2 id="hangar-veh-name" class="mm-hangar-title">59式 中型坦克</h2>
+            <span id="hangar-veh-sub" class="mm-hangar-sub">TYPE 59 MBT</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ② 顶部中央主战术按键: 开始战斗 (Top Center "TO BATTLE" Button) -->
+      <div class="mm-top-center-action">
+        <button id="menubtn-battle" class="mm-battle-btn" type="button" title="战术面板">
+          <span class="mm-bbtn-radar" aria-hidden="true"></span>
+          <span class="mm-bbtn-title">开始战斗</span>
+        </button>
+      </div>
+
+      <!-- ③ 顶部右侧交互工具条与战备检视印章 -->
+      <div class="mm-hangar-tools-wrap">
+        <div class="mm-hangar-tools">
+          <button id="hangar-btn-rotate" class="mm-tool-btn active" type="button" title="自动旋转">⟳ 自转</button>
+          <button id="hangar-btn-reset" class="mm-tool-btn" type="button" title="重置视角">⊙ 视角</button>
+          <button id="hangar-btn-inspect" class="mm-tool-btn" type="button" title="内部模块检视 (X-Ray)">◫ 检视</button>
+          <button id="hangar-btn-theme" class="mm-tool-btn" type="button" title="切换线稿/实色底色">◐ 实色</button>
+        </div>
+        <div class="mm-hangar-stamp-wrap">
+          <span id="hangar-stamp-badge" class="mm-stamp mm-hangar-stamp">战备检视</span>
+        </div>
+      </div>
+
+      <!-- ④ 左侧可收放载具切换抽屉 (Collapsible Vehicle Drawer) -->
+      <div id="hangar-drawer" class="mm-hangar-drawer collapsed">
+        <button id="hangar-drawer-toggle" class="mm-drawer-btn" type="button" title="展开/收起载具库">
+          <span class="mm-drawer-btn-icon">☰</span>
+          <span class="mm-drawer-btn-txt">载具整备库</span>
+          <span class="mm-drawer-btn-arrow">▶</span>
+        </button>
+        
+        <div class="mm-drawer-content">
+          <div class="mm-drawer-head">
+            <span class="mm-drawer-t">载具整备目录</span>
+            <span class="mm-drawer-close" id="hangar-drawer-close" title="收起">✕</span>
+          </div>
+          <div class="mm-drawer-list-wrap">
+            <div class="mm-drawer-list" id="hangar-veh-list">
+              <div class="mm-drawer-item active" data-team="ally" data-kind="tank">
+                <span class="mm-drawer-item-name">59式 中型坦克</span>
+                <span class="mm-drawer-item-en">TYPE 59 MBT</span>
+              </div>
+              <div class="mm-drawer-item" data-team="ally" data-kind="99">
+                <span class="mm-drawer-item-name">99式 主战坦克</span>
+                <span class="mm-drawer-item-en">ZTZ-99A MBT</span>
+              </div>
+              <div class="mm-drawer-item" data-team="ally" data-kind="td">
+                <span class="mm-drawer-item-name">PTZ-89 89式自行炮</span>
+                <span class="mm-drawer-item-en">PTZ-89 TD</span>
+              </div>
+              <div class="mm-drawer-item" data-team="ally" data-kind="wz10">
+                <span class="mm-drawer-item-name">直-10 武装直升机</span>
+                <span class="mm-drawer-item-en">WZ-10 HELI</span>
+              </div>
+              <div class="mm-drawer-item" data-team="ally" data-kind="arty">
+                <span class="mm-drawer-item-name">火箭炮</span>
+                <span class="mm-drawer-item-en">122mm MLRS</span>
+              </div>
+              <div class="mm-drawer-item" data-team="enemy" data-kind="tank">
+                <span class="mm-drawer-item-name">M60A1 巴顿坦克</span>
+                <span class="mm-drawer-item-en">M60A1 PATTON</span>
+              </div>
+              <div class="mm-drawer-item" data-team="enemy" data-kind="td">
+                <span class="mm-drawer-item-name">M1A1 艾布拉姆斯</span>
+                <span class="mm-drawer-item-en">M1A1 ABRAMS</span>
+              </div>
+              <div class="mm-drawer-item" data-team="enemy" data-kind="ah64">
+                <span class="mm-drawer-item-name">AH-64d 阿帕奇</span>
+                <span class="mm-drawer-item-en">AH-64D APACHE</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ⑤ 底部载具规格 HUD 浮层 (Bottom Vehicle Specs Overlay) -->
+      <div class="mm-hangar-specs">
+        <div class="mm-spec-card">
+          <span class="mm-spec-lbl">火炮 FIREPOWER</span>
+          <span id="hangar-stat-fire" class="mm-spec-val">100mm 线膛炮</span>
+          <span id="hangar-stat-fire-sub" class="mm-spec-sub">穿深 220mm · 初速 1480m/s</span>
+        </div>
+        <div class="mm-spec-card">
+          <span class="mm-spec-lbl">防护 PROTECTION</span>
+          <span id="hangar-stat-armor" class="mm-spec-val">首上 100mm / 炮塔 200mm</span>
+          <span id="hangar-stat-armor-sub" class="mm-spec-sub">RHA 均质钢</span>
+        </div>
+        <div class="mm-spec-card">
+          <span class="mm-spec-lbl">机动 MOBILITY</span>
+          <span id="hangar-stat-speed" class="mm-spec-val">50 km/h</span>
+          <span id="hangar-stat-speed-sub" class="mm-spec-sub">520 HP · 柴油机</span>
+        </div>
+        <div class="mm-spec-card">
+          <span class="mm-spec-lbl">火控 OPTICS & FCS</span>
+          <span id="hangar-stat-optics" class="mm-spec-val">微光夜视 NV</span>
+          <span id="hangar-stat-optics-sub" class="mm-spec-sub">双向稳定</span>
+        </div>
+      </div>
+
+      <!-- ⑥ 右下角游戏设置圆角正方形按键与反馈栏 (Bottom-Right Settings & Feedback Dock) -->
+      <div class="mm-bottom-right-dock">
+        <div class="mm-bug-tag">BUG反馈：bilibili 宋3TC种田大王</div>
+        <button id="menubtn-settings" class="mm-sq-btn" type="button" title="游戏设置与操作说明">
+          <svg class="mm-sq-icon" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- ⑦ 点击部件弹出的战术装甲测定面板 (Armor Intel Tip) -->
+      <div id="hangar-armor-tip" class="mm-armor-tip hidden">
+        <div class="mm-atip-head">
+          <div class="mm-atip-head-l">
+            <span class="mm-atip-badge">● 装甲测定</span>
+            <span class="mm-atip-part" id="atip-part-name">炮塔 · 正面</span>
+          </div>
+          <button class="mm-atip-close" id="hangar-atip-close" type="button" title="关闭">✕</button>
+        </div>
+        <div class="mm-atip-body">
+          <div class="mm-atip-grid">
+            <div class="mm-atip-item">
+              <span class="mm-atip-lbl">物理厚度</span>
+              <div class="mm-atip-val"><strong id="atip-phys-val">200</strong><span class="mm-atip-unit">mm</span></div>
+            </div>
+            <div class="mm-atip-item">
+              <span class="mm-atip-lbl">法线倾角</span>
+              <div class="mm-atip-val"><strong id="atip-angle-val">24.5</strong><span class="mm-atip-unit">°</span></div>
+            </div>
+            <div class="mm-atip-item highlight">
+              <span class="mm-atip-lbl">LOS 等效</span>
+              <div class="mm-atip-val"><strong id="atip-los-val">220</strong><span class="mm-atip-unit">mm</span></div>
+            </div>
+            <div class="mm-atip-item">
+              <span class="mm-atip-lbl">装甲材质</span>
+              <div class="mm-atip-val small" id="atip-mat-val">RHA 均质钢</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 弹窗① 遭遇战: 军绿 BIOS 部署页 -->
+    <div id="startsub" class="menuview mm-modal-dialog bios-term hidden">
+      <div class="bios-scan"></div>
+      <div class="bios-corners"><span class="tl"></span><span class="tr"></span><span class="bl"></span><span class="br"></span></div>
+      <div class="bios-haz"></div>
+      <div class="mm-modal-head bios-head">
+        <div class="bios-title">战术面板</div>
+        <div class="bios-hud">
+          <div class="bios-batt"><span>PWR</span><div class="bios-batt-track"><i class="bios-batt-fill"></i></div><b class="bios-batt-pct">78%</b></div>
+          <div class="bios-sig"><span>LINK</span><div class="bios-siggrid"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="bios-sig-db">-12dB</span></div>
+          <div class="bios-clock">00:00:00</div>
+        </div>
+
+      </div>
+      <div class="mm-modal-body bios-body">
+        <div class="bios-grid">
+          <div class="bios-row"><div class="bios-key">阵营</div><div class="rrow" id="siderow"></div></div>
+          <div class="bios-row"><div class="bios-key">载具</div><div class="rrow" id="skrow"></div></div>
+          <div class="bios-row"><div class="bios-key">对局时间</div><div class="rrow"><input id="hourinput" class="mapinp bios-num" type="range" min="0" max="24" step="0.5" value="8"><span id="hourval" class="bios-unit">08:00 (白昼)</span></div></div>
+          <div class="bios-row"><div class="bios-key">战场尺寸</div><div class="rrow bios-camp"><span class="bios-mini">长</span><input id="leninput" class="mapinp bios-num" type="number" step="100" value="6000"><span class="bios-mini">宽</span><input id="widinput" class="mapinp bios-num" type="number" step="100" value="6000"><span class="bios-unit">米</span></div></div>
+          <div class="bios-row"><div class="bios-key">出击营地</div><div class="rrow bios-camp"><span class="bios-mini">战车</span><input id="bdinput_tank" class="mapinp bios-num" type="number" step="100" value="1000"><span class="bios-mini">火炮</span><input id="bdinput_arty" class="mapinp bios-num" type="number" step="100" value="3000"><span class="bios-mini">直升机</span><input id="bdinput_heli" class="mapinp bios-num" type="number" step="100" value="6000"><span class="bios-unit">米</span></div></div>
+          <div class="bios-row"><div class="bios-key">崎岖度</div><div class="rrow"><input id="roughinput" class="mapinp bios-num" type="range" min="-100" max="100" step="1" value="0"><span id="roughval" class="bios-unit">0</span></div></div>
+        </div>
+        <div id="setuproot"></div>
+      </div>
+      <div class="mm-modal-foot bios-foot">
+        <div id="startbtnrow" style="display:inline-block"></div>
+        <button class="bigbtn alt mm-modal-back-btn" type="button" onclick="showMenuView('mainmenu')">返回车库</button>
+      </div>
+        <div class="bios-status"><span>CH-04 <b class="ok">SYNC</b></span><span>RADAR <b class="ok">LIVE</b></span><span>NOISE <b class="warn">12%</b></span></div>
+      <div class="bios-haz"></div>
+    </div>
+
+    <!-- 弹窗② 游戏设置与操作说明模态框 (Settings & Manual Modal) -->
+    <div id="settingssub" class="menuview mm-modal-dialog bios-term hidden">
+      <div class="bios-scan"></div>
+      <div class="bios-corners"><span class="tl"></span><span class="tr"></span><span class="bl"></span><span class="br"></span></div>
+      <div class="bios-haz"></div>
+      <div class="mm-modal-head bios-head">
+        <div class="bios-title">游戏设置</div>
+        <div class="bios-hud">
+          <div class="bios-batt"><span>PWR</span><div class="bios-batt-track"><i class="bios-batt-fill"></i></div><b class="bios-batt-pct">78%</b></div>
+          <div class="bios-sig"><span>LINK</span><div class="bios-siggrid"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="bios-sig-db">-12dB</span></div>
+          <div class="bios-clock">00:00:00</div>
+        </div>
+
+      </div>
+      <div class="mm-modal-body bios-body">
+        <!-- 游戏设置参数区 -->
+        <div class="mm-modal-section">
+          <div class="mm-section-title">◈ 系统与视效调节</div>
+          <div class="rlabel">音量 <span id="volval">55%</span></div>
+          <div class="rrow"><input type="range" id="volinput" min="0" max="100" step="1" value="55"></div>
+          
+          <div class="rlabel" style="margin-top:12px">背景音乐 <span id="bgmval">50%</span></div>
+          <div class="rrow"><input type="range" id="bgminput" min="0" max="100" step="1" value="50"></div>
+          
+          <div class="rlabel" style="margin-top:12px">CRT 滤镜 <span id="crtval">0%</span></div>
+          <div class="rrow"><input type="range" id="crtinput" min="0" max="100" step="1" value="0"></div>
+          
+          <div class="rlabel" style="margin-top:12px">战场调色 <span id="warval">100%</span></div>
+          <div class="rrow"><input type="range" id="warinput" min="0" max="100" step="1" value="100"></div>
+          
+          <div class="rlabel" style="margin-top:12px">瞄准灵敏度 <span id="sensval">×3.0</span></div>
+          <div class="rrow"><input type="range" id="sensinput" min="0" max="10" step="0.5" value="3"></div>
+          
+          <div class="rrow mm-set-toggles" style="margin-top:14px">
+            <button id="dbgmodebtn" class="optbtn">调试模式:关</button>
+            <button id="fpsshowbtn" class="optbtn">帧率显示:开</button>
+            <button id="killmsgbtn" class="optbtn">击杀信息:开</button>
+          </div>
+          <div class="rrow" style="margin-top:10px;justify-content:center">
+            <button id="custbtn" class="optbtn">自定义按钮</button>
+          </div>
+        </div>
+
+        <!-- 操作手册说明区 (在设置选项下方) -->
+        <div class="mm-modal-section" style="margin-top:20px;border-top:1.5px dashed rgba(217,167,46,0.3);padding-top:16px;">
+          <div class="mm-section-title">◈ 操作控制指南</div>
+          <div class="manual-h">PC 键鼠控制</div>
+          <div class="tip manual-pc">
+            <div class="key-grid">
+              <div><em>WSAD</em>：驾驶移动</div>
+              <div><em>QE</em>：航向/车体偏航</div>
+              <div><em>左键</em>：火炮/航炮开火</div>
+              <div><em>右键</em>：目标锁定 / 激光压制</div>
+              <div><em>Shift</em>：炮长瞄准镜</div>
+              <div><em>滚轮</em>：缩放 / 直升机升力</div>
+              <div><em>R</em>：雷达开关与扫描</div>
+              <div><em>H</em>：红外热成像 (FLIR)</div>
+              <div><em>N</em>：微光夜视仪 (NV)</div>
+              <div><em>Ctrl</em>：10倍精密瞄准</div>
+              <div><em>Backspace</em>：指挥模式 (A射B导)</div>
+              <div><em>Z</em>：占领阵地</div>
+              <div><em>X</em>：编队跟随</div>
+              <div><em>J</em>：弃车 / 重新部署</div>
+              <div><em>T</em>：敌我标识</div>
+            </div>
+          </div>
+          <div class="manual-h" style="margin-top:14px">触控手势 (移动端)</div>
+          <div class="tip manual-touch">
+            <div class="mrow"><span class="mbtn"><svg width="34" height="34" viewBox="0 0 40 40"><circle cx="20" cy="20" r="16.5" fill="rgba(252,249,240,.35)" stroke="#141414" stroke-width="2.6"/><circle cx="20" cy="20" r="7.5" fill="#ffd93b" stroke="#141414" stroke-width="2.6"/></svg></span>摇杆：车辆驾驶/直升机机动</div>
+            <div class="mrow"><span class="mbtn"><svg width="17" height="28" viewBox="0 0 24 40" style="transform:rotate(18deg)"><path d="M12 2 C15.5 8 17 12 17 18 L17 31 L7 31 L7 18 C7 12 8.5 8 12 2 Z" fill="#c81e12" stroke="#141414" stroke-width="2"/><rect x="5.6" y="31" width="12.8" height="6" fill="#b58a3a" stroke="#141414" stroke-width="2"/></svg></span>开火：发射主炮/火箭/航炮</div>
+            <div class="mrow"><span class="mbtn"><svg width="30" height="30" viewBox="0 0 40 40"><circle cx="20" cy="20" r="15.5" fill="#ffffff" stroke="#141414" stroke-width="3"/><path d="M20 6.5 V15 M20 25 V33.5 M6.5 20 H15 M25 20 H33.5" stroke="#141414" stroke-width="2.6" stroke-linecap="round"/><circle cx="20" cy="20" r="2" fill="#141414"/></svg></span>炮镜：切换直瞄瞄准镜</div>
+            <div class="mrow"><span class="mbtn"><svg width="30" height="30" viewBox="0 0 40 40"><circle cx="20" cy="20" r="15.5" fill="#2f9e44" stroke="#141414" stroke-width="3"/><path d="M20 6.5 V15 M20 25 V33.5 M6.5 20 H15 M25 20 H33.5" stroke="#141414" stroke-width="2.6" stroke-linecap="round"/><circle cx="20" cy="20" r="2" fill="#141414"/></svg></span>夜视仪：开启微光增强</div>
+            <div class="mrow"><span class="mbtn"><svg width="30" height="30" viewBox="0 0 40 40"><circle cx="20" cy="20" r="15.5" fill="#9aa0a6" stroke="#141414" stroke-width="3"/><path d="M20 6.5 V15 M20 25 V33.5 M6.5 20 H15 M25 20 H33.5" stroke="#141414" stroke-width="2.6" stroke-linecap="round"/><circle cx="20" cy="20" r="2" fill="#141414"/></svg></span>热成像：开启前视红外</div>
+            <div class="mrow"><span class="mbtn"><svg width="28" height="28" viewBox="0 0 40 40"><path d="M20 3 L34 8.5 V20 C34 29.5 27.5 35.5 20 38.5 C12.5 35.5 6 29.5 6 20 V8.5 Z" fill="none" stroke="#141414" stroke-width="5" stroke-linejoin="round"/><path d="M20 3 L34 8.5 V20 C34 29.5 27.5 35.5 20 38.5 C12.5 35.5 6 29.5 6 20 V8.5 Z" fill="#c81e12" stroke="#ffffff" stroke-width="2.4" stroke-linejoin="round"/><text x="20" y="26" text-anchor="middle" font-family="system-ui,sans-serif" font-size="16" font-weight="900" fill="#ffffff">1</text></svg></span>指挥：切换小队指挥视角</div>
+            <div class="mrow"><span class="mbtn"><svg width="30" height="30" viewBox="0 0 40 40"><circle cx="20" cy="20" r="15.5" fill="rgba(252,249,240,.35)" stroke="#c81e12" stroke-width="3.4"/><path d="M14.5 14.5 L25.5 25.5 M25.5 14.5 L14.5 25.5" stroke="#c81e12" stroke-width="3.8" stroke-linecap="round"/></svg></span>占领：命令占领当前战区</div>
+            <div class="mrow"><span class="mbtn"><svg width="30" height="30" viewBox="0 0 40 40" fill="none" stroke="#141414" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="13" cy="9.5" r="3" fill="#141414" stroke="none"/><path d="M13 13.5 V23 M13 16.5 L8.5 20.5 M13 16.5 L17.5 20.5 M10 23 L7 33 M16 23 L19 33"/><circle cx="27" cy="14.5" r="2.5" fill="#141414" stroke="none"/><path d="M27 18 V26 M27 20.5 L23.5 24 M27 20.5 L30.5 24 M24.5 26 L22 34 M29.5 26 L32 34"/></svg></span>跟随：命令友军保持护航队形</div>
+          </div>
+        </div>
+      </div>
+      <div class="mm-modal-foot bios-foot">
+        <button class="bigbtn alt mm-modal-back-btn" type="button" onclick="showMenuView('mainmenu')">返回车库</button>
+      </div>
+        <div class="bios-status"><span>CH-04 <b class="ok">SYNC</b></span><span>RADAR <b class="ok">LIVE</b></span><span>NOISE <b class="warn">12%</b></span></div>
+      <div class="bios-haz"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 复活重新部署界面 ==================== -->
+<div id="respawnov" class="overlay hidden">
+  <div class="rrow" id="rhqrow"></div>
+  <div class="rrow" id="rkindrow"></div>
+</div>
+
+<!-- ==================== 兵力耗尽:接管倒数 ==================== -->
+<div id="possessov" class="overlay hidden">
+    <div id="posskindrow"></div>
+</div>
+
+<!-- ==================== 暂停界面 ==================== -->
+<div id="pauseov" class="overlay hidden bios-pause">
+  <div class="bios-pause-panel">
+    <div class="bios-scan"></div>
+    <div class="bios-corners"><span class="tl"></span><span class="tr"></span><span class="bl"></span><span class="br"></span></div>
+    <div class="bios-haz"></div>
+    <div class="bios-head">
+      <div class="bios-kicker"><span>TACTICAL BIOS v3.7</span><em>SUSPEND</em></div>
+      <div class="bios-title">SYSTEM HALT</div>
+      <div class="bios-sub">已暂停 // COMBAT PAUSED</div>
+        <div class="bios-hud">
+          <div class="bios-batt"><span>PWR</span><div class="bios-batt-track"><i class="bios-batt-fill"></i></div><b class="bios-batt-pct">78%</b></div>
+          <div class="bios-sig"><span>LINK</span><div class="bios-siggrid"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="bios-sig-db">-12dB</span></div>
+          <div class="bios-clock">00:00:00</div>
+        </div>
+        <div class="bios-netgrid"></div>
+
+    </div>
+    <div id="pausebtns"></div>
+            <div class="bios-status"><span>CH-04 <b class="ok">SYNC</b></span><span>RADAR <b class="ok">LIVE</b></span><span>NOISE <b class="warn">12%</b></span></div>
+    <div class="bios-haz"></div>
+  </div>
+</div>
+
+<!-- ==================== 结算界面 ==================== -->
+<div id="endov" class="overlay hidden"></div>
+
+<script src="js/debug-flag.js"></script>
+<script src="js/vendor/three-r128.js"></script>
+<script src="js/core_util.js"></script>
+<script src="js/core.js"></script>
+<script src="js/audio_common.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/scene.js"></script>
+<script src="js/map_common.js"></script>
+<script src="js/map.js"></script>
+<script src="js/fx_common.js"></script>
+<script src="js/fx.js"></script>
+<script src="js/vehicles_common.js"></script>
+<script src="js/vehicles.js"></script>
+<script src="js/combat.js"></script>
+<script src="js/weapons.js"></script>
+<script src="js/player.js"></script>
+<script src="js/ai_common.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/world.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/preview.js"></script>
+<script src="js/flow.js"></script>
+<script src="js/main.js"></script>
+<script src="js/comic_common.js"></script>
+<script src="js/comic.js"></script>
+
+
+<script src="js/uifx-enhance.js"></script>
+</body>
+</html>

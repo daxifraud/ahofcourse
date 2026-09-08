@@ -1,0 +1,967 @@
+/* ===== 主菜单重排：参考钢铁洪流漫画指挥部风，游戏名仍为装甲部队 ===== */
+#startov.mm-skin {
+  --ink:#141610;--paper:#e6dfc8;--olive:#20241c;--panel:#232720;--panel2:#2b3024;
+  --amber:#d9a72e;--red:#b0442f;--khaki:#9aa184;--muted:#6b7059;
+  justify-content:stretch!important;align-items:stretch!important;text-align:left!important;
+  background:#1a1e16!important;overflow:hidden!important;padding:0!important;
+}
+#startov.mm-skin::before,#startov.mm-skin::after{display:none!important;content:none!important;}
+.mm-grid,.mm-halftone,.mm-vignette,.mm-page-frame,.mm-corner{position:absolute;pointer-events:none;z-index:0;}
+.mm-grid{inset:0;background-image:linear-gradient(rgba(230,223,200,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(230,223,200,.045) 1px,transparent 1px);background-size:56px 56px;}
+.mm-halftone{inset:0;background-image:radial-gradient(circle,rgba(230,223,200,.05) 1px,transparent 1.3px);background-size:7px 7px;}
+.mm-vignette{inset:0;background:radial-gradient(ellipse at 50% 42%,transparent 55%,rgba(10,11,8,.65) 100%);}
+.mm-page-frame{inset:8px;border:1px solid rgba(217,167,46,.18);pointer-events:none;}
+.mm-corner{width:18px;height:18px;border:0 solid var(--amber);opacity:.85;pointer-events:none;}
+.mm-c-tl{top:8px;left:8px;border-top-width:2px;border-left-width:2px;}
+.mm-c-tr{top:8px;right:8px;border-top-width:2px;border-right-width:2px;}
+.mm-c-bl{bottom:8px;left:8px;border-bottom-width:2px;border-left-width:2px;}
+.mm-c-br{bottom:8px;right:8px;border-bottom-width:2px;border-right-width:2px;}
+
+.mm-dot{width:8px;height:8px;border-radius:50%;background:var(--amber);border:1px solid #141610;animation:mmBlink 1.3s steps(2,start) infinite;display:inline-block;}
+@keyframes mmBlink{50%{opacity:.15}}
+
+/* ==================== 全屏战争雷霆/坦克世界风格车库主体 ==================== */
+.mm-app.mm-fullscreen-hangar {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+  display: block;
+}
+
+#mm-cover.mm-hangar-box {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: #272d24;
+  color: #191c14;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  overflow: hidden;
+  user-select: none;
+}
+#mm-cover.theme-blueprint { background: #ded7be; }
+#mm-cover.theme-dark { background: #191c14; }
+#mm-cover.theme-cartoon { background: #272d24; }
+
+#hangar-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  z-index: 1;
+  cursor: grab;
+}
+#hangar-canvas:active { cursor: grabbing; }
+
+.mm-hangar-grid-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  background-image: 
+    linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.mm-hangar-corner {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid #6f9a63;
+  pointer-events: none;
+  z-index: 3;
+  box-shadow: 0 0 8px rgba(157,255,168,.22);
+}
+.mm-hangar-c-tl { top: 12px; left: 12px; border-right: none; border-bottom: none; }
+.mm-hangar-c-tr { top: 12px; right: 12px; border-left: none; border-bottom: none; }
+.mm-hangar-c-bl { bottom: 12px; left: 12px; border-right: none; border-top: none; }
+.mm-hangar-c-br { bottom: 12px; right: 12px; border-left: none; border-top: none; }
+
+/* ① 顶部左侧战术卡头 (车名与代号) */
+.mm-hangar-head {
+  position: absolute;
+  top: 14px;
+  left: 18px;
+  z-index: 8;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  pointer-events: auto;
+}
+.mm-hangar-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: VT323, "Courier New", monospace;
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: .18em;
+  color: #9dffa8;
+  background: #060c05;
+  border: 1px solid #3d4a2e;
+  padding: 2px 8px;
+  box-shadow: 0 0 10px rgba(157,255,168,.14), 2px 2px 0 #040704;
+}
+.mm-hangar-title-wrap {
+  margin-top: 4px;
+}
+.mm-hangar-title {
+  margin: 0 0 0 !important;
+  font-family: "ZCOOL QingKe HuangYou", "Black Ops One", "Microsoft YaHei", sans-serif;
+  font-size: clamp(24px, 2.8vw, 36px);
+  letter-spacing: .06em;
+  color: #c8ffc0 !important;
+  line-height: 1.1;
+  text-shadow: 0 0 8px rgba(140,255,158,.4), 2px 2px 0 #040704;
+  background: transparent !important;
+  padding: 0 !important;
+  transform: none !important;
+  box-shadow: none !important;
+  border: 0 !important;
+}
+.mm-hangar-sub {
+  display: block;
+  font-family: VT323, "ZCOOL QingKe HuangYou", monospace;
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: .22em;
+  color: #6f9a63;
+  margin-top: 2px;
+  text-shadow: 0 0 6px rgba(140,255,158,.25);
+}
+#startov.mm-skin {
+  --amber: #9dffa8;
+  --ink: #061006;
+  --paper: #c8ffc0;
+}
+#startov.mm-skin .mm-grid {
+  background-image: linear-gradient(rgba(120,180,110,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(120,180,110,.07) 1px,transparent 1px) !important;
+}
+#startov.mm-skin .mm-halftone {
+  background-image: radial-gradient(circle,rgba(157,255,168,.06) 1px,transparent 1.3px) !important;
+}
+#startov.mm-skin .mm-page-frame { border-color: rgba(157,255,168,.2) !important; }
+#startov.mm-skin .mm-corner { border-color: #6f9a63 !important; }
+#startov.mm-skin .mm-dot { background: #9dffa8 !important; border-color: #061006 !important; }
+#startov.mm-skin .mm-tool-btn {
+  background: #060c05 !important;
+  color: #9dffa8 !important;
+  border: 1px solid #3d4a2e !important;
+  box-shadow: 2px 2px 0 #040704 !important;
+  font-family: "ZCOOL QingKe HuangYou", VT323, sans-serif !important;
+}
+#startov.mm-skin .mm-tool-btn:hover,
+#startov.mm-skin .mm-tool-btn.active {
+  background: #9dffa8 !important;
+  color: #061006 !important;
+  border-color: #c8ffc0 !important;
+}
+#startov.mm-skin .mm-sq-btn {
+  background: #060c05 !important;
+  border: 1px solid #3d4a2e !important;
+  color: #9dffa8 !important;
+  border-radius: 0 !important;
+  box-shadow: 3px 3px 0 #040704 !important;
+}
+#startov.mm-skin .mm-sq-btn:hover {
+  background: #9dffa8 !important;
+  color: #061006 !important;
+  border-color: #c8ffc0 !important;
+}
+#startov.mm-skin .mm-bug-tag {
+  color: #6f9a63 !important;
+  background: rgba(6,12,5,.9) !important;
+  border: 1px solid #3d4a2e !important;
+  font-family: VT323, monospace !important;
+}
+#startov.mm-skin .mm-hangar-stamp {
+  background: #0e160a !important;
+  color: #9dffa8 !important;
+  border-color: #3d4a2e !important;
+}
+
+/* ② 顶部中央主战术按键: 开始战斗 (War Thunder 风格主按键) */
+.mm-top-center-action {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  pointer-events: auto;
+}
+.mm-battle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  background: #060c05;
+  border: 1px solid #3d4a2e;
+  padding: 10px 34px;
+  color: #9dffa8;
+  cursor: pointer;
+  box-shadow: inset 0 0 18px rgba(0,0,0,.7), 0 0 16px rgba(157,255,168,.12);
+  transition: all 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  overflow: hidden;
+  user-select: none;
+  border-radius: 0;
+  min-width: 168px;
+  min-height: 48px;
+}
+.mm-bbtn-radar {
+  position: absolute; inset: 0; pointer-events: none; z-index: 0;
+  background-image:
+    linear-gradient(rgba(120,180,110,.16) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(120,180,110,.16) 1px, transparent 1px);
+  background-size: 10px 10px;
+}
+.mm-bbtn-radar::after {
+  content: ''; position: absolute; left: 0; right: 0; height: 2px;
+  background: rgba(157,255,168,.45);
+  box-shadow: 0 0 10px rgba(157,255,168,.6);
+  animation: biosSweep 2.8s linear infinite;
+}
+.mm-battle-btn:hover {
+  background: #060c05;
+  border-color: #9dffa8;
+  box-shadow: inset 0 0 18px rgba(0,0,0,.7), 0 0 22px rgba(157,255,168,.35);
+  color: #c8ffc0;
+}
+.mm-battle-btn:active {
+  transform: translateY(1px);
+}
+.mm-bbtn-title {
+  position: relative; z-index: 1;
+  font-family: "ZCOOL QingKe HuangYou", "Black Ops One", "Microsoft YaHei", sans-serif;
+  font-size: 22px;
+  letter-spacing: .18em;
+  line-height: 1.1;
+  color: #c8ffc0;
+  text-shadow: 0 0 6px rgba(140,255,158,.55), 0 0 18px rgba(140,255,158,.2);
+}
+
+/* ③ 顶部右侧交互工具条与战备检视印章 */
+.mm-hangar-tools-wrap {
+  position: absolute;
+  top: 14px;
+  right: 18px;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  pointer-events: auto;
+}
+.mm-hangar-tools {
+  display: flex;
+  gap: 5px;
+}
+.mm-tool-btn {
+  background: rgba(20,22,16,0.88);
+  color: #e6dfc8;
+  border: 1.5px solid #141610;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: all 0.12s;
+  box-shadow: 2px 2px 0 #141610;
+}
+.dark-theme .mm-tool-btn,
+.theme-cartoon .mm-tool-btn {
+  border-color: #3d4638;
+}
+.mm-tool-btn:hover {
+  background: #d9a72e;
+  color: #141610;
+}
+.mm-tool-btn.active {
+  background: #d9a72e;
+  color: #141610;
+}
+.mm-hangar-stamp-wrap {
+  margin-top: 2px;
+  margin-right: 4px;
+}
+.mm-hangar-stamp {
+  font-size: 11px;
+  font-weight: 800;
+  border-width: 2px;
+  padding: 2px 8px;
+  letter-spacing: .25em;
+  transform: rotate(-7deg);
+  background: rgba(20, 22, 16, 0.65);
+  color: #b0442f;
+  border-color: #b0442f;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+.theme-blueprint .mm-hangar-stamp {
+  background: rgba(222, 215, 190, 0.55);
+}
+
+/* ④ 左侧可收放载具切换抽屉 (Collapsible Vehicle Drawer) */
+.mm-hangar-drawer {
+  position: absolute;
+  top: 76px;
+  bottom: 84px;
+  left: 0;
+  z-index: 10;
+  display: flex;
+  align-items: stretch;
+  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+}
+.mm-hangar-drawer.collapsed {
+  transform: translateX(calc(-100% + 34px));
+}
+.mm-hangar-drawer > * {
+  pointer-events: auto;
+}
+.mm-drawer-btn {
+  width: 34px;
+  background: #060c05;
+  color: #9dffa8;
+  border: 1px solid #3d4a2e;
+  border-left: none;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 2px;
+  box-shadow: 4px 4px 0 #040704, 0 0 12px rgba(157,255,168,.1);
+  transition: background 0.15s, color 0.15s;
+  order: 2;
+  user-select: none;
+  font-family: "ZCOOL QingKe HuangYou", VT323, sans-serif;
+}
+.mm-drawer-btn:hover {
+  background: #9dffa8;
+  color: #061006;
+}
+.mm-drawer-btn-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+.mm-drawer-btn-txt {
+  writing-mode: vertical-lr;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: .22em;
+  font-family: "ZCOOL QingKe HuangYou", "Black Ops One", sans-serif;
+}
+.mm-drawer-btn-arrow {
+  font-size: 9px;
+  transition: transform 0.25s;
+}
+.mm-hangar-drawer.collapsed .mm-drawer-btn-arrow {
+  transform: rotate(0deg);
+}
+.mm-hangar-drawer:not(.collapsed) .mm-drawer-btn-arrow {
+  transform: rotate(180deg);
+}
+.mm-drawer-content {
+  width: 154px;
+  background: rgba(14, 22, 10, 0.96);
+  backdrop-filter: blur(8px);
+  border: 1px solid #3d4a2e;
+  border-left: none;
+  color: #9dffa8;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 6px 6px 0 #040704, 0 0 18px rgba(157,255,168,.08);
+  order: 1;
+  overflow: hidden;
+}
+.mm-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: #0a1208;
+  border-bottom: 1px solid #3d4a2e;
+}
+.mm-drawer-t {
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: .14em;
+  color: #c8ffc0;
+  font-family: "ZCOOL QingKe HuangYou", "Black Ops One", sans-serif;
+  text-shadow: 0 0 6px rgba(140,255,158,.4);
+}
+.mm-drawer-close {
+  cursor: pointer;
+  font-size: 13px;
+  color: #6f9a63;
+  padding: 2px 4px;
+}
+.mm-drawer-close:hover {
+  color: #9dffa8;
+}
+.mm-drawer-list-wrap {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.mm-drawer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mm-drawer-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 8px;
+  background: #060c05;
+  border: 1px solid #26331c;
+  border-left: 3px solid #26331c;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  user-select: none;
+  color: #9dffa8;
+}
+.mm-drawer-item:hover {
+  background: #0e160a;
+  border-color: #9dffa8;
+  border-left-color: #9dffa8;
+  transform: translateX(2px);
+  box-shadow: 0 0 10px rgba(157,255,168,.18);
+}
+.mm-drawer-item.active {
+  background: #9dffa8;
+  border-color: #c8ffc0;
+  border-left-color: #061006;
+  color: #061006;
+  box-shadow: 2px 2px 0 #040704;
+  font-weight: 400;
+}
+.mm-drawer-item-name {
+  font-family: "ZCOOL QingKe HuangYou", "Black Ops One", "Microsoft YaHei", sans-serif;
+  font-size: 13px;
+  letter-spacing: .06em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+}
+.mm-drawer-item-en {
+  font-family: VT323, "Courier New", monospace;
+  font-size: 11px;
+  opacity: .85;
+  letter-spacing: .12em;
+  line-height: 1;
+}
+.mm-drawer-item.active .mm-drawer-item-en {
+  color: #1a2a14;
+}
+
+/* ⑤ 底部载具规格 HUD 浮层 (Bottom Vehicle Specs Overlay) */
+.mm-hangar-specs {
+  position: absolute;
+  bottom: 18px;
+  left: 18px;
+  right: 220px;
+  max-width: 860px;
+  z-index: 8;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  pointer-events: none;
+}
+.mm-spec-card {
+  background: rgba(6, 12, 5, 0.92);
+  backdrop-filter: blur(6px);
+  border: 1px solid #3d4a2e;
+  padding: 6px 8px;
+  color: #9dffa8;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 3px 3px 0 #040704, inset 0 0 12px rgba(0,0,0,.45);
+  pointer-events: auto;
+}
+.mm-spec-lbl {
+  font-family: VT323, "Courier New", monospace;
+  font-size: 12px;
+  letter-spacing: .16em;
+  color: #6f9a63;
+  font-weight: 400;
+  text-transform: uppercase;
+}
+.mm-spec-val {
+  font-family: "ZCOOL QingKe HuangYou", "Black Ops One", "Microsoft YaHei", sans-serif;
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: .04em;
+  margin: 2px 0 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #c8ffc0;
+  text-shadow: 0 0 6px rgba(140,255,158,.35);
+}
+.mm-spec-sub {
+  font-family: VT323, "Courier New", monospace;
+  font-size: 11px;
+  color: #6f9a63;
+  letter-spacing: .06em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ⑥ 右下角游戏设置圆角正方形按键与反馈栏 (Bottom-Right Dock) */
+.mm-bottom-right-dock {
+  position: absolute;
+  bottom: 16px;
+  right: 18px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  pointer-events: auto;
+}
+.mm-sq-btn {
+  width: 46px;
+  height: 46px;
+  border-radius: 8px;
+  background: rgba(22, 26, 18, 0.94);
+  border: 2px solid #d9a72e;
+  color: #d9a72e;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 3px 3px 0 #141610;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  padding: 0;
+  flex-shrink: 0;
+}
+.mm-sq-btn:hover {
+  background: #d9a72e;
+  color: #141610;
+  transform: translate(-2px, -2px);
+  box-shadow: 5px 5px 0 #141610;
+}
+.mm-sq-btn:active {
+  transform: translate(1px, 1px);
+  box-shadow: 2px 2px 0 #141610;
+}
+.mm-sq-icon {
+  width: 24px;
+  height: 24px;
+  fill: currentColor;
+}
+.mm-bug-tag {
+  font-size: 10px;
+  color: #8a927a;
+  letter-spacing: .05em;
+  background: rgba(20, 22, 16, 0.88);
+  padding: 4px 8px;
+  border: 1px solid rgba(217, 167, 46, 0.3);
+  box-shadow: 2px 2px 0 rgba(0,0,0,0.4);
+  border-radius: 2px;
+}
+
+/* ⑦ 模态弹窗系统 (Modal Dialogs: 遭遇战参数 & 游戏设置+操作说明) */
+.mm-modal-dialog {
+  position: fixed!important;
+  top: 50%!important;
+  left: 50%!important;
+  transform: translate(-50%, -50%)!important;
+  width: min(840px, 92vw)!important;
+  max-height: min(86vh, 760px)!important;
+  background: rgba(25, 29, 21, 0.96)!important;
+  backdrop-filter: blur(12px)!important;
+  border: 2px solid #d9a72e!important;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.85), 6px 6px 0 #141610!important;
+  z-index: 100!important;
+  display: flex!important;
+  flex-direction: column!important;
+  padding: 0!important;
+  overflow: hidden!important;
+  border-radius: 4px;
+}
+.mm-modal-dialog.hidden {
+  display: none!important;
+}
+.mm-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  background: #141610;
+  border-bottom: 2px solid #d9a72e;
+  flex-shrink: 0;
+}
+.mm-modal-head-l {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mm-modal-tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .18em;
+  color: #d9a72e;
+}
+.mm-modal-title {
+  font-family: 'Impact', 'Arial Black', 'Microsoft YaHei', sans-serif;
+  font-size: 20px;
+  color: #f0ece1;
+  letter-spacing: .08em;
+  margin: 0;
+  line-height: 1.1;
+}
+.mm-modal-close {
+  background: rgba(217, 167, 46, 0.15);
+  border: 1.5px solid #d9a72e;
+  color: #d9a72e;
+  font-size: 16px;
+  font-weight: 800;
+  width: 30px;
+  height: 30px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.mm-modal-close:hover {
+  background: #d9a72e;
+  color: #141610;
+}
+.mm-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.mm-modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 12px 18px;
+  background: #191d15;
+  border-top: 1.5px solid #2d3626;
+  flex-shrink: 0;
+}
+.mm-modal-back-btn {
+  margin: 0!important;
+  min-width: 120px!important;
+  min-height: 38px!important;
+  font-size: 13px!important;
+}
+.mm-section-title {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .14em;
+  color: #d9a72e;
+  margin-bottom: 8px;
+}
+.key-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 6px 12px;
+  padding: 6px 0;
+}
+.key-grid em {
+  display: inline-block;
+  background: #d9a72e;
+  color: #141610;
+  padding: 1px 6px;
+  border: 1px solid #141610;
+  font-weight: 800;
+  font-style: normal;
+  font-size: 11px;
+  letter-spacing: .05em;
+  border-radius: 2px;
+  min-width: 32px;
+  text-align: center;
+  margin-right: 4px;
+}
+
+/* ==================== 战术装甲信息浮层 (Armor Intel Tip) ==================== */
+.mm-armor-tip {
+  position: absolute;
+  top: 52px;
+  right: 12px;
+  width: 210px;
+  z-index: 15;
+  background: rgba(23, 26, 20, 0.95);
+  backdrop-filter: blur(6px);
+  border: 2px solid #141610;
+  box-shadow: 5px 5px 0 rgba(0,0,0,0.5), inset 0 0 12px rgba(217,167,46,0.08);
+  color: #e6dfc8;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  user-select: none;
+}
+.mm-armor-tip.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px) scale(0.97);
+}
+.mm-atip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: #141610;
+  border-bottom: 2px solid #303828;
+}
+.mm-atip-head-l {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.mm-atip-badge {
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: .15em;
+  color: #d9a72e;
+}
+.mm-atip-part {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mm-atip-close {
+  background: transparent;
+  border: none;
+  color: #8a927a;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 2px 5px;
+  line-height: 1;
+}
+.mm-atip-close:hover {
+  color: #d9a72e;
+}
+.mm-atip-body {
+  padding: 7px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.mm-atip-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+.mm-atip-item {
+  background: #1c2218;
+  border: 1px solid #2f382a;
+  padding: 4px 5px;
+  display: flex;
+  flex-direction: column;
+}
+.mm-atip-item.highlight {
+  border-color: #d9a72e;
+  background: rgba(217, 167, 46, 0.14);
+}
+.mm-atip-lbl {
+  font-size: 8px;
+  color: #9aa184;
+  letter-spacing: .06em;
+  font-weight: 700;
+}
+.mm-atip-val {
+  font-size: 12px;
+  font-weight: 800;
+  color: #f0ece1;
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  margin-top: 1px;
+}
+.mm-atip-item.highlight .mm-atip-val {
+  color: #d9a72e;
+}
+.mm-atip-val.small {
+  font-size: 9.5px;
+  line-height: 1.2;
+}
+.mm-atip-unit {
+  font-size: 8.5px;
+  font-weight: 600;
+  color: #9aa184;
+}
+.mm-atip-hint {
+  font-size: 8px;
+  color: #858d76;
+  letter-spacing: .02em;
+  line-height: 1.2;
+  border-top: 1px dashed rgba(133,141,118,0.25);
+  padding-top: 4px;
+  margin-top: 1px;
+}
+
+/* 3种风格下的展示框背景切换 */
+#mm-cover.theme-blueprint {
+  background: #ded7be;
+}
+#mm-cover.theme-dark {
+  background: #191c14;
+}
+#mm-cover.theme-cartoon {
+  background: #272d24;
+}
+#mm-cover.theme-cartoon .mm-hangar-head {
+  background: linear-gradient(180deg, rgba(6,12,5,0.78) 0%, rgba(6,12,5,0.28) 70%, transparent 100%);
+}
+#mm-cover.theme-cartoon .mm-hangar-title {
+  color: #c8ffc0;
+  text-shadow: 0 0 8px rgba(140,255,158,.4), 2px 2px 0 #040704;
+  font-family: "ZCOOL QingKe HuangYou", "Black Ops One", "Microsoft YaHei", sans-serif;
+}
+#mm-cover.theme-cartoon .mm-hangar-sub {
+  color: #6f9a63;
+  font-family: VT323, "ZCOOL QingKe HuangYou", monospace;
+}
+
+#mm-cover.theme-cartoon .mm-hangar-grid-overlay {
+  background-image: 
+    linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
+}
+
+.mm-hangar-tip {
+  position: absolute;
+  bottom: 5px;
+  left: 14px;
+  right: 14px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 8.5px;
+  letter-spacing: .12em;
+  font-weight: 700;
+  pointer-events: none;
+}
+.mm-hangar-caution-zh {
+  color: #993322;
+  font-weight: 800;
+  letter-spacing: .14em;
+}
+.dark-theme .mm-hangar-caution-zh {
+  color: #d9a72e;
+}
+.mm-hangar-caution-en {
+  color: #636b56;
+  font-weight: 700;
+  letter-spacing: .12em;
+}
+.dark-theme .mm-hangar-caution-en {
+  color: #8a947c;
+}
+
+#mm-cover{position:relative;background:#e6dfc8;color:#191c14;border:3px solid #141610;box-shadow:8px 8px 0 rgba(8,9,7,.6);padding:22px 24px 16px;display:flex;flex-direction:column;overflow:hidden;min-height:0;}
+.mm-ht{position:absolute;inset:0;pointer-events:none;background-image:radial-gradient(circle,rgba(20,22,16,.10) 1px,transparent 1.3px);background-size:6px 6px;}
+.mm-cover-kicker{position:relative;display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
+.mm-vol{font-size:11px;background:#141610;color:#e6dfc8;padding:3px 8px;letter-spacing:.2em;}
+.mm-kicker{font-size:11px;letter-spacing:.28em;font-weight:700;}
+.mm-stamp{font-size:13px;color:#b0442f;border:3px solid #b0442f;padding:2px 10px;letter-spacing:.35em;transform:rotate(-8deg);opacity:.85;user-select:none;background:transparent;}
+.mm-cover-title{position:relative;margin-top:18px;}
+.mm-haz{display:inline-block;width:56px;height:10px;border:1px solid #141610;background:repeating-linear-gradient(-45deg,#d9a72e 0 12px,#141610 12px 24px);vertical-align:middle;}
+.mm-en{font-size:13px;letter-spacing:.35em;font-weight:700;margin-left:10px;}
+.mm-h1{font-size:clamp(42px,7vw,92px);line-height:.95;color:#141610;font-weight:800;letter-spacing:.04em;margin:8px 0 0;}
+.mm-h1 span{display:inline-block;background:#d9a72e;border:3px solid #141610;padding:0 8px;transform:rotate(-1deg);box-shadow:5px 5px 0 #141610;}
+.mm-tagline{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:14px;font-weight:700;color:#3a3d31;}
+.mm-zh{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;background:#b0442f;color:#e6dfc8;font-size:20px;border:2px solid #141610;transform:rotate(-6deg);}
+#mm-cover svg.mm-tank{position:relative;width:100%;flex:1;min-height:180px;}
+.mm-cover-foot{position:relative;display:flex;justify-content:space-between;gap:12px;margin-top:8px;font-size:10px;letter-spacing:.22em;font-weight:700;color:#3a3d31;}
+.mm-barcode{width:140px;height:28px;border:1px solid #141610;background:repeating-linear-gradient(90deg,#141610 0 2px,transparent 2px 5px,#141610 5px 9px,transparent 9px 12px,#141610 12px 13px,transparent 13px 17px,#141610 17px 21px,transparent 21px 24px);}
+#mm-panel{position:relative;background:#232720;border:3px solid #141610;box-shadow:8px 8px 0 rgba(8,9,7,.6);display:flex;flex-direction:column;overflow:hidden;min-height:0;color:#e6dfc8;}
+.mm-hazard-bar{height:10px;border-bottom:2px solid #141610;background:repeating-linear-gradient(-45deg,#d9a72e 0 12px,#141610 12px 24px);flex:0 0 auto;}
+.mm-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:18px 24px 12px;flex:0 0 auto;}
+#startov.mm-skin .mm-panel-head h2{margin:0!important;font-size:clamp(28px,3.4vw,44px)!important;letter-spacing:.08em!important;color:#e6dfc8!important;background:transparent!important;padding:0!important;transform:none!important;box-shadow:none!important;font-weight:800!important;}
+.mm-panel-head p{margin:6px 0 0;font-size:10px;letter-spacing:.4em;color:#9aa184;}
+.mm-dash{margin:0 24px;border-top:2px dashed #141610;flex:0 0 auto;}
+#startov.mm-skin .menuview{margin:0!important;padding:14px 24px 18px!important;flex:1;min-height:0;overflow:auto;width:auto!important;max-width:none!important;display:flex;flex-direction:column;align-items:stretch;}
+#startov.mm-skin .menuview.hidden{display:none!important;}
+#startov.mm-skin .menuview h2{display:none;}
+#startov #mainbtns{display:flex;flex-direction:column;gap:14px;width:100%;}
+#startov #mainbtns .bigbtn{
+  width:100%!important;min-height:74px;padding:14px 18px 14px 22px!important;
+  display:flex!important;align-items:center;gap:14px;text-align:left;
+  background:#2b3024!important;color:#e6dfc8!important;border:2px solid #141610!important;
+  border-radius:0!important;letter-spacing:0!important;font-size:inherit!important;font-weight:700;
+  box-shadow:5px 5px 0 #141610!important;overflow:hidden;
+  transition:transform .14s ease,box-shadow .14s ease,background-color .14s ease,color .14s ease;
+}
+#startov #mainbtns .bigbtn::before{
+  display:block!important;content:''!important;position:absolute;left:0;top:0;bottom:0;width:9px;inset:auto auto auto 0;
+  background:repeating-linear-gradient(-45deg,#d9a72e 0 8px,#141610 8px 16px)!important;
+  z-index:0!important;opacity:.75!important;clip-path:none!important;
+}
+#startov #mainbtns .bigbtn::after{
+  display:block!important;content:''!important;position:absolute;inset:0;pointer-events:none;
+  background-image:radial-gradient(circle,rgba(230,223,200,.08) 1px,transparent 1.3px)!important;
+  background-size:6px 6px!important;opacity:.5!important;z-index:0!important;clip-path:none!important;
+}
+#startov #mainbtns .bigbtn:hover:not(:disabled){
+  background:#d9a72e!important;color:#141610!important;
+  transform:translate(-3px,-3px)!important;box-shadow:9px 9px 0 #141610!important;
+  border-color:#141610!important;
+}
+#startov #mainbtns .bigbtn:hover:not(:disabled)::before{
+  opacity:1!important;background:repeating-linear-gradient(-45deg,#141610 0 8px,rgba(20,22,16,.25) 8px 16px)!important;
+}
+#startov #mainbtns .bigbtn:active{transform:translate(0,1px)!important;box-shadow:3px 3px 0 #141610!important;}
+#startov #mainbtns .mm-btn-i{position:relative;z-index:1;font-size:22px;color:#d9a72e;width:42px;flex:0 0 42px;letter-spacing:.08em;}
+#startov #mainbtns .bigbtn:hover .mm-btn-i{color:#141610;}
+#startov #mainbtns .mm-btn-ic{position:relative;z-index:1;flex:0 0 26px;}
+#startov #mainbtns .mm-btn-txt{position:relative;z-index:1;display:flex;flex-direction:column;min-width:0;flex:1;}
+#startov #mainbtns .mm-btn-cn{font-size:26px;letter-spacing:.12em;line-height:1.1;}
+#startov #mainbtns .mm-btn-sub{font-size:11px;opacity:.7;letter-spacing:.12em;margin-top:3px;}
+#startov #mainbtns .mm-btn-end{position:relative;z-index:1;margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex-shrink:0;}
+#startov #mainbtns .mm-btn-en{font-size:10px;letter-spacing:.25em;opacity:.6;}
+#startov #mainbtns .mm-btn-ar{font-size:18px;opacity:.4;transition:transform .14s ease,opacity .14s ease;}
+#startov #mainbtns .bigbtn:hover .mm-btn-ar{transform:translateX(6px);opacity:1;}
+#startov .mm-bug{margin-top:12px!important;font-size:11px!important;color:#9aa184!important;text-align:left!important;letter-spacing:.08em;}
+#startov #startmsg{color:#9aa184!important;text-align:left!important;}
+
+#startov.mm-skin .setupcard:not(.pvpanel){
+  background:#e6dfc8!important;color:#191c14!important;border:3px solid #141610!important;border-radius:0!important;
+  box-shadow:5px 5px 0 #141610!important;min-width:220px;position:relative;overflow:hidden;
+}
+#startov.mm-skin .mm-set-toggles{margin-top:18px!important;justify-content:flex-start!important;flex-wrap:wrap;gap:10px;}
+#startov.mm-skin .setupcard-t{
+  background:transparent!important;color:#141610!important;font-size:15px!important;letter-spacing:.2em!important;
+  border-bottom:2px solid #141610;display:block!important;padding:0 0 6px!important;margin-bottom:10px!important;
+}
+#startov.mm-skin,
+@media (max-width:960px){
+  .mm-main{grid-template-columns:1fr!important;}
+  #mm-cover{display:none!important;}
+  .mm-h1{font-size:48px;}
+  #startov #mainbtns .mm-btn-cn{font-size:22px;}
+}
+
