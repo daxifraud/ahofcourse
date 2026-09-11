@@ -42,6 +42,7 @@ function commonUpdate(t, dt) {
       var rk = keys2[Math.floor(Math.random() * keys2.length)];
       var rm = t.mods[rk];
       rm.hp = Math.max(0, rm.hp - rand(5, 10));
+      if (typeof vehWeatherHit === 'function') vehWeatherHit(t, 'engine', CONF.fireDOT * 0.8, null);   // Q2:火灾0.8s节拍留痕(_wxDmg熏黑累积+epoch续命;point=null只熏黑不打坑)
       if (typeof effSync === 'function') effSync(t);   // 效率族事件缓存重算(火灾烧蚀=模块 hp 唯二变化点之二,0.8s 事件节拍)
       if (t === player && typeof playerHudDamage === 'function') playerHudDamage(rk);   // 火灾烧蚀绕过 applyModuleDamage,迷你 HUD 需自钩(0.8s 事件节拍)
     }
@@ -56,6 +57,7 @@ function commonUpdate(t, dt) {
   /* 发动机排烟、飘散烟和双履带后尘由 comic.js 的手绘 atlas 面片接管;
      贴图片段使用固定世界尺寸,不读相机距离。 */
   if (t.alive && typeof comicVehicleMotionSmoke === 'function') comicVehicleMotionSmoke(t, dt);
+  if (t.alive && typeof comicTrackDig === 'function') comicTrackDig(t, dt);   // P3 履带刨土(与行进尘同帧同车)
   if (t.alive && Math.abs(t.speed) > 2 && (t.mods.trackL.hp <= 0 || t.mods.trackR.hp <= 0)) {
     if (Math.random() < dt * 12) {
       var side = t.mods.trackL.hp <= 0 ? -1.13 : 1.13;
@@ -102,6 +104,9 @@ function applyScopePerf(on, zoom) {
    ——体感"网络延迟式卡顿+镜头突变位"(fps 100+ 仍卡/车体相对位置不变/纯镜头抖)。
    AI 无相机故完全免疫。本制为连续多频正弦摇晃+幅值自身平滑(挨打是 ~70ms 涌起,非阶跃跳变)。 */
 var _shkAmp = 0, _shkPh = 0;
+/* 火箭炮俯视火控相机高度(变焦映射单一真源):scopeZoom 1~20 → 2000~60m(滚轮/双指捏合同源;player.js 平移速度亦取此)。
+   拉远上限 2000m:2km 图一屏尽收,大图配合镜头平移覆盖全图(fog far 6200/远平面 60km 均在量程内)。 */
+function artyTopCamHeight() { return 2000 * Math.pow(clamp(scopeZoom, 1, 20), -1.17); }
 function cameraUpdate(dt) {
   if (!player) return;
   var pp = player.group.position;
@@ -135,12 +140,9 @@ function cameraUpdate(dt) {
     }
   } else {
     gp = scopeT > 0.001
-      ? clamp(camAimP, -0.14, player.kind === 'arty' ? 0.05 : 0.3)
+      ? clamp(camAimP, -0.14, player.kind === 'arty' ? 1.05 : 0.3)
       : camAimP;
   }
-  // 火箭炮开镜视角解锁——相机方位=camAimY(玩家直接驱动),不锁装定方位 _artyAz
-  //   (锁装定则视角只能按发射架转速跟炮管走,体感="视角被炮口钳制");
-  //   装定方位反向取自视野(main.js),物理炮管伺服追随 → 黄点=镜心基准/准星追逐/红点=真实弹着
   var dxF = Math.sin(aimYaw) * Math.cos(gp),
       dyF = Math.sin(gp),
       dzF = Math.cos(aimYaw) * Math.cos(gp);
@@ -155,29 +157,25 @@ function cameraUpdate(dt) {
       uy = tp.y + spU * followDist,
       uz = tp.z - Math.cos(aimYaw) * cpU * followDist;
 
-  // 开镜机位(坦克/歼击车:第一人称炮位沿炮轴;火箭炮:车后上方"中轴"俯瞰落点的瞄准具视角)
+  // 开镜机位(坦克/歼击车:第一人称炮位沿炮轴;火箭炮:俯视火控,正上方俯瞰战场)
   player.gunPivot.getWorldPosition(_v2);
   var sx = _v2.x, sy = _v2.y, sz = _v2.z;
   var tx2 = _v2.x + dxF * 40, ty2 = _v2.y + dyF * 40, tz2 = _v2.z + dzF * 40;   // 默认注视:炮轴 40m
   if (player.kind === 'arty') {
-    /* 相机高度=前馈反解(纵向震荡根治):sy 若吃 artyRange(=视线∩地形反解)即构成闭环
-       「俯仰→视线交点→装定距离→相机高度→视线交点…」,环增益=0.028/tanθ,浅俯角(远距)下
-       θ→0.003 增益≈9>1=正反馈必震荡(τ0.05s 低通只减慢发散不改增益)。
-       故高度只吃鼠标直驱量 artyPitch:按第三人称同步式 θ=-atan2(14+0.028R,R+12) 反解期望
-       射程 R̂=(14-12tanθ)/(tanθ-0.028)——纯前馈零反馈,平地上与闭环解一致(同一几何);
-       装定距离 artyRange(弹着=视线交点语义)不动,仅取景高度换数据源。 */
-    var tA = Math.max(0.005, Math.tan(-artyPitch));
-    var dR2 = clamp((14 - 12 * tA) / (tA - 0.005), 30, CONF.arty.maxRange);
-    sx = pp.x - Math.sin(aimYaw) * 12;
-    sz = pp.z - Math.cos(aimYaw) * 12;   // 中轴对齐(原 ±3.5m 越肩偏置让中轴炮口恒落在画面侧下方:火箭弹永远"从角落发射"的错觉)
-    sy = pp.y + 15 + dR2 * 0.028;                                  // 随(前馈)射程抬高,保持落点在视野中
-    // 注视点=视角方向(artyPitch 鼠标直驱)——camTgt 若钉死落点,纵向改距离只产生 ~0.01° 视角旋转+微缩放,
-    //   场景视觉位移趋零("上下很慢",cr 角度映射调系数治不了);视角俯仰直驱则场景随视角扫屏(与坦克同角速度);
-    //   落点仍在视线上(装定=视线∩地面,playerUpdate 反解),黄点=弹着语义不变
-    var cpA = Math.cos(artyPitch), spA = Math.sin(artyPitch);
-    tx2 = sx + Math.sin(aimYaw) * cpA * 120;
-    tz2 = sz + Math.cos(aimYaw) * cpA * 120;
-    ty2 = sy + spA * 120;
+    /* 俯视火控相机:装定中心上空俯瞰战场(战术地图北向朝上,屏幕顶=世界 −Z);
+       中心=车体+WSAD/摇杆平移偏移(playerUpdate 写入,钳战场边界),高度=变焦(artyTopCamHeight)。
+       机位自 +Z(南)侧留 10° 倾角(0.176h 水平偏置):纯正俯视时视轴∥up 矢量,lookAt 退化;
+       南偏下过渡期 roll 由「视轴水平分量」连续收敛到北向上,与 scopeT>0.55 的 up 切换无缝衔接。 */
+    var hTop = artyTopCamHeight();
+    /* 镜头中心逐轴钳在活动界内(boundsX/Z=各自半图宽;旧版偏移±bounds 双重钳=半图宽,
+       车不在图心时远侧平移不到——「平移 3km 卡死」根因,偏移侧改宽钳见 player.js) */
+    var bX = CONF.boundsX != null ? CONF.boundsX : CONF.bounds;
+    var bZ = CONF.boundsZ != null ? CONF.boundsZ : CONF.bounds;
+    var cX = clamp(pp.x + (player._topCamX || 0), -bX, bX);
+    var cZ = clamp(pp.z + (player._topCamZ || 0), -bZ, bZ);
+    var cY = terrainH(cX, cZ);
+    sx = cX; sy = cY + hTop * 0.985; sz = cZ + hTop * 0.176;
+    tx2 = cX; ty2 = cY; tz2 = cZ;
   }
 
   camPos.set(
@@ -209,12 +207,36 @@ function cameraUpdate(dt) {
     tp.y + dyF * lookDist + (ty2 - (tp.y + dyF * lookDist)) * scopeT,
     tp.z + dzF * lookDist + (tz2 - (tp.z + dzF * lookDist)) * scopeT
   );
+  /* 火箭炮俯视切北向朝上:up=世界 −Z → 屏幕顶=−Z、屏幕右=+X。
+     scopeT>0.55 后视轴已陡俯(南偏机位保证 up 永不∥视轴);之前保持常规 up,roll 连续无跳变。 */
+  if (player.kind === 'arty' && scopeT > 0.55) camera.up.set(0, 0, -1);
+  else camera.up.set(0, 1, 0);
   camera.lookAt(camTgt);
   if (camPK > 0) camera.rotateX(camPK * 0.016 * scopeT);   // 炮镜专属"开炮把镜子顶起来"(×scopeT:第三人称视角零晃动,炮口上抬/准星晃动由 recPitchK 走伺服)
 
-  // 开镜变焦(62° → 28°)
-  var fov = scopeFov(scopeZoom, scopeT);   // 炮镜倍率(默认1×=28°fov,5×=5.6°fov)
+  // 开镜变焦(62° → 28°);火箭炮俯视火控 FOV 恒定 52°,变焦由相机高度承担
+  var fov = (player.kind === 'arty') ? (62 - 10 * scopeT) : scopeFov(scopeZoom, scopeT);   // 炮镜倍率(默认1×=28°fov,5×=5.6°fov)
   if (Math.abs(camera.fov - fov) > 0.05) { camera.fov = fov; camera.updateProjectionMatrix(); }
+
+  /* ===== 火箭炮俯视火控:光标地面点反解(每帧)+ 地面战术标记 =====
+     自由光标 NDC → 反投影射线 × laserRange(车体/目标网格+地形,点到车=装定到车);
+     无交(极端贴边)保持上一次值;装定点钳在战场边界内。 */
+  if (player.kind === 'arty' && player.alive) {
+    if (scopeT > 0.5) {
+      camera.updateMatrixWorld();
+      _topRV.set(artTopNX, artTopNY, 0.5).unproject(camera).sub(camera.position).normalize();
+      var dCast = laserRange(camera.position, _topRV);
+      if (isFinite(dCast) && dCast > 1 && dCast < 12000) {
+        var hbX = CONF.boundsX != null ? CONF.boundsX : CONF.bounds, hbZ = CONF.boundsZ != null ? CONF.boundsZ : CONF.bounds;
+        var hxT = clamp(camera.position.x + _topRV.x * dCast, -hbX, hbX);
+        var hzT = clamp(camera.position.z + _topRV.z * dCast, -hbZ, hbZ);
+        if (!player._topHover) player._topHover = { x: hxT, y: 0, z: hzT };
+        else { player._topHover.x = hxT; player._topHover.z = hzT; }
+        player._topHover.y = terrainH(hxT, hzT);
+      }
+      artyTopMarkersUpdate();
+    } else artyTopMarkersHide();
+  }
 
   /* ===== 阴影视锥动态跟随(阴影常开,不再有开镜关阴影路径)——
      第三人称:视锥中心=玩家 ±70m(近场清晰);
@@ -228,14 +250,18 @@ function cameraUpdate(dt) {
        使视线掠地平线时 laserRange 在近地/远山/4000 兜底间逐采样跳 → shD/shR 档/far/纹素对齐连锁跳
        → 阴影贴图内容突变=全屏明暗闪(俯视与高仰角测距稳定,故只在该角度带发作)。
        着距改吃 main.js 已有的 τ=0.12s 低通值 _dSm(炮管伺服/装定同源,平滑连续无逐帧跳);arty 无 _dSm 回落 raw。 */
-    var shDRaw = (lastAimT && lastAimT.d > 10) ? (player._dSm || lastAimT.d) : 200;   // 着距(火控同源);无解时 200m 兜底
-    var shD = clamp(shDRaw, 40, 900);
+    var isArtyTop = player.kind === 'arty';
+    /* 火箭炮俯视:着距=相机离地高——旧 200m 兜底在俯视高空会把阴影视锥中心悬在半空,
+       地面落在 far(=400+2·shR)之外 → 拉远后全图载具阴影消失;半径上限同步放宽到全屏对角。 */
+    var shDRaw = isArtyTop ? (camera.position.y - terrainH(camera.position.x, camera.position.z))
+                           : ((lastAimT && lastAimT.d > 10) ? (player._dSm || lastAimT.d) : 200);   // 着距(火控同源);无解时 200m 兜底
+    var shD = clamp(shDRaw, 40, isArtyTop ? 2600 : 900);
     camera.getWorldDirection(_shAim);                                             // 相机前向=镜心视线
     _shAim.multiplyScalar(shD).add(camera.position);
     shCX = _shAim.x; shCY = _shAim.y; shCZ = _shAim.z;
-    var shFov = scopeFov(scopeZoom, scopeT) * Math.PI / 180;                  // 与相机 fov 同公式
+    var shFov = camera.fov * Math.PI / 180;                  // 与相机实际 fov 同源(火箭炮俯视恒 52°,不走 scopeFov)
     var shAsp = camera.aspect || (innerWidth / innerHeight);
-    shR = clamp(shD * Math.tan(shFov * 0.5) * Math.sqrt(1 + shAsp * shAsp) + 25, 40, 420);   // 全屏对角世界半径+25m 余量(上限随对角扩)
+    shR = clamp(shD * Math.tan(shFov * 0.5) * Math.sqrt(1 + shAsp * shAsp) + 25, 40, isArtyTop ? 2400 : 420);   // 全屏对角世界半径+25m 余量(上限随对角扩)
     shR = Math.ceil(shR / 10) * 10;                       // 10m 量化档:测距连续变化不逐帧重投影(纹素尺寸稳定不抖)
   }
   var shCam = sunLight.shadow.camera;
@@ -276,7 +302,7 @@ var _siPos = new THREE.Vector3(), _siVel = new THREE.Vector3(), _siMove = new TH
 var _fcsOkVal = true;                 // ★审查C7: 上帧火控解算门(scopeHudUpdate 每帧写入; updateScopeInfo 先于它执行, 用上帧值=至多 1 帧滞后)
 var _rgD = new THREE.Vector3(), _rgR = new THREE.Vector3(), _rgA = new THREE.Vector3(), _rgB = new THREE.Vector3();   // 散布环投影暂存
 var _lrCands = [];                    // 激光测距候选暂存(宽相位输出,独立于 losIntersect 的 _candList)
-var LASER_MAX = 10000;                // ★审查C6: 测距量程单一真源(原版为函数内字面量; 与 CONF.arty.maxRange=10000 数值相同纯属巧合、语义无关——后者是火箭炮最大射程配置)
+var LASER_MAX = 10000;                // ★审查C6: 测距量程单一真源(原版为函数内字面量; 与 CONF.arty/artyE.maxRange 语义无关——后者是火箭炮最大射程配置,红 PHL-11/蓝 M142 均为 40000)
 // 直线测距(模块/残骸/障碍物/地形,取最近)
 function laserRange(from, dir) {
   /* ★审查A1(等价换序): 返回值 = min(物体命中, 地形命中)。原版先沿全 10km 走廊取物体候选
@@ -361,7 +387,7 @@ function simRocketImpact(from, dir, v) {
   _rkSim.u = 0; _rkSim.tF = 0; _rkSim.tof0 = shellTof0(dir.y, v);
   var px = from.x, py = from.y, pz = from.z, i;
   // 步数预算随 tof 扩展(10000m 约 45s,支持长航程积分)
-  var steps = Math.min(6000, Math.max(340, Math.ceil((_rkSim.tof0 + 5) / st)));
+  var steps = Math.min(8000, Math.max(340, Math.ceil((_rkSim.tof0 + 5) / st)));   // 40km 高抛 tof≈99s → 6240 步,预算抬到 8000
   for (i = 0; i < steps; i++) {
     rocketUStep(_rkSim, st);
     var nx = _rkSim.p0x + _rkSim.v0x * _rkSim.u,
@@ -376,6 +402,62 @@ function simRocketImpact(from, dir, v) {
   }
   return { point: new THREE.Vector3(px, py, pz), tof: _rkSim.tF };
 }
+/* ===== 火箭炮俯视火控 · 地面战术标记:火力覆盖范围环 + 装定点红环 + 车→装定点射击线 =====
+   覆盖半径 = 齐射散布图案最大半径 + 溅射半径(按实弹图案表 artySalvoPattern 逐车型计算:
+   PHL-11 40 发黄金角螺旋 ≈147m + 22m;M142 6 发 ≈105m + 44m);环贴地形上浮 0.8m,
+   depthTest 关闭 = 战术叠加恒可见(俯瞰下不被山体/建筑遮挡)。 */
+var _topRV = new THREE.Vector3();                        // 光标反投影射线 scratch
+var _artyTopGrp = null, _artyTopRing = null, _artyTopDot = null, _artyTopLine = null, _artyTopLinePos = null;
+function artyCoverageRadius(t) {
+  if (t._covR != null) return t._covR;
+  var c = artyConfOf(t), p = artySalvoPattern(c.salvo || 16), m = 0;
+  for (var i = 0; i < p.length; i++) {
+    var rr = Math.sqrt(p[i][0] * p[i][0] + p[i][1] * p[i][1]);
+    if (rr > m) m = rr;
+  }
+  t._covR = m + (c.splashR || 22);
+  return t._covR;
+}
+function artyTopMarkersEnsure() {
+  if (_artyTopGrp) return;
+  _artyTopGrp = new THREE.Group();
+  var ringMat = new THREE.MeshBasicMaterial({ color: 0xffd23e, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthTest: false, depthWrite: false });
+  _artyTopRing = new THREE.Mesh(new THREE.RingGeometry(0.982, 1.0, 128), ringMat);   // 单位环,按覆盖半径整体缩放
+  _artyTopRing.rotation.x = -Math.PI / 2;
+  _artyTopRing.renderOrder = 60;
+  var dotMat = new THREE.MeshBasicMaterial({ color: 0xff4b3e, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthTest: false, depthWrite: false });
+  _artyTopDot = new THREE.Mesh(new THREE.RingGeometry(2.0, 3.0, 48), dotMat);        // 装定点红环(固定 ~3m)
+  _artyTopDot.rotation.x = -Math.PI / 2;
+  _artyTopDot.renderOrder = 61;
+  _artyTopLinePos = new Float32Array(6);
+  var lineGeo = new THREE.BufferGeometry();
+  lineGeo.setAttribute('position', new THREE.BufferAttribute(_artyTopLinePos, 3));
+  _artyTopLine = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0xffb020, transparent: true, opacity: 0.5, depthTest: false }));
+  _artyTopLine.renderOrder = 59;
+  _artyTopLine.frustumCulled = false;
+  _artyTopGrp.add(_artyTopRing); _artyTopGrp.add(_artyTopDot); _artyTopGrp.add(_artyTopLine);
+  _artyTopGrp.visible = false;
+  scene.add(_artyTopGrp);
+}
+function artyTopMarkersUpdate() {
+  artyTopMarkersEnsure();
+  var tgt = ((player._topFireWish || player.salvoLeft > 0) && player._topTgt) ? player._topTgt : player._topHover;
+  if (!tgt || !isFinite(tgt.x)) { _artyTopGrp.visible = false; return; }
+  _artyTopGrp.visible = true;
+  var R = artyCoverageRadius(player);
+  _artyTopRing.scale.set(R, R, 1);
+  var gy = terrainH(tgt.x, tgt.z) + 0.8;
+  _artyTopRing.position.set(tgt.x, gy, tgt.z);
+  _artyTopDot.position.set(tgt.x, gy + 0.1, tgt.z);
+  var ppM = player.group.position;
+  _artyTopLinePos[0] = ppM.x; _artyTopLinePos[1] = ppM.y + 1.2; _artyTopLinePos[2] = ppM.z;
+  _artyTopLinePos[3] = tgt.x; _artyTopLinePos[4] = gy; _artyTopLinePos[5] = tgt.z;
+  _artyTopLine.geometry.attributes.position.needsUpdate = true;
+  _artyTopLine.geometry.computeBoundingSphere();
+}
+function artyTopMarkersHide() {
+  if (_artyTopGrp) _artyTopGrp.visible = false;
+}
 var _rkSim = { p0x: 0, p0y: 0, p0z: 0, v0x: 0, v0y: 0, v0z: 0, u: 0, tF: 0, tof0: 1 };   // 红点仿真复用暂存(每帧调用,零分配)
 function updateScopeInfo() {
   if (player.kind === 'arty') {
@@ -383,7 +465,7 @@ function updateScopeInfo() {
     if (aim) {
       var dS = _v2; player.gunPivot.getWorldDirection(dS);
       var mS = artyBoreOrigin(player, dS);
-      var simS = simRocketImpact(mS, dS, player.rocketV || CONF.arty.rocketSpeed);
+      var simS = simRocketImpact(mS, dS, player.rocketV || artyConfOf(player).rocketSpeed);
       var solA = player._artySol;
       if (aim.settled && aim.reach && solA && player.rocketV > 34.5 && player.rocketV < solA.vmax - 0.5) {
         var Rdes = Math.sqrt((aim.x - mS.x)*(aim.x - mS.x)+(aim.z - mS.z)*(aim.z - mS.z));
@@ -397,7 +479,6 @@ function updateScopeInfo() {
       scopeInfo._mPos = _siP.copy(mS);
       scopeInfo.impDist = Math.sqrt((simS.point.x - player.group.position.x)*(simS.point.x - player.group.position.x)+(simS.point.z - player.group.position.z)*(simS.point.z - player.group.position.z));
       scopeInfo.tof = simS.tof;
-      scopeInfo.settled = !!aim.settled;
       scopeInfo.reach = aim.reach !== false;
     } else { scopeInfo.laser = Infinity; scopeInfo.point = null; }
     return;
@@ -464,6 +545,7 @@ function updateScopeInfo() {
 }
 
 var _fcsState = null, _fcsT = 0, _fcsPrevT = -1;   // 火控计算机状态机(移动/静止保持时长)
+var _scopeArtyTop = false;                         // 火箭炮俯视火控 class 边沿写状态
 function scopeHudUpdate() {
   var on = scopeT > 0.06;
   if (on !== el.scope._on) {
@@ -475,6 +557,13 @@ function scopeHudUpdate() {
       if (el.impactRkL) el.impactRkL.style.display = 'none';
       if (el.impactRkR) el.impactRkR.style.display = 'none';
     }
+  }
+  /* 火箭炮俯视火控:FPS 镜框美术(圈/暗角/十字丝/倍率盘)整体隐藏,系统光标恢复(CSS #scope.artytop / body.artytop 联动) */
+  var artyTop = !!(player && player.alive && player.kind === 'arty' && scopeT > 0.5);
+  if (artyTop !== _scopeArtyTop) {
+    _scopeArtyTop = artyTop;
+    if (el.scope) el.scope.classList.toggle('artytop', artyTop);
+    if (document && document.body) document.body.classList.toggle('artytop', artyTop);
   }
 
   var isHeli = player && player.alive && isHeliVehicle(player);
@@ -534,9 +623,9 @@ function scopeHudUpdate() {
   if (player && player.kind === 'arty') {
     _rt = scopeInfo.point
       ? ('装定 ' + scopeInfo.laser.toFixed(0) + ' m · 首发弹着 ' + scopeInfo.impDist.toFixed(0) +
-         ' m · 飞行 ' + scopeInfo.tof.toFixed(1) + ' s' +
-         (!scopeInfo.reach ? ' ⚠ 超出射程,红点为首弹实际落点' : (scopeInfo.settled ? '' : ' · 伺服中…')))
-      : '装定 --- m';
+         ' m · 飞行 ' + scopeInfo.tof.toFixed(1) + ' s · 覆盖半径 ' + artyCoverageRadius(player).toFixed(0) + ' m' +
+         (!scopeInfo.reach ? ' ⚠ 超出射程,显示首弹实际落点' : ''))
+      : '光标装定中…';
     if (el.rangeinfo._last !== _rt) { el.rangeinfo._last = _rt; el.rangeinfo.textContent = _rt; }
   } else if (isHeli && curWp === 3) {
     // 导弹模式: 仅显示激光测距,无任何炮弹落点
@@ -563,9 +652,27 @@ function scopeHudUpdate() {
     }
   }
 
-  if (el.zoomedge && el.zoomedge._lastZ !== scopeZoom) {
-    el.zoomedge._lastZ = scopeZoom;
-    el.zoomedge.textContent = 'x' + scopeZoom.toFixed(1);
+// 炮镜倍率表盘建盘(一次):20刻度300°张角(-150°..+150°),12主刻度配×N数字;span随盘转(指针读数=顶部)
+function buildScopeDial(d) {
+  for (var z = 1; z <= 20; z++) {
+    var a = -150 + (z - 1) / 19 * 300;
+    var maj = (z <= 6 || z === 8 || z === 10 || z === 12 || z === 14 || z === 16 || z === 20);
+    var tk = document.createElement('div');
+    tk.className = 'dtick' + (maj ? ' maj' : '');
+    tk.style.transform = 'rotate(' + a + 'deg)';
+    d.appendChild(tk);
+    if (maj) {
+      var lb = document.createElement('div');
+      lb.className = 'dlab'; lb.style.transform = 'rotate(' + a + 'deg)';
+      var sp = document.createElement('span'); sp.textContent = '×' + z;
+      lb.appendChild(sp); d.appendChild(lb);
+    }
+  }
+}
+  if (el.scopedial && el.scopedial._lastZ !== scopeZoom) {   // 表盘随倍率旋转(去抖):当前倍率刻度转至顶部指针
+    el.scopedial._lastZ = scopeZoom;
+    if (!el.scopedial._built) { el.scopedial._built = true; buildScopeDial(el.scopedial); }
+    el.scopedial.style.transform = 'rotate(' + (150 - (scopeZoom - 1) / 19 * 300) + 'deg)';
   }
 
   // 2. 炮镜落点指示器显隐控制 (每种武器独立)

@@ -61,7 +61,7 @@ function step(dt) {
   }
   // 深入开镜后进入第一人称:隐藏自身车体视觉(炮管/制退器不挡画面)
   if (player) {
-    var wantVis = player.kind === 'arty' ? true : scopeT < 0.55;   // 火箭炮开镜是俯瞰瞄准具视角,车体不隐身
+    var wantVis = player.kind === 'arty' ? true : scopeT < 0.55;   // 火箭炮开镜是俯视火控视野,车体不隐身(俯瞰要看到自己)
     if (ownVisualsVisible !== wantVis) {
       ownVisualsVisible = wantVis;
       setTankVisuals(player, wantVis);
@@ -121,6 +121,11 @@ function step(dt) {
         pitchMin = -80 * Math.PI / 180;
         pitchMax = 0.0;
       }
+    } else if (typeof isAAVehicle === 'function' && isAAVehicle(player)) {
+      // 任务25:玩家防空载具发射架/机炮伺服包线——PGZ-95 -5°~+90°(用户设定,可对天顶);复仇者 -10°~+70°。
+      // (修复前 AA 落入通用地面车 -0.14~0.3 包线=机炮/发射架物理仰角被钳在 ~17° 的隐性 bug)
+      if (player.team === 'ally') { pitchMin = -5 * Math.PI / 180; pitchMax = 90 * Math.PI / 180; }
+      else { pitchMin = -0.1745; pitchMax = 1.2217; }
     } else {
       pitchMin = -0.14;
       pitchMax = (player.kind === 'arty' ? 1.05 : 0.3);
@@ -182,11 +187,8 @@ function step(dt) {
     var tySc = Math.atan2(_vAim.x, _vAim.z), gptSc = Math.asin(clamp(_vAim.y, -1, 1)); // 炮镜分支:dir(camAim) 同款逆解
     lastAimT.y = tyS; lastAimT.p = gptS; lastAimT.gy = gywT; lastAimT.gp = gptT; lastAimT.d = dAimC;   // 汇瞄探针转录(验收断言用)
     if (artyScoped) {
-      // 火箭炮十字准星=发射架真实方位在注视面(装定距离×视轴俯角)上的投影——
-      //   俯角取视轴而非炮管(高抛管指天,取炮管俯角会飞出屏外);伺服到位=镜心重合,方位追逐期可见偏移
-      var bAzA = Math.atan2(_vM.x, _vM.z), elVA = Math.asin(clamp(_vComp.y, -1, 1));
-      var dChA = clamp(player.artyRange || 300, 30, CONF.arty.maxRange);
-      _v3.set(_v2.x + Math.sin(bAzA) * Math.cos(elVA) * dChA, _v2.y + Math.sin(elVA) * dChA, _v2.z + Math.cos(bAzA) * Math.cos(elVA) * dChA);
+      // 俯视火控视野:无炮口线准星——光标即装定点,地面覆盖环即弹着区(world.js artyTop 标记系)
+      _v3.set(_v2.x, _v2.y, _v2.z);
     } else if (tankScoped) {
       _v3.set(_v2.x + _vM.x * 40, _v2.y + _vM.y * 40, _v2.z + _vM.z * 40);   // 十字准星=炮口真实指向(不减装定量,见下方伺服注释)
     } else {
@@ -256,15 +258,8 @@ function step(dt) {
       }
     }
     if (artyScoped) {
-      // 视角优先——装定方位直接取视野方位(鼠标横向直驱 camAimY,见 flow.js),
-      //   发射架转速 1.0rad/s 不反喂装定(视角若锁装定方位=视角跟炮管走);
-      //   物理炮管仍由 playerUpdate 世界反馈闭环按 1.0rad/s 追随装定 → 十字准星可见追逐镜心
-      if (artyFrozen) {
-        player.turretYawDelta = 0;
-      } else {
-        player._artyAz = camAimY;
-        player.turretYawDelta = 0;
-      }
+      // 俯视火控:发射架由 playerUpdate 光标伺服直接积分(1.0rad/s 限速);此处只清追逐余量
+      player.turretYawDelta = 0;
     } else {
       var trRate = player.turretRate0 * turretMult(player);
       var trMax = trRate * dt;
@@ -277,9 +272,9 @@ function step(dt) {
         player.turretYawDelta = 0;
       }
     }
-    if (el.ch && isFinite(chOffX) && isFinite(chOffY))                  // 准星DOM = 炮口/落点真实投影(常画,超界屏角外驻留)
+    if (el.ch && !artyScoped && isFinite(chOffX) && isFinite(chOffY))   // 准星DOM = 炮口/落点真实投影(火箭炮俯视:CSS 隐藏+跳写)
       domTF(el.ch, 'translate(calc(-50% + ' + chOffX.toFixed(1) + 'px), calc(-50% + ' + chOffY.toFixed(1) + 'px))');
-    if (el.aimdot) {                                                // ★黄点永远钉死屏幕正中心(FPS 式,第三人称/开镜一致;追逐亮/停追灰)
+    if (el.aimdot && !artyScoped) {                                 // ★黄点永远钉死屏幕正中心(FPS 式;火箭炮俯视用系统光标,黄点隐藏)
       if (!el.aimdot._pin) { el.aimdot._pin = true; domTF(el.aimdot, 'translate(0.0px,0.0px)'); }   // 钉死写一次(常量 transform,鼠标乱动控瞄光标不动)
       var _adOp = aimChaseOn ? '0.9' : '0.3';                      // 亮度=追逐态边沿写(每帧一次字符串比较)
       if (el.aimdot._op !== _adOp) { el.aimdot._op = _adOp; el.aimdot.style.opacity = _adOp; }
@@ -701,6 +696,7 @@ function animate() {
     if (el.fps && window._fpsShow) el.fps.textContent = window._dbgPerfOn
       ? _fpsT + ' fps · ' + ri.calls + ' dc · ' + (ri.triangles > 999999 ? (ri.triangles / 1000000).toFixed(1) + 'M' : Math.round(ri.triangles / 1000) + 'k') + ' tri · JS' + _frameMsEMA.toFixed(1) + '/step' + _stepMsEMA.toFixed(1) + 'ms'   // di:JS 耗时拆分(帧时=1000/fps;JS≪帧时→GPU 瓶颈)
       : _fpsT + ' fps';
+    if (el.sigfps && window._fpsShow) el.sigfps.textContent = _fpsT;   // 信号组FPS段(联动帧率显示开关)
   }
   _dcaAcc += renderDt;            // UI 节流按渲染帧节奏(墙钟口径,不受模拟步进影响)
   if (_dcaAcc >= 2) {
@@ -770,7 +766,7 @@ function dcAuditShow() {
    调试模式/帧率显示(游戏设置页两按钮):
    · 调试模式=window._dbgPerfOn:step 细分计时面板(#perfPanel)+DC 归因行+fps 行附加信息
      (dc/tri/JS/step 耗时拆分)全并入此门;关=生产零计时开销(既有门沿用)。
-   · 帧率显示=window._fpsShow:#fps 整行显隐;可单独开。
+   · 帧率显示=window._fpsShow:信号组#sigfps段显隐;可单独开。
    · 联动:开调试→自动开帧率;关帧率→自动关调试。
    localStorage 持久化;全部按钮事件驱动,无逐帧读取。
    ============================================================ */
@@ -801,6 +797,8 @@ function dcAuditShow() {
       if (_dcaEl) _dcaEl.style.display = _dOn ? '' : 'none';   // DC 归因行随调试模式显隐(关闭时收走残留文本)
       var fpsEl = document.getElementById('fps');
       if (fpsEl) fpsEl.style.display = _fOn ? '' : 'none';
+      var sigFps = document.getElementById('sigfps');   // 关帧率=信号组FPS段消失(Flex框自动缩短)
+      if (sigFps) sigFps.style.display = _fOn ? '' : 'none';
       try { localStorage.setItem(LS_D, _dOn ? '1' : '0'); localStorage.setItem(LS_F, _fOn ? '1' : '0'); } catch (e) { /* 同上 */ }
     }
     if (bD) bD.onclick = function () { _dOn = !_dOn; if (_dOn) _fOn = true; apply(); };    // 开调试→帧率联动开
@@ -838,6 +836,21 @@ initShellVfx();                                    // 坦克炮弹全场实例�
 initClouds();
 initFlash();
 initEmberFx();
+/* ★任务27③:特效池启动预热 + 着色器预编译(加载期一次性成本,根治「一播放爆炸特效就卡一下」):
+   ① comic/fx 全部惰性池(蘑菇云/火球/枪口焰/扬尘/命中火花/硝烟/弹道线/残骸火星…)预先构建;
+   ② renderer.compile 预链接全场景材质着色器——池网格恒 visible=false 而 compile 只遍历可见物,
+     故临时置可见、编译后复原(纯遍历,不渲染不动画)。预热失败绝不阻断启动(退化为旧惰性行为)。 */
+if (typeof window._setBootProgress === 'function') window._setBootProgress(95, 'PREWARMING FX SHADERS...');
+try {
+  if (typeof comicPrewarm === 'function') comicPrewarm();
+  if (typeof fxPrewarm === 'function') fxPrewarm();
+  if (typeof renderer !== 'undefined' && renderer && renderer.compile && typeof scene !== 'undefined' && scene && typeof camera !== 'undefined' && camera) {
+    var _pwHidden = [];
+    scene.traverse(function (o) { if (o.visible === false) { _pwHidden.push(o); o.visible = true; } });
+    renderer.compile(scene, camera);
+    for (var _pwI = 0; _pwI < _pwHidden.length; _pwI++) _pwHidden[_pwI].visible = false;
+  }
+} catch (ePrewarm) { /* 预热失败不阻断启动 */ }
 initInput();
 bindStartSideUI();
 bindStartKindUI();
@@ -959,7 +972,7 @@ function buildMidgame(nAlive, nWreck) {
                 if (B.perf.length >= 7) { clearInterval(tick); finish(); return; }
                 var L = window.__PERF_BASE && window.__PERF_BASE.last;
                 if (L) B.perf.push(JSON.parse(JSON.stringify(L)));
-                var f = document.getElementById('fps');
+                var f = document.getElementById('sigfps') || document.getElementById('fps');   // 独立FPS框已删,基准改吃信号组FPS段
                 B.fps.push(f ? f.textContent : '');
               } catch (e3) { clearInterval(tick); fail(e3); }
             }, 2100);

@@ -17,7 +17,7 @@ var shellMatE = new THREE.MeshBasicMaterial({ color: 0xff8860 });
    逐发一个 Mesh+scene.add 的画法在中间期数百发在飞时=数百 draw call+逐发 scene 增删;
    全场仅 2 个 InstancedMesh(玩家弹金色/AI 弹橙红,各 1 draw call),弹体沿速度方向拉长 5 倍(单 Mesh 版 mesh.scale 同款)。
    ============================================================ */
-var SHELL_CAP = 256;                       // 单阵营在飞上限(双方合计 512;超出者本帧不绘——实测峰值远低于此)
+var SHELL_CAP = 384;                       // 单阵营在飞上限(双方合计 768;超出者本帧不绘——任务24:防空机炮 2发/0.25s×3 车+坦克/火箭炮会战实测可破 256,扩容消除炮弹闪隐)
 var shellInstP = null, shellInstE = null;
 /* 复用 scratch(热路径,避免每帧 GC;模块私有) */
 var _shM = new THREE.Matrix4(), _shQ = new THREE.Quaternion(), _shS = new THREE.Vector3(1, 1, 5),
@@ -122,8 +122,8 @@ var aim92MissileGeo = buildAim92Geo();
      domain    火力分配的目标域: 'air'=对空优先(空空导弹) | 'ground'=对地优先(对地制导火箭)
      pen       战斗部直击穿深(mm; warheadPenRoll 闸门消费——导弹90/制导火箭800, 见 warheadPenRoll 注) */
 var HELI_MSL_SPEC = {
-  ty90:  { name: 'TY-90 (光电制导)', guidance: 'optoelectronic', domain: 'air', pen: 90, seekerFovDeg: 30, seekerAltMax: 1000, tubes: 4, reloadT: 40.0, v0: 680, vMax: 680, boostT: 1.5, gScale: 1, dragK: 0.00035, life: 45, dmg: 60, gMax: 20, kQ: 0.00118, turnK: 0.0025, gBias: true, terraFollow: true, nozzle: 0.88, range: 6000 },
-  aim92: { name: 'AIM-92 (光电制导)', guidance: 'optoelectronic', domain: 'air', pen: 90, seekerFovDeg: 30, seekerAltMax: 1000, tubes: 4, reloadT: 40.0, v0: 748, vMax: 748, boostT: 1.2, gScale: 1, dragK: 0.00025, life: 45, dmg: 55, gMax: 18, kQ: 0.00088, turnK: 0.0025, gBias: true, terraFollow: true, nozzle: 0.62, range: 8000 }
+  ty90:  { name: 'TY-90 (光电制导)', guidance: 'optoelectronic', domain: 'air', pen: 90, seekerFovDeg: 30, seekerAltMax: 1000, tubes: 4, v0: 680, vMax: 680, boostT: 1.5, gScale: 1, dragK: 0.00035, life: 45, dmg: 60, gMax: 20, kQ: 0.00118, turnK: 0.0025, gBias: true, terraFollow: true, nozzle: 0.88, range: 6000 },
+  aim92: { name: 'AIM-92 (光电制导)', guidance: 'optoelectronic', domain: 'air', pen: 90, seekerFovDeg: 30, seekerAltMax: 1000, tubes: 4, v0: 748, vMax: 748, boostT: 1.2, gScale: 1, dragK: 0.00025, life: 45, dmg: 55, gMax: 18, kQ: 0.00088, turnK: 0.0025, gBias: true, terraFollow: true, nozzle: 0.62, range: 8000 }
 };
 /* 力矢量转向参数口径 (与真实导弹动力学/飞行模拟器同源):
    - 可用过载 a_max = min(gMax·9.8, kQ·v²) —— 结构 g 上限只在动压足够时可达 (kQ 标定为 0.6·vMax 处恰好满过载),
@@ -143,27 +143,53 @@ var HELI_RKT_SPEC = {
   wz10: { name: '火蛇-70A (雷达制导)', guidance: 'datalink', domain: 'ground', pen: 800, dmg: 40, v0: 680, vMax: 680, boostT: 0, gScale: 1, dragK: 0.00030, gMax: 10, kQ: 0.00059, turnK: 0.0025, captureR: 6, rounds: 14, range: 8000, life: 45, splashR: 14.67 },   // 40 × 22/60 ≈ 14.67m (爆炸半径随伤害等比,较原 16m 下调)
   ah64: { name: 'Hydra-70 (无制导)', domain: 'ground', pen: 800, dmg: 60, v0: 748, vMax: 748, boostT: 0, gScale: 0.35, dragK: 0.00025, vFloor: 60, captureR: 6, range: 10000, life: 45, splashR: 22, rounds: 14 }   // dmg 60 × 22/60 = 22m
 };
-function heliMslTypeOf(t) { return t.kind === 'wz10' ? 'ty90' : 'aim92'; }
-function heliMslTubesOf(t) { return HELI_MSL_SPEC[heliMslTypeOf(t)].tubes; }
-function heliMslReloadTimeOf(t) {
-  var sp = HELI_MSL_SPEC[heliMslTypeOf(t)];
-  return sp ? sp.reloadT : 40.0;
+function heliMslTypeOf(t) {
+  if (t.kind === 'aa') return t.team === 'ally' ? 'ty90' : 'aim92';   // 防空:红PGZ-95=飞弩-6(≡TY-90规格)/蓝复仇者=FIM-92(≡AIM-92规格)
+  return t.kind === 'wz10' ? 'ty90' : 'aim92';
 }
-/* 火箭弹类装填: 1 秒 × 装弹量。火箭炮 16 联=16s, 直升机 14 联巢=14s。导弹不走本函数。 */
+function heliMslTubesOf(t) {
+  if (t.kind === 'aa') return t.team === 'ally' ? 2 : 4;   // 每侧在筒数:PGZ-95 左右机炮组各2枚(共4)/复仇者 左右发射箱各4管(共8)
+  return HELI_MSL_SPEC[heliMslTypeOf(t)].tubes;
+}
+/* 通用导弹装填(用户定 2026-09-11):总时长 = 载弹总数 × 5 秒/发,直升机/防空车同一公式,单一真值源。
+   直-10/AH-64/复仇者:每侧 4 × 2 = 8 发 → 40s(旧值不变);PGZ-95:每侧 2 × 2 = 4 发 → 20s(40s→20s)。 */
+var MSL_RELOAD_PER_ROUND = 5.0;
+function heliMslReloadTimeOf(t) {
+  return heliMslTubesOf(t) * 2 * MSL_RELOAD_PER_ROUND;
+}
+/* 任务24: AI 防空齐射纪律(用户报告:加入防空车后极其严重的卡顿+动画播放错误)。
+   修复前 AI 以 0.2s 防抖间隔+0.3s 思考节拍在 3 秒内打光全部备弹(headless 探针实测:
+   6 辆 AA 3 秒 35 发、峰值 31 枚同时在飞、109 次音频事件/3 秒),叠加 45s 寿命孤弹
+   → 制导弹实体风暴 → 固定步长模拟追不上渲染 → 全场慢动作卡顿。
+   真实 SPAAG 条令=发射 1~2 发→观察毁伤→再装定,故 AI 限:每车在飞 ≤2 枚 + 间隔 3.0s。
+   玩家不受影响(手感 0.2s 防抖保持)。 */
+var AA_AI_MSL_INFLIGHT = 2;
+var AA_AI_MSL_INTERVAL = 3.0;
+/* 火箭弹类装填(大修): 基础=1 秒 × 装弹量,再乘伤害系数=该弹伤害/60(伤害越低系数越小,装填越快)。
+   PHL-11: 40 联 × 1s × (60/60=1.0) = 40s;M142: 6 联 × 1s × (120/60=2.0) = 12s;
+   直-10 火蛇-70A: 14 × (40/60) ≈ 9.33s;AH-64d Hydra-70: 14 × (60/60) = 14s。导弹不走本函数。 */
 function rocketPodCountOf(t) {
   if (!t) return 14;
   var kind = t.kind || t;
-  if (kind === 'arty') return (typeof CONF !== 'undefined' && CONF.arty && CONF.arty.salvo) ? CONF.arty.salvo : 16;
+  if (kind === 'arty') return artyConfOf(t).salvo;   // 阵营路由:红 PHL-11=40 / 蓝 M142=6
   var spec = (typeof HELI_RKT_SPEC !== 'undefined') ? HELI_RKT_SPEC[kind] : null;
   if (spec && spec.rounds) return spec.rounds;
   if (kind === 'wz10' || kind === 'ah64') return 14;
   return 14;
 }
+/* 该载具火箭弹的单发伤害(装填伤害系数与爆炸结算共用同一真源) */
+function rocketDamageOf(t) {
+  if (!t) return 60;
+  var kind = t.kind || t;
+  if (kind === 'arty') return artyConfOf(t).dmg;
+  var spec = (typeof HELI_RKT_SPEC !== 'undefined') ? HELI_RKT_SPEC[kind] : null;
+  return (spec && spec.dmg) ? spec.dmg : 60;
+}
 function rocketReloadTimeOf(t) {
-  return rocketPodCountOf(t) * 1.0;
+  return rocketPodCountOf(t) * 1.0 * (rocketDamageOf(t) / 60);   // 1s/发 × 伤害系数(dmg/60)
 }
 var heliMissileMat = new THREE.MeshLambertMaterial({ vertexColors: true });
-var MSL_MAX = 32;
+var MSL_MAX = 64;   // 任务24:直升机(每队最多 4×8=32)+防空车(PGZ 12/复仇者 24)同场对射可破 32 → 超限导弹隐形(有尾迹无弹体);扩到 64 消除
 var missileBodiesTy90 = null, missileBodiesAim92 = null, missileFlames = null;
 
 function initHeliMissileVfx() {
@@ -244,7 +270,7 @@ var rocketFlameGeo = buildRocketFlameGeo();
 var rocketShellMat = new THREE.MeshLambertMaterial({ vertexColors: true });                     // 受光照弹体(不自亮)
 var rocketFlameMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.96,
   blending: THREE.NormalBlending, depthWrite: false, toneMapped: false }); // 自绘亮色尾焰;普通透明混合,无反光/泛光
-var RK_MAX = 192;                                // 齐射并发上界:AI 8×16 + 玩家 16 = 144(余量 1.33×)
+var RK_MAX = 320;                                // 齐射并发上界:PHL-11 40 发×(AI 4+玩家 1) + M142 6 发×AI 4 + 直升机火箭 ≈ 224(余量 1.4×)
 var rocketBodies = null, rocketFlames = null;    // 全场各 1 个 InstancedMesh(initRocketVfx 建,弹体/尾焰各 1 draw call)
 function initRocketVfx() {
   rocketBodies = new THREE.InstancedMesh(rocketShellGeo, rocketShellMat, RK_MAX);
@@ -292,7 +318,7 @@ function rocketVfxPass() {
 }
 var _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 var _mslAcc = new THREE.Vector3();   // stepShells 制导武器合力累加器(推力/阻力/重力/转向力, 每步重建, 不持引用)
-var _gaDir = new THREE.Vector3();      // 实测炮管世界方向(火箭炮闭环伺服用)
+var _gaDir = new THREE.Vector3();      // 实测炮管世界方向 scratch(AI 火箭炮/火炮伺服共用)
 var _vComp = new THREE.Vector3();      // 主炮弹道装定:准星视线方向临时向量
 var _vAim = new THREE.Vector3();       // 视轴着点 P(汇瞄目标)临时向量
 var _qAim = new THREE.Quaternion(), _qAim2 = new THREE.Quaternion();
@@ -333,13 +359,26 @@ var ARTY_SALVO_PATTERN = [
   [72.28, 23.49], [44.67, 61.49], [0.00, 76.00], [-44.67, 61.49], [-72.28, 23.49],
   [-72.28, -23.49], [-44.67, -61.49], [0.00, -76.00], [44.67, -61.49], [72.28, -23.49]
 ];
+/* 齐射弹数不同 → 图案按弹数取表:首发恒为落区中心(红点=首发铁律),其余黄金角螺旋均布,
+   间距随溅射半径等比缩放(锚点:溅射 22m → 间距 38m;M142 溅射 44m → 间距 76m)。 */
+function _artySpiralPattern(n, spacing) {
+  var p = [[0, 0]];
+  for (var i = 1; i < n; i++) {
+    var r = spacing * 0.62 * Math.sqrt(i), a = i * 2.39996323;
+    p.push([r * Math.cos(a), r * Math.sin(a)]);
+  }
+  return p;
+}
+var ARTY_SALVO_PATTERNS = { 16: ARTY_SALVO_PATTERN, 40: _artySpiralPattern(40, 38), 6: _artySpiralPattern(6, 76) };
+function artySalvoPattern(total) { return ARTY_SALVO_PATTERNS[total] || ARTY_SALVO_PATTERN; }
 
 function fireShell(t, disp) {  // disp(仅火箭炮齐射第 2 发起):真物理散布=初速向量/初速扰动,发射架不动
+  if (typeof aaNoteFlash === 'function') aaNoteFlash(t);   // 任务22:直升机机炮开火=闪光暴露(蓝方光学补盲情报源;非直升机为 no-op)
   var dir = new THREE.Vector3();
   t.gunPivot.getWorldDirection(dir);
   var muzzlePos = artyBoreOrigin(t, dir);   // 出膛原点:中轴瞄准线(火箭炮,见函数注释)
   var isArty = t.kind === 'arty';
-  var speed = isArty ? (t.rocketV || CONF.arty.rocketSpeed) : (t.shellSpeed0 || CONF.shellSpeedE) * barrelEff(t);   // 初速 ∝ 炮管血量%;分阵营初速
+  var speed = isArty ? (t.rocketV || artyConfOf(t).rocketSpeed) : (t.shellSpeed0 || CONF.shellSpeedE) * barrelEff(t);   // 初速 ∝ 炮管血量%;火箭炮走阵营规格(PHL-11/M142)
   var acc = t.isPlayer
     ? aiBaseDispersion(t, isFinite(t.lastAimD) ? t.lastAimD : 260)   // 玩家与 AI 完全同源——选什么载具用什么散布(车组系数+距离公式)
     : t.ai.acc;
@@ -357,10 +396,19 @@ function fireShell(t, disp) {  // disp(仅火箭炮齐射第 2 发起):真物理
   var accAz = acc, accEl = acc;
 
   if (isArty) {
-    // 齐射弹道分配: 确保16发火箭弹在落区形成无缝且不重叠的覆盖(任意两爆心间距>=38m,半径侵入量<=6m < 1/3爆炸半径7.33m)
-    var salvoTotal = CONF.arty.salvo || 16;
+    // 齐射弹道分配: 全部火箭弹在落区形成无缝且不重叠的覆盖(间距随溅射半径等比:22m→38m 锚点;PHL-11 40 发/M142 6 发各自成表)
+    var salvoTotal = artyConfOf(t).salvo || 16;
     var shotIdx = (t.salvoLeft != null && t.salvoLeft >= 0) ? (salvoTotal - 1 - t.salvoLeft) : 0;
-    if (shotIdx < 0 || shotIdx >= ARTY_SALVO_PATTERN.length) shotIdx = 0;
+    var _pat = artySalvoPattern(salvoTotal);
+    if (shotIdx < 0 || shotIdx >= _pat.length) shotIdx = 0;
+
+    var _rkMz = t._rktMuzzle;                          // ★逐发发射位置=本发弹头建模中心(PHL-11:与视觉消耗同索引,发射谁谁消失;M142:六管口圆心)
+    if (_rkMz && _rkMz.pos && _rkMz.pos.length) {
+      var _rkO = _rkMz.pos[shotIdx % _rkMz.pos.length];
+      _rkMz.obj.position.set(_rkO[0], _rkO[1], _rkO[2]);
+      _rkMz.obj.updateWorldMatrix(true, false);
+      muzzlePos.setFromMatrixPosition(_rkMz.obj.matrixWorld);
+    }
 
     var aimX = t._salvoAimX, aimZ = t._salvoAimZ;
     if (aimX == null || aimZ == null) {
@@ -374,7 +422,11 @@ function fireShell(t, disp) {  // disp(仅火箭炮齐射第 2 发起):真物理
       }
     }
 
-    var patOffset = ARTY_SALVO_PATTERN[shotIdx];
+    if (t._rktPack) {                                    // PHL-11 火箭弹视觉消耗:每发离轨按发射顺序隐藏一枚(updatePHL11Rockets 逐帧同步 count)
+      if (t._rktLeft == null) t._rktLeft = salvoTotal;
+      if (t._rktLeft > 0) t._rktLeft--;
+    }
+    var patOffset = _pat[shotIdx];
     var targetX = aimX + patOffset[0];
     var targetZ = aimZ + patOffset[1];
     var targetY = terrainH(targetX, targetZ);
@@ -435,10 +487,12 @@ function fireShell(t, disp) {  // disp(仅火箭炮齐射第 2 发起):真物理
   }
 
   // 坦克炮弹不再建逐发网格——弹体走全场实例化(shellVfxPass,2 draw call);火箭弹体/尾焰沿用 rocketVfxPass
+  /* 火箭弹寿命=真实飞行时间+20s 余量(40km 高抛 tof≈99s,旧固定 30s 会在半途蒸发);坦克炮弹照旧 4s */
+  var _shLife = isArty ? Math.max(30, 2 * speed * Math.max(0.08, dir.y) / CONF.gravity + 20) : 4;
   var shN = {
     pos: muzzlePos.clone(),
     vel: dir.clone().multiplyScalar(speed),
-    owner: t, pen: t.pen * (isArty ? 1 : barrelEff(t)), dmg: t.dmg, life: isArty ? 30 : 4, trailT: 0, _comicLineT: 0, _comicLineSlot: -1, _comicLineDone: false, _lineU: 0,   // 穿深同因子;火箭弹寿命 30s(2000m 飞行≈22s)
+    owner: t, pen: t.pen * (isArty ? 1 : barrelEff(t)), dmg: t.dmg, life: _shLife, trailT: 0, _comicLineT: 0, _comicLineSlot: -1, _comicLineDone: false, _lineU: 0,   // 穿深同因子
     kdrag: isArty ? 0 : (t.penKd || 0), flyD: 0,     // 穿深存速衰减:口径阻力系数(1/m)·真实飞行里程(命中结算用,见 resolveHit)
     arty: isArty
   };
@@ -461,12 +515,12 @@ function fireShell(t, disp) {  // disp(仅火箭炮齐射第 2 发起):真物理
   if (typeof comicRocketLineStart === 'function') comicRocketLineStart(shN); // 主炮弹/火箭共用150m解析尾迹槽
   if (!isArty) {
     /* 主炮:一次事件生成整张火光、烟和高亮 halo。 */
-    if (comicGunVisible) comicMuzzleBurst(muzzlePos, dir, t.kind === 'td' ? 3.6 : 3.2, t.muzzle, t); // 细烟在0.76s边沿只采样一次实时炮口
+    if (comicGunVisible) comicMuzzleBurst(muzzlePos, dir, t.kind === 'td' ? 3.6 : 3.2, t.muzzle, t); // 小爆烟在0.5s边沿只采样一次实时炮口(连射超发仅末发)
   } else {
     /* 火箭发射:只登记发射架根部中央单团烟及解析弹道线。 */
-    if (typeof comicRocketLaunchBurst === 'function') comicRocketLaunchBurst(t, dir);
+    if (typeof comicRocketLaunchBurst === 'function') comicRocketLaunchBurst(t, dir, null, t.dmg);
   }
-  var vFire = t.isPlayer ? (isArty ? 0.45 : FIRE_VOL) : volAt(muzzlePos, isArty ? 0.28 : 0.8 * FIRE_VOL);   // 火箭发射收敛:单发≈坦克炮峰值 1/3、16 齐射峰值≈0.55× 单炮(烘焙 RMS 实测审计);坦克炮 1/0.8×FIRE_VOL(主炮 ×2)
+  var vFire = t.isPlayer ? (isArty ? 0.45 : FIRE_VOL) : volAt(muzzlePos, isArty ? 1.2 : 0.8 * FIRE_VOL);   // 火箭发射收敛:单发≈坦克炮峰值 1/3、16 齐射峰值≈0.55× 单炮(烘焙 RMS 实测审计);坦克炮 1/0.8×FIRE_VOL(=5.0,2026-09-09 炮声×2);AI 火箭 base 0.28→1.2(2026-09-09):原值远场剩 0.011,187m 外即被 playShot 门丢光致中距齐射无声,1.2 远场保底 0.048 全程可闻,近场峰值由压缩主链兜底
   var dFire = (!t.isPlayer && player && player.group) ? muzzlePos.distanceTo(player.group.position) : 0;
   sfxFire(vFire, dFire, isArty);
   if (isArty && typeof sfxRocketWhoosh === 'function') sfxRocketWhoosh(muzzlePos, speed);
@@ -476,7 +530,7 @@ function fireShell(t, disp) {  // disp(仅火箭炮齐射第 2 发起):真物理
      水平力 ∝ sinθ:朝右/朝左开火→对应方向摇摆,幅度∝|sinθ|。 */
   var ty0 = t.turretYaw || 0;
   t.recAx = Math.cos(ty0); t.recLat = Math.sin(ty0);
-  var isHeli = isHeliVehicle(t);
+  var isHeli = isHeliVehicle(t) || (typeof isAAVehicle === 'function' && isAAVehicle(t));   // AA 机炮=直升机机炮性能口径 → 后坐同档(25mm 双联对 22.5t 车体近乎无感)
   t.speed -= (isArty ? 0.25 : (isHeli ? 0.03 : (t.isPlayer ? 2.2 : 1.2))) * t.recAx;   // 轴向冲量:向后/向前/无,直升机机炮后坐轻微
   t.recT = 0;                                                     // 后坐动画起跑:身管急退(炮塔本地系,任意朝向)+车体纵摇/横摇(见 alignTank)
   if (t.isPlayer) camPK = isHeli ? 0.08 : 1;   // camPK 仅在开镜时顶起炮镜;后坐体现=炮口真实上抬+准星晃后复位(recPitchK 挂在伺服目标)
@@ -565,6 +619,7 @@ function simulateHeliRocketImpact(from, v0, g, dragK) {
 }
 
 function fireHeliRocket(t, side) {
+  if (typeof aaNoteFlash === 'function') aaNoteFlash(t);   // 任务22:火箭开火=闪光暴露
   var rk = HELI_RKT_SPEC[t.kind] || HELI_RKT_SPEC.ah64;
   var guided = rk.guidance === 'datalink';   // 制导模式: 'datalink'=火蛇-70A 数据链; 无=Hydra-70 弹道飞行
   // 固定式火箭巢: 两型统一沿机身长轴离架(含俯仰) —— 与出膛点同一姿态源, 转向由制导段承担
@@ -602,7 +657,7 @@ function fireHeliRocket(t, side) {
   shells.push(sh);
   if (guided) airborneGuidedRockets.push(sh);   // 在空制导火箭子列表登记(供火力分配计数, removeShell 收割)
   if (typeof comicRocketLineStart === 'function') comicRocketLineStart(sh);
-  if (typeof comicRocketLaunchBurst === 'function') comicRocketLaunchBurst(t, dir, muzzlePos);
+  if (typeof comicRocketLaunchBurst === 'function') comicRocketLaunchBurst(t, dir, muzzlePos, rk.dmg);
   sfxFire(t.isPlayer ? 0.38 : 0.22, 0, true);
   if (typeof sfxRocketWhoosh === 'function') sfxRocketWhoosh(muzzlePos, rSpd);
 }
@@ -704,6 +759,7 @@ function allocateGuidedFireTarget(p, spec, excludeShell) {
   return best.track.tank;
 }
 function fireHeliMissile(t, side, target) {
+  if (typeof aaNoteFlash === 'function') aaNoteFlash(t);   // 任务22:导弹开火=闪光暴露
   var sIdx = side || 0;
   // 隐藏本次发射的筒位弹体(多联装:按 _heliMslTube 计数取筒)
   var tubeIdx = (t._heliMslTube && t._heliMslTube[sIdx] != null) ? (t._heliMslTube[sIdx] | 0) : 0;
@@ -749,11 +805,87 @@ function fireHeliMissile(t, side, target) {
   shells.push(sh);
   airborneMissiles.push(sh);                          // 空中导弹子列表登记
   if (typeof comicRocketLineStart === 'function') comicRocketLineStart(sh);
-  if (typeof comicRocketLaunchBurst === 'function') comicRocketLaunchBurst(t, dir, muzzlePos);
+  if (typeof comicRocketLaunchBurst === 'function') comicRocketLaunchBurst(t, dir, muzzlePos, spec.dmg);
   if (typeof sfxMissileLaunch === 'function') sfxMissileLaunch(muzzlePos, t.isPlayer ? 0.95 : 0.65);
   if (t.isPlayer && typeof sfxEventVoice === 'function') sfxEventVoice('missile_launch');
   sfxFire(t.isPlayer ? 0.45 : 0.28, 0, false);
   if (typeof sfxRocketWhoosh === 'function') sfxRocketWhoosh(muzzlePos, vMax);
+}
+
+/* ===== 防空载具武器 (TASK 18) =====
+   发射点=发射架各筒位「导弹弹头建模中心」(_aaMslMuzzle 与火箭炮 _rktMuzzle 同款标记机制);
+   发射方向=发射架轴线(炮塔回转 turret × 俯仰 gunPivot 的世界姿态,+Z 轴);
+   发射后不管:光电导引头自搜索(findMissileAutonomousOpticalTarget),载具无额外雷达引导。
+   红 PGZ-95=飞弩-6(≡TY-90:680m/s/6km/伤60)/蓝 复仇者=FIM-92(≡AIM-92:748m/s/8km/伤55),装填均 40s。 */
+function fireAAMissile(t, side, target) {
+  var sIdx = side || 0;
+  // 隐藏本次发射的筒位弹体(与直升机多联装同款:按 _heliMslTube 计数取筒,打空开侧装填)
+  var tubeIdx = (t._heliMslTube && t._heliMslTube[sIdx] != null) ? (t._heliMslTube[sIdx] | 0) : 0;
+  var sideMeshes = sIdx === 0 ? t._heliMslMeshesL : t._heliMslMeshesR;
+  if (sideMeshes && sideMeshes[tubeIdx]) sideMeshes[tubeIdx].visible = false;
+
+  // 出膛原点+轴向:发射架轴线 = gunPivot 世界姿态旋转 +Z(炮塔回转+俯仰全继承)
+  var dir = new THREE.Vector3(0, 0, 1);
+  var muzzlePos = new THREE.Vector3();
+  if (t.gunPivot) dir.applyQuaternion(t.gunPivot.getWorldQuaternion(new THREE.Quaternion())).normalize();
+  var mz = t._aaMslMuzzle;
+  if (mz && mz.pos && mz.pos.length) {
+    var slot = sIdx * (mz.perSide || 4) + (tubeIdx % (mz.perSide || 4));   // 左箱(左炮组)在前,右箱在后;筒序=装填消耗序
+    var o = mz.pos[slot % mz.pos.length];
+    mz.obj.position.set(o[0], o[1], o[2]);
+    mz.obj.updateWorldMatrix(true, false);
+    muzzlePos.setFromMatrixPosition(mz.obj.matrixWorld);
+  } else if (t.muzzle) {
+    t.muzzle.getWorldPosition(muzzlePos);
+  }
+
+  var spec = HELI_MSL_SPEC[heliMslTypeOf(t)];
+  var mType = heliMslTypeOf(t);
+  var vMax = spec.vMax;
+  // 离架初速:母车三轴惯性速度(地面载具 velX/velZ) + 顺发射架轴线×规格极速(与直升机同款离轨冲量口径)
+  var initialVel = new THREE.Vector3((t.velX || 0) + dir.x * vMax, dir.y * vMax, (t.velZ || 0) + dir.z * vMax);
+
+  var sh = {
+    pos: muzzlePos.clone(),
+    vel: initialVel,
+    owner: t,
+    pen: spec.pen != null ? spec.pen : 90,
+    dmg: spec.dmg,
+    life: spec.life,
+    flightT: 0,
+    v0: vMax,
+    vMax: vMax,
+    missileType: mType,
+    target: target,                                       // PGZ-95=雷达锁定航迹分配;复仇者=null(导引头离架自搜索)
+    trailT: 0,
+    _comicLineT: 0,
+    _comicLineSlot: -1,
+    _comicLineDone: false,
+    _lineU: 0,
+    _traj: [muzzlePos.x, muzzlePos.y, muzzlePos.z],
+    isHeliMissile: true                                   // 复用直升机导弹全套飞行/导引头/命中/VFX 管线
+  };
+  shells.push(sh);
+  airborneMissiles.push(sh);
+  if (typeof comicRocketLineStart === 'function') comicRocketLineStart(sh);
+  if (typeof comicRocketLaunchBurst === 'function') comicRocketLaunchBurst(t, dir, muzzlePos, spec.dmg);
+  if (typeof sfxMissileLaunch === 'function') sfxMissileLaunch(muzzlePos, t.isPlayer ? 0.95 : 0.65);
+  if (t.isPlayer && typeof sfxEventVoice === 'function') sfxEventVoice('missile_launch');
+  sfxFire(t.isPlayer ? 0.45 : 0.28, 0, false);
+  if (typeof sfxRocketWhoosh === 'function') sfxRocketWhoosh(muzzlePos, vMax);
+}
+
+/* PGZ-95 二号武器:两把双联装机炮,每把性能=直升机机炮(fireShell 同款管线:伤40/穿35/装填0.25s/初速920/散布同源)。
+   单次触发两侧炮架同时各出膛 1 发(共 2 发);出膛点在左右耳轴标记(_aaGunDX)间切换,炮口世界矩阵随 gunPivot 俯仰。 */
+function fireAAGun(t) {
+  if (!t || !t.muzzle || typeof fireShell !== 'function') return;
+  var mx = t.muzzle.position.x, dx = t._aaGunDX || 1.02;
+  for (var s = -1; s <= 1; s += 2) {
+    t.muzzle.position.x = mx + s * dx;
+    fireShell(t, false);
+  }
+  t.muzzle.position.x = mx;
+  t.reload = t.reloadTime;   // 一次触发=左右双联一个点射周期(0.125s,任务25 射速×2);调用方只管 gate
 }
 
 /* ★通用比例真源: 火箭/面杀伤弹爆炸波及半径 ∝ 伤害。锚点: 60 伤 → 22m (与火箭炮 CONF.arty 一致)。
@@ -1120,6 +1252,14 @@ function stepShells(dt) {
 
       // 目标获取 (guidance 模式分派): 导弹复合制导体系 / 火蛇数据链逐帧跟随 —— 见 heliGuidedAcquireTarget
       var effectiveTarget = heliGuidedAcquireTarget(s, gSpec);
+      // 任务24: 孤弹安全自毁(真实导弹安全引信同则)——离架 >5s 后连续 4s 无任何有效制导目标
+      //   (母车被毁/目标全灭/导引头搜不到)→ 空中自毁。修复前孤弹飞满 45s 寿命,长期占用
+      //   实体/尾迹槽/实例容量,是卡顿与"导弹隐形/尾迹残留"渲染错误的主因之一。
+      if (s.isHeliMissile) {
+        if (effectiveTarget) s._orphanT = 0;
+        else s._orphanT = (s._orphanT || 0) + dt;
+        if (s._orphanT > 4.0 && (s.flightT || 0) > 5.0) { heliMissileMissBurst(s, s.pos); removeShell(si); continue; }
+      }
       if (effectiveTarget) {
         var tPos = effectiveTarget.isHeatSource ? effectiveTarget.pos : (effectiveTarget.group ? effectiveTarget.group.position : null);
         if (tPos) {
@@ -1317,7 +1457,9 @@ function stepShells(dt) {
         _v3.copy(s.vel).normalize();
         var tx = s.pos.x - _v3.x * RK_NOZZLE, ty = s.pos.y - _v3.y * RK_NOZZLE, tz = s.pos.z - _v3.z * RK_NOZZLE;
         /* 全航程尾迹:由模拟时间定距登记整张烟卡;不做相机/距离/炮镜逐次检测,不调用粒子。 */
-        s.trailT = burn2 ? 0.070 : 0.160;
+        /* 全程烟链:助推/惯性段统一 60Hz。惯性段 355m/s 巡航下旧 30Hz 会拉出 ~12m 空洞(烟卡仅 ~4m),
+           视觉上"只有发射段有烟"——定频 0.017s 后间距 ≤6m,配合膨胀/湍流即全程连续烟柱。 */
+        s.trailT = 0.017;
         if (typeof comicRocketTrailSpawn === 'function') comicRocketTrailSpawn(tx, ty, tz, _v3, burn2);
       }
     }
@@ -1354,13 +1496,14 @@ function artilleryBurst(p, owner) {
   var dCB = player ? bp.distanceTo(player.group.position) : 999;
   var svCB = clamp(36 / Math.max(6, dCB), 0, 0.85);
   camShake = Math.max(camShake, svCB * svCB * 1.35);              // 平方衰减震屏(36/max(6,d)上限0.85 ×1.35 — 较大爆炸的 26/max(6,d)上限0.7 强约两成)
-  if (typeof sfxExplodeByDamage === 'function') sfxExplodeByDamage(bp, (CONF.arty && CONF.arty.dmg) || 60);
+  var _abSpec = artyConfOf(owner);   // 爆炸规格随发射者阵营:红 PHL-11(60伤/22m) 蓝 M142(120伤/44m)
+  if (typeof sfxExplodeByDamage === 'function') sfxExplodeByDamage(bp, _abSpec.dmg);
   else sfxExplode(bp, 1.3);                                            // 爆炸声∝伤害
   recentBursts.push({ x: bp.x, z: bp.z, t: gameT });               // 爆点入账:惊醒附近"专注"状态的 AI(见 awarenessUpdate)
   if (typeof burstGridMark === 'function') burstGridMark(bp.x, bp.z, gameT);   // 12m 桶位图同步登记(awarenessUpdate 邻桶查询用)
   if (recentBursts.length > 48) recentBursts.shift();
   if (bp.y - terrainH(bp.x, bp.z) < 2.0) queueCrater(bp.x, bp.z);   // 贴地爆炸 → 犁出真实弹坑(凹坑+凸缘+焦土)
-  applySplash(bp, CONF.arty.splashR, CONF.arty.dmg, owner);
+  applySplash(bp, splashRadiusFromDamage(_abSpec.dmg), _abSpec.dmg, owner);
   if (typeof comicGroundDust === 'function') comicGroundDust(bp.x, bp.y + 0.4, bp.z, true); // 伴随大范围地面泥尘外抛
   if (DBG_ON && owner === player) {                 // 无头回归:记录玩家火箭弹真实爆点(对指示器精度断言)
     if (dbgPlayerBursts.length >= 128) dbgPlayerBursts.shift();
@@ -1373,6 +1516,18 @@ function artilleryBurst(p, owner) {
 }
 var _SPLASH_KEYS = ['hull', 'trackL', 'trackR', 'engine', 'fuel', 'ammo', 'turret'];   // 模块常量(逐爆点提升,语义不变)
 var _splashScratch = [];                         // 溅射邻域查询复用 scratch(零分配)
+/* P1-6 溅射弹痕落点:爆心朝向车体表面点(原 t.group.position 在车体中心/底部,弹痕基本不可见)。
+   高度按件区分(炮塔/炮管取上部),半径按件区分(炮塔内收);返回普通 {x,y,z}(vehWeatherHit 兼容)。 */
+function splashMarkPoint(t, p, key) {
+  var c = t.group.position;
+  var part = (typeof WX_PART_OF !== 'undefined' && WX_PART_OF[key]) || 'hull';
+  var up = (part === 'turret' || part === 'gun') ? 1.8 : 1.0;
+  var R = (t.radius || 3) * (part === 'hull' ? 0.7 : 0.45);
+  var dx = c.x - p.x, dz = c.z - p.z;
+  var len = Math.sqrt(dx * dx + dz * dz);
+  if (!(len > 0.001)) return { x: c.x + R, y: c.y + up, z: c.z };
+  return { x: c.x - dx / len * R, y: c.y + up, z: c.z - dz / len * R };
+}
 function applySplash(p, radius, dmg, owner) {
   var nearby = collectAiNearby(p.x, p.z, radius + 3.1, _splashScratch);   // 空间邻域预筛(~14m<100m 格宽必落 3×3;XZ 命中是 3D 命中的必要条件,无漏报)
   for (var i = 0; i < nearby.length; i++) {         // 残骸不可摧毁——不在活车表,溅射天然不及(直击弹体仍被残骸拦下)
@@ -1385,9 +1540,12 @@ function applySplash(p, radius, dmg, owner) {
     if (d2 > rr * rr) continue;
     var frac = clamp(1 - Math.sqrt(d2) / rr, 0, 1);
     var dT = dmg * (0.2 + 0.8 * frac);
-    applyModuleDamage(t, _SPLASH_KEYS[Math.floor(Math.random() * _SPLASH_KEYS.length)], dT, owner, t.group.position, 0);
-    if (frac > 0.45)      // 爆心附近二次破片
-      applyModuleDamage(t, _SPLASH_KEYS[Math.floor(Math.random() * _SPLASH_KEYS.length)], dT * 0.5, owner, t.group.position, 0);
+    var _sk1 = _SPLASH_KEYS[Math.floor(Math.random() * _SPLASH_KEYS.length)];
+    applyModuleDamage(t, _sk1, dT, owner, splashMarkPoint(t, p, _sk1), 0);
+    if (frac > 0.45) {      // 爆心附近二次破片
+      var _sk2 = _SPLASH_KEYS[Math.floor(Math.random() * _SPLASH_KEYS.length)];
+      applyModuleDamage(t, _sk2, dT * 0.5, owner, splashMarkPoint(t, p, _sk2), 0);
+    }
     if (t.isPlayer) { dmgFlash(0.3); camShake = Math.max(camShake, 0.45); }
   }
 }

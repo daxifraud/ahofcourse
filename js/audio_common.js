@@ -7,14 +7,14 @@
 'use strict';
 var sfxRnd = mulberry32(0x51F02);            // 音频独立种子:每发射速微扰/噪声烘焙不占战斗 RNG 流
 
-function playNoise(dur, freq, gain, type, sweepTo) {
+function playNoise(dur, freq, gain, type, sweepTo, dest) {
   if (!AC) return;
   var t = AC.currentTime;
   var src = AC.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
   var f = AC.createBiquadFilter(); f.type = type || 'lowpass'; f.frequency.setValueAtTime(freq, t); f.Q.value = 0.8;
   if (sweepTo) f.frequency.exponentialRampToValueAtTime(Math.max(20, sweepTo), t + dur);
   var g = AC.createGain(); g.gain.setValueAtTime(gain, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-  src.connect(f); f.connect(g); g.connect(masterGain);
+  src.connect(f); f.connect(g); g.connect(dest || masterGain);
   src.start(t); src.stop(t + dur + 0.05);
 }
 

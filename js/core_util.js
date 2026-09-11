@@ -9,6 +9,11 @@
 /* ===== 工具 ===== */
 var clamp = function (v, a, b) { return v < a ? a : (v > b ? b : v); };
 
+/* 地面棋盘格三角剖分口径(物理/视觉唯一真源):
+   scene.js 地面网格按 (ix+iz)&1 交替选用格内对角线;terrainH 必须用同一奇偶做格内三角插值。
+   0=偶格(反对角线 qc–qb),1=奇格(主对角线 qa–qd);调用方只传非负格索引。 */
+function groundCellParity(ix, iz) { return (ix + iz) & 1; }
+
 /* 2D 画布创建的统一入口(全部程序化贴图共用)。
    一处收口三件事:无 DOM 环境(SSR / 无头自检)返回 null、getContext 不可用返回 null、尺寸设定。
    返回 { cv, g };调用方只需判一次 null。 */
@@ -281,6 +286,7 @@ function approachSpeed(cur, target, accel, decel, dt) {
 // —— 障碍绕行转向:行进方向前方的固定障碍产生"法向推离 + 切向绕行"的合力,
 //    AI 会贴着障碍边缘绕过去,而不是一直顶着它 ——
 var _av = { x: 0, z: 0 };
+var _slA = { gx: 0, gz: 0, tan: 0 }, _slB = { gx: 0, gz: 0, tan: 0 }, _slC = { gx: 0, gz: 0, tan: 0 };   // 坡斥力前瞻三扇区 scratch
 
 // avoidSteer 复用 scratch(零分配;调方立即消费 .x/.z,无重入——steerCached/artyUpdate 均调用后随即读取)
 function avoidSteer(t, dx, dz) {
@@ -328,10 +334,261 @@ function avoidSteer(t, dx, dz) {
     rx += t2x * sg2 * wW * 0.35; rz += t2z * sg2 * wW * 0.35;
     changed = true;
   }
+  // —— P1 坡度斥力:前瞻三扇区,陡坡=软墙(与残骸斥力同构;10Hz 节流由 steerCached 承担)——
+  if (typeof SIM_K !== 'undefined' && SIM_K > 0 && t.mob) {
+    var slSpec = mobDerived(t.mob);
+    var vAh = Math.abs(t.speed || 0) * 2;
+    if (vAh < 15) vAh = 15; else if (vAh > 60) vAh = 60;
+    var cA = 0.8660254, sA = 0.5;   // cos/sin 30°
+    slopeVecAt(p.x + ux * vAh, p.z + uz * vAh, _slA);
+    slopeVecAt(p.x + (ux * cA - uz * sA) * vAh, p.z + (ux * sA + uz * cA) * vAh, _slB);
+    slopeVecAt(p.x + (ux * cA + uz * sA) * vAh, p.z + (-ux * sA + uz * cA) * vAh, _slC);
+    var limA = slSpec._tanMax * 0.95;   // P3:与规划剪枝(0.95 格口径)对齐；旧 0.75 与规划打架(M5)
+    var corrW = 1;
+    if (t._nav && t._nav.n > 1) {   // P3 路径走廊:距当前腿<10m→坡斥力减半(规划说能走的地方跟随不擅自说不)
+      var cn = t._nav, cj = cn.i - 1;
+      if (cj < 0) cj = 0; else if (cj > cn.n - 2) cj = cn.n - 2;
+      var cax = cn.xs[cj], caz = cn.zs[cj], cbx = cn.xs[cj + 1], cbz = cn.zs[cj + 1];
+      var cdx = cbx - cax, cdz = cbz - caz, cl2 = cdx * cdx + cdz * cdz;
+      if (cl2 > 1e-6) {
+        var ctt = ((p.x - cax) * cdx + (p.z - caz) * cdz) / cl2;
+        if (ctt < 0) ctt = 0; else if (ctt > 1) ctt = 1;
+        var cex = cax + cdx * ctt - p.x, cez = caz + cdz * ctt - p.z;
+        if (cex * cex + cez * cez < 100) corrW = 0.5;
+      }
+    }
+    if (_slA.tan > limA) {
+      var wA = clamp((_slA.tan - limA) / Math.max(0.05, slSpec._tanMax - limA), 0, 1.5) * corrW;
+      var glA = Math.sqrt(_slA.gx * _slA.gx + _slA.gz * _slA.gz) || 1;
+      rx -= (_slA.gx / glA) * wA * 0.8; rz -= (_slA.gz / glA) * wA * 0.8;   // 法向:沿下坡向推离
+      var sgA = (_slB.tan <= _slC.tan) ? 1 : -1;   // 切向:往缓侧绕(+t1=B 侧)
+      rx += (-uz) * sgA * wA; rz += (ux) * sgA * wA;
+      changed = true;
+    } else if (_slB.tan > slSpec._tanMax || _slC.tan > slSpec._tanMax) {
+      var sgB = (_slB.tan > _slC.tan) ? -1 : 1;   // 单侧是墙:轻推离该侧
+      rx += (-uz) * sgB * 0.5 * corrW; rz += (ux) * sgB * 0.5 * corrW;
+      changed = true;
+    }
+  }
   if (!changed) { _av.x = ux; _av.z = uz; return _av; }
   var l2 = Math.sqrt(rx * rx + rz * rz) || 1;
   _av.x = rx / l2; _av.z = rz / l2;
   return _av;
+}
+
+/* ===== 坡度越野物理内核(2026-09-09 大改;P0) =====
+   slopePhys: 纯函数(只吃参数+Math,零全局/零分配),node 可单测。
+   约定: sLong=车头向坡度 tan(前高为正),sLat=车体右侧坡度 tan(右高为正),
+         v=纵向速度(前正后负),thr=油门(-0.6~1)。
+   spec 须经 mobOf/mobDerived 归一(含 _tanMax/_tanSide)。
+   输出 out(调用方复用): vCapF/vCapR 前倒极速;fAvailF/fAvailR 前倒可用比力;
+     fResF/fResR 前倒阻力比力;slideAcc 侧滑加速度(≥0);slideDir 滑向(+1=右,-1=左,车体系);
+     turnMul 转向系数;rho 纵向附着占用率;onSlope 在坡标志。 */
+var SLOPE_G = 9.8;
+var MOB_DEFAULT = { mass: 40000, power: 400000, eta: 0.8, mu: 0.65, muLat: 0.4, crr: 0.1, vCrawl: 1.0 };   // 未登记兜底(MR1:eta 0.7→0.8 机械传动口径)
+function mobOf(t) {
+  var m = (t && t.mob) || MOB_DEFAULT;
+  if (m === MOB_DEFAULT && t && t.kind !== 'ah64' && t.kind !== 'wz10' && !t._mobWarned) {
+    t._mobWarned = 1;
+    if (typeof console !== 'undefined' && console.warn) console.warn('[mob] 地面载具缺 mob 数据,已按 40t 通用兜底:', t.kind, t.team);
+  }
+  if (m._tanMax == null) {
+    m._tanMax = Math.max(0.05, m.mu - m.crr);
+    m._tanSide = Math.max(0.05, m.muLat);
+  }
+  return m;
+}
+/* —— 路面分档滚动阻力（Part A 阻力重设计 MR1）——
+   文献锚点：草地 0.060~0.110 / 履带田间 0.07~0.12 / 干砂壤 0.10 / 泥泞 0.17。
+   口径划分：CONF.mob.crr 保留为“松土基值”——剪枝与各类门限（validDest/avoidSteer/
+   navGroupLim/navSegReach 默认极限）沿用基值 _tanMax（保守方向：规划比物理严）；
+   只有 slopePhys 物理链（经 mobEffOf）与 A* 边代价走本表（与物理同口径，缩小 M3 失配）。 */
+var CRR_TABLE = {
+  firm:  { track: 0.055, wheel: 0.045 },   // 压实平地（rough<25）
+  grass: { track: 0.070, wheel: 0.060 },   // 草地默认
+  loose: { track: 0.100, wheel: 0.110 }    // 松土（mat=soil 或 rough≥70）；沙泥档远期预留
+};
+function crrGround(wheeled, x, z) {   // x/z 预留（未来按位置查泥泞/弹坑），现阶段只看 MAP 全局
+  var band = 'grass';
+  if (typeof MAP !== 'undefined') {
+    if ((MAP.rough || 0) >= 70 || MAP.mat === 'soil') band = 'loose';
+    else if ((MAP.rough || 0) < 25) band = 'firm';
+  }
+  var row = CRR_TABLE[band] || CRR_TABLE.grass;
+  return wheeled ? row.wheel : row.track;
+}
+var _mobEff = { mass: 0, power: 0, eta: 0.8, mu: 0, muLat: 0, crr: 0, vCrawl: 1, _tanMax: 0, _tanSide: 0 };
+function mobEffOf(t) {   // 物理链有效档案：CONF 基值 + 路面分档 crr（scratch，不污染共享 CONF；_tanMax 同步重算）
+  var m = mobOf(t);
+  _mobEff.mass = m.mass; _mobEff.power = m.power; _mobEff.eta = m.eta;
+  _mobEff.mu = m.mu; _mobEff.muLat = m.muLat; _mobEff.vCrawl = m.vCrawl || 1;
+  var px = 0, pz = 0;
+  if (t && t.group && t.group.position) { px = t.group.position.x; pz = t.group.position.z; }
+  _mobEff.crr = crrGround(t ? t.kind === 'arty' : false, px, pz);
+  _mobEff._tanMax = Math.max(0.05, _mobEff.mu - _mobEff.crr);
+  _mobEff._tanSide = Math.max(0.05, _mobEff.muLat);
+  return _mobEff;
+}
+function slopePhys(spec, sLong, sLat, v, thr, v0, pMul, muMul, yawRate, simK, out) {
+  var g = SLOPE_G, k = simK == null ? 1 : simK;
+  var mu = spec.mu * muMul, muLat = spec.muLat * muMul, crr = spec.crr;
+  var tMax = spec._tanMax || Math.max(0.05, spec.mu - spec.crr);
+  var tSide = spec._tanSide || Math.max(0.05, spec.muLat);
+  // 前/倒向阻力比力 fRes=g(sinθ+Crr·cosθ);倒向=坡度取反(车不动,运动方向反)
+  var cosT = 1 / Math.sqrt(1 + sLong * sLong), sinT = sLong * cosT;
+  var fResF = g * (sinT + crr * cosT) * k, fResR = g * (-sinT + crr * cosT) * k;
+  out.fResF = fResF; out.fResR = fResR;
+  var fTrac = mu * g * cosT;                          // 牵引上限(附着,不随 simK 缩)
+  var vAbs = Math.abs(v);
+  if (vAbs < spec.vCrawl) vAbs = spec.vCrawl;          // 蠕行速度=最低挡,防除零
+  var fPow = (spec.power * pMul * spec.eta) / (spec.mass * vAbs);
+  var fDrv = fTrac < fPow ? fTrac : fPow;
+  out.fAvailF = fDrv - fResF;
+  out.fAvailR = fDrv - fResR;
+  // 爬坡极速:功率=阻力 的解;denom≤0(顺坡助力)时不限制(由 v0 钳,不奖励超速)
+  var denomF = sinT + crr * cosT, denomR = -sinT + crr * cosT;
+  var pW = spec.power * pMul * spec.eta, mg = spec.mass * g;
+  out.vCapF = denomF > 1e-6 ? Math.min(v0, pW / (mg * denomF)) : v0;
+  if (!(out.vCapF >= 0)) out.vCapF = 0;
+  out.vCapR = denomR > 1e-6 ? Math.min(v0 * 0.6, pW / (mg * denomR)) : v0 * 0.6;
+  if (!(out.vCapR >= 0)) out.vCapR = 0;
+  // 横向:需求=横坡分力+转向离心(车体右轴为正),阈值=附着椭圆缩减后的 μ_lat
+  var cosP = 1 / Math.sqrt(1 + sLat * sLat), sinP = sLat * cosP;
+  var rho = fTrac > 1e-6 ? Math.abs(fResF) / fTrac + Math.abs(thr) * 0.25 : 0.95;   // 纵向附着占用≈阻力占比+油门占比(近似)
+  if (rho > 0.95) rho = 0.95;
+  out.rho = rho;
+  var latAvail = muLat * g * cosT * cosP * Math.sqrt(Math.max(0, 1 - rho * rho));
+  out.latDemR = -(g * sinP + v * (yawRate || 0)) * k;
+  var over = Math.abs(out.latDemR) - latAvail;
+  out.slideAcc = over > 0 ? over : 0;
+  out.slideDir = out.latDemR >= 0 ? 1 : -1;
+  // 转向:坡越陡越不听使唤
+  var slopeFrac = Math.abs(sLong) / tMax;
+  var latFrac = Math.abs(sLat) / tSide;
+  if (latFrac > slopeFrac) slopeFrac = latFrac;
+  out.turnMul = 1 - 0.5 * Math.min(1, slopeFrac * k);
+  out.onSlope = (Math.abs(sLong) > 0.03 || Math.abs(sLat) > 0.03) ? 1 : 0;
+  return out;
+}
+// 车体系纵/横弦坡度(±2.6m/±1.3m 基线,与 alignTank 同口径;5 次查表约 0.3µs,每车每帧一次)
+var _gpOut = { sLong: 0, sLat: 0 };
+function gradeProbe(t, out) {
+  var p = t.group.position, fx = Math.sin(t.yaw), fz = Math.cos(t.yaw);
+  var hf = terrainH(p.x + fx * 2.6, p.z + fz * 2.6), hb = terrainH(p.x - fx * 2.6, p.z - fz * 2.6);
+  var hr = terrainH(p.x + fz * 1.3, p.z - fx * 1.3), hl = terrainH(p.x - fz * 1.3, p.z + fx * 1.3);
+  out = out || _gpOut;
+  out.sLong = (hf - hb) / 5.2; out.sLat = (hr - hl) / 2.6;
+  return out;
+}
+// 世界系坡度向量(±2m 十字;AI 目的地门/航段抽查/坡斥力用)
+var _svOut = { gx: 0, gz: 0, tan: 0 };
+function slopeVecAt(x, z, out) {
+  var e = 2.0;
+  var gx = (terrainH(x + e, z) - terrainH(x - e, z)) / (2 * e);
+  var gz = (terrainH(x, z + e) - terrainH(x, z - e)) / (2 * e);
+  out = out || _svOut;
+  out.gx = gx; out.gz = gz; out.tan = Math.sqrt(gx * gx + gz * gz);
+  return out;
+}
+function trackGripMult(t) {   // 履带附着系数(与 _calcMobilityMult 断带口径同构,数值独立)
+  if (!t || !t.mods) return 1;
+  var m = t.mods, l = !m.trackL || m.trackL.hp > 0, r = !m.trackR || m.trackR.hp > 0;
+  if (l && r) return 1;
+  if (!l && !r) return 0.35;
+  return 0.7;
+}
+function slopeTurnMul(t) {   // 转向坡度系数(读上一帧裁决缓存,1 帧滞后零感知;首帧/街机=1)
+  return t._slopeTurnMul != null ? t._slopeTurnMul : 1;
+}
+function slopeStuck(t) {   // P1 坡卡死:有油门无速度+无可用比力(非顶牛)+非断油/SIM_K 门
+  if (typeof SIM_K === 'undefined' || SIM_K <= 0 || !t) return 0;
+  // MR2.1:超速滑移（带速冲坡，动量滤波意图内行为）≠卡死——卡死须 ~无运动；自旋/倒滑 v≈0 不受影响
+  if ((t._slipT || 0) > 1.0 && Math.abs(t.speed || 0) < 1.0) return 1;
+  var thr = t._throttle || 0;
+  if (Math.abs(thr) < 0.1 || Math.abs(t.speed) > 0.45) return 0;
+  if ((t._fAvail || 0) > 0.1) return 0;
+  if (typeof engineEff === 'function' && engineEff(t) < 0.05) return 0;
+  if (typeof fueled === 'function' && !fueled(t)) return 0;
+  return 1;
+}
+/* 坡度裁决(applyMotion 内调用;玩家/AI 同源,单一实现)。
+   读 t._throttle/t._throttleLock(调用方写),写 t.speed/t._slideV/t._slip/t._fAvail/t._slopeTurnMul。 */
+var _slOut = { vCapF: 0, vCapR: 0, fAvailF: 0, fAvailR: 0, fResF: 0, fResR: 0, slideAcc: 0, slideDir: 1, latDemR: 0, turnMul: 1, rho: 0, onSlope: 0 };
+function slopeArbitrate(t, dt) {
+  var spec = mobEffOf(t);   // MR1：路面分档 crr（CONF 基值仅留作剪枝/门限保守口径）
+  gradeProbe(t, _gpOut);
+  var sLong = _gpOut.sLong, sLat = _gpOut.sLat;
+  var locked = !!t._throttleLock;   // 齐射驻锄:无驱动+驻锄不溜坡
+  var thr = locked ? 0 : (t._throttle || 0);
+  var eff = (typeof engineEff === 'function') ? engineEff(t) : 1;
+  var v = t.speed, v0 = t.speed0 || 10;
+  slopePhys(spec, sLong, sLat, v, thr, v0, eff, trackGripMult(t), t._yawRate || 0, (typeof SIM_K === 'undefined') ? 1 : SIM_K, _slOut);
+  var sm = (typeof speedMult === 'function') ? speedMult(t) : 1;
+  // MR2 动量滤波：vCap 上升（阻力骤降，如过坡顶）快跟随 τ≈0.3s，下跌（上坡）慢跟随 τ≈1.6s（动能带车冲短坡）；
+  // bypass 条件=附着判据（fTrac−fRes<0，蠕行速度都爬不动的真陡坡），不用 fAvail@当前速度——后者在 v>>vCap 时恒<0，
+  // 会把每次带速进坡都判成 bypass（实测教训）。首帧直接同步，无启动滞后。
+  var vcF = _slOut.vCapF, vcR = _slOut.vCapR;
+  if (t._vcapFF == null) { t._vcapFF = vcF; t._vcapFR = vcR; }
+  var cosT0 = 1 / Math.sqrt(1 + sLong * sLong);
+  var fTrac0 = spec.mu * trackGripMult(t) * SLOPE_G * cosT0;   // 与 slopePhys 内 fTrac 同口径
+  var kUpF = 1 - Math.exp(-dt / 0.3), kDnF = (fTrac0 - _slOut.fResF < 0) ? 1 : 1 - Math.exp(-dt / 1.6);
+  t._vcapFF += (vcF - t._vcapFF) * (vcF >= t._vcapFF ? kUpF : kDnF);
+  var kUpR = 1 - Math.exp(-dt / 0.3), kDnR = (fTrac0 - _slOut.fResR < 0) ? 1 : 1 - Math.exp(-dt / 1.6);
+  t._vcapFR += (vcR - t._vcapFR) * (vcR >= t._vcapFR ? kUpR : kDnR);
+  var target = thr >= 0 ? Math.min(thr * v0 * sm, t._vcapFF) : Math.max(thr * v0 * sm, -t._vcapFR);
+  if (locked) target = 0;
+  var a0 = (t.accel0 || 2.5) * eff * (1 - 0.55 * Math.min(Math.abs(v) / Math.max(v0, 0.01), 1));   // MR2 扭矩曲线：低速有劲、高速乏力（调速器 droop 一阶近似）
+  var d0 = (t.decel0 || 5) * Math.max(eff, 0.3);
+  if (locked) {
+    v = approachSpeed(v, 0, 0, 8, dt);
+  } else if (Math.abs(v) < 0.08 && Math.abs(thr) < 0.02 && Math.abs(target) < 0.05) {
+    // 静止无油门:驻车保持 vs 溜坡(刹车按住 |g·sinθ|≤d0,按不住顺坡溜+刹车拖 60%)
+    var cosT0 = 1 / Math.sqrt(1 + sLong * sLong), gS = -SLOPE_G * sLong * cosT0;
+    if (Math.abs(gS) <= d0) v = 0;
+    else v += (gS - (gS > 0 ? d0 * 0.6 : -d0 * 0.6)) * dt;
+  } else if (Math.abs(thr) < 0.02 && Math.abs(target) < 0.05) {
+    // 滑行(无油门有速度):发动机制动 35% + 坡度阻力(上坡急停,下坡溜车加速)
+    var fResV = v >= 0 ? _slOut.fResF : -_slOut.fResR;
+    var aCoast = -(v >= 0 ? 1 : -1) * d0 * 0.35 - fResV;
+    v += aCoast * dt;
+    if (v > 0 && aCoast < 0 && v < 0.05) v = 0;   // 防滑行过零震荡(只在减速向零时钳)
+    if (v < 0 && aCoast > 0 && v > -0.05) v = 0;
+  } else {
+    // 驱动:P 伺服趋近 target,驱动 authority 受 fAvail(牵引/功率)钳制
+    var aWant = (target - v) * 4;
+    if (aWant > a0) aWant = a0; else if (aWant < -d0) aWant = -d0;
+    if (aWant > 0) { if (aWant > _slOut.fAvailF) aWant = _slOut.fAvailF; }
+    else if (aWant < 0 && target < 0 && -aWant > _slOut.fAvailR) aWant = -_slOut.fAvailR;   // 倒车驱动才受 fAvailR 钳;刹车只走 d0(旧式无 target 门,高速重刹被负 fAvailR 反号成加速)
+    // 逆向滑动(爬坡失败倒滑/溜坡):驾驶员踩刹车对抗,净加速度=fAvail+0.5·d0;硬上限 6m/s
+    if ((v > 0.1 && target < -0.1) || (v < -0.1 && target > 0.1)) aWant += (v > 0 ? -d0 * 0.5 : d0 * 0.5);
+    v += aWant * dt;
+    if (v > 6 && target <= 0.1) v = 6; else if (v < -6 && target >= -0.1) v = -6;
+  }
+  if (v > v0) v = v0; else if (v < -v0 * 0.6) v = -v0 * 0.6;   // 下坡溜车带刹:纵速不超平路极速(驱动分支 target 已内含此界,本钳只约束滑行/静止溜坡)
+  if (!isFinite(v)) v = 0;
+  t.speed = v;
+  // 横向漂移(车体右轴 signed 速度):超附着加速,附着内指数回零;驻锄强阻尼
+  var sv = t._slideV || 0;
+  if (locked) sv = approachSpeed(sv, 0, 8, 8, dt);
+  else if (_slOut.slideAcc > 0) {
+    sv += _slOut.slideDir * _slOut.slideAcc * dt;
+    if (sv > 6) sv = 6; else if (sv < -6) sv = -6;
+  } else sv = approachSpeed(sv, 0, 6, 6, dt);
+  t._slideV = sv;
+  // SLIP 状态机:进 0.3s 防抖,出 0.5s 防抖
+  var wantSlip = 0;
+  if (!locked) {
+    if (Math.abs(thr) > 0.05 && Math.abs(v) < 0.5 &&
+        ((thr > 0 && _slOut.fAvailF < -0.2) || (thr < 0 && _slOut.fAvailR < -0.2))) wantSlip = 1;
+    if (_slOut.slideAcc > 0.3 && Math.abs(sv) > 0.3) wantSlip = 1;
+    var vCapNow = v >= 0 ? _slOut.vCapF : _slOut.vCapR;
+    if (Math.abs(v) > vCapNow + 1.5) wantSlip = 1;   // 失速:超极速=刹不住的溜坡
+  }
+  if (wantSlip) { t._slipT = (t._slipT || 0) + dt; t._slipOkT = 0; }
+  else { t._slipOkT = (t._slipOkT || 0) + dt; if (t._slipOkT > 0.5) t._slipT = 0; }
+  t._slip = (t._slipT || 0) > 0.3 ? 1 : 0;
+  t._fAvail = thr < 0 ? _slOut.fAvailR : _slOut.fAvailF;
+  t._slopeTurnMul = _slOut.turnMul * (t._slip ? 0.6 : 1);
 }
 
 /* ===== 共享工具:重复逻辑归一(玩家/AI/弹道链路同口径) ===== */

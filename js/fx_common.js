@@ -119,10 +119,62 @@ function buildGrassTexture(style) {  // 地面细节贴图(作为 map 与顶点�
     CELL=2(≈5.6cm/纹素);G2-deflicker 后相邻格亮度差 <= ±5%(原±10%) → 乘暗顶点色后屏幕亮度差 < 0.11,
     压在漫画描边 Roberts 阈值(_COMIC_FRAG edgeL 0.11)之下, 否则满地墨网。
    ============================================================ */
+/* 岩质(kind=2) v4: fBm 石质(包裹晶格值噪声,三层频率拉开),替代逐格独立随机。
+   无缝机理:每层总周期数取整数(8/16/28/72),晶格取模寻址 → RepeatWrapping 首尾恒等;
+   演示 stone_material_demo.html 的 sin-hash 核非周期,此处不用(方案 §6.2-G1)。
+   均值重归一到旧基底 [196,194,188](uAvg2 不变,窄带调色板安全,方案 §6.2-G2)。 */
+function _stoneLat(P, seed) {
+  var L = new Float32Array(P * P), rnd = mulberry32(seed >>> 0);
+  for (var i = 0; i < P * P; i++) L[i] = rnd();
+  return L;
+}
+function _stoneAt(L, P, x, y) {
+  var xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+  xf = xf * xf * (3 - 2 * xf); yf = yf * yf * (3 - 2 * yf);
+  var x0 = ((xi % P) + P) % P, y0 = ((yi % P) + P) % P, x1 = (x0 + 1) % P, y1 = (y0 + 1) % P;
+  var a = L[y0 * P + x0], b = L[y0 * P + x1], c = L[y1 * P + x0], d = L[y1 * P + x1];
+  return (a + (b - a) * xf) * (1 - yf) + (c + (d - c) * xf) * yf;
+}
+function buildStoneDetail(g, s) {
+  var N = 128, CELL = 2;                        // 与旧岩质同格(CELL=2,128² 格)
+  var L8 = _stoneLat(8, 0x57a1e042), L28 = _stoneLat(28, 0xc04a11ce), L72 = _stoneLat(72, 0x9e3779b9);
+  var cell = new Float32Array(N * N), sum = 0, cx, cy;
+  for (cy = 0; cy < N; cy++) for (cx = 0; cx < N; cx++) {
+    var u = cx / N, v = cy / N;
+    var mid = _stoneAt(L8, 8, u * 8, v * 8) * 0.67 + _stoneAt(L8, 8, u * 16 + 3.3, v * 16 + 7.9) * 0.33;
+    var fine = _stoneAt(L28, 28, u * 28, v * 28);
+    var grain = _stoneAt(L72, 72, u * 72, v * 72);
+    var m = 1 + 0.11 * (mid - 0.5) + 0.06 * (fine - 0.5) + 0.035 * (grain - 0.5);   // 演示 stoneShade 零均值版(幅度逐字)
+    cell[cy * N + cx] = m; sum += m;
+  }
+  var rnd = mulberry32(0x2b91c07f);              // 石片结块(旧岩质质感特征保留:120 个,3×3 偶发,±4%)
+  for (var i = 0; i < 120; i++) {
+    var bxx = (rnd() * N) | 0, byy = (rnd() * N) | 0;
+    var cm = (rnd() < 0.55) ? 0.96 : 1.04;
+    var ext = (rnd() < 0.45) ? 2 : 1;
+    for (var oy = 0; oy <= ext; oy++) for (var ox = 0; ox <= ext; ox++) {
+      var ci = (((byy + oy) % N) * N + ((bxx + ox) % N));
+      sum += cell[ci] * (cm - 1); cell[ci] *= cm;
+    }
+  }
+  var mean = sum / (N * N), kR = 196 / mean, kG = 194 / mean, kB = 188 / mean;   // 均值重归一(只动直流,不动对比结构)
+  var img = g.createImageData(s, s), px = img.data;
+  for (var py = 0; py < s; py++) for (var pxx = 0; pxx < s; pxx++) {
+    var cv = cell[(((py / CELL) | 0) * N) + ((pxx / CELL) | 0)], o = (py * s + pxx) * 4;
+    px[o] = cv * kR > 255 ? 255 : cv * kR; px[o + 1] = cv * kG > 255 ? 255 : cv * kG;
+    px[o + 2] = cv * kB > 255 ? 255 : cv * kB; px[o + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+}
 var biomeTexCache = {};
-function buildBiomeTex(kind) {                 // kind: 0=植被 1=土质 2=岩质
-  if (biomeTexCache[kind]) return biomeTexCache[kind];
-  var tex = makeCanvasTex(256, function (g, s) {
+function buildBiomeTex(kind) {                 // kind: 0=植被 1=土质 2=岩质(fBm 石质 v4)
+  var ck = (kind === 2) ? '2|stone1' : String(kind);   // 岩质生成器已换代,缓存键版本隔离
+  if (biomeTexCache[ck]) return biomeTexCache[ck];
+  var tex;
+  if (kind === 2) {
+    tex = makeCanvasTex(256, function (g, s) { buildStoneDetail(g, s); });
+  } else {
+  tex = makeCanvasTex(256, function (g, s) {
     var rnd = mulberry32([0x67a5510e, 0x50170a11, 0x2b91c07f][kind]);
     var CELL = 2, N = (s / CELL) | 0;
     var base = [[233,237,223],[182,160,130],[196,194,188]][kind];   // 近中性基底(实际色由顶点色相乘)
@@ -156,6 +208,7 @@ function buildBiomeTex(kind) {                 // kind: 0=植被 1=土质 2=岩�
         put((bx+ox)%N, (by+oy)%N, wr, wg, wb);                      // 环绕写入 → 可平铺
     }
   });
+  }  /* else: kinds 0/1 旧路径结束;kind=2 走 buildStoneDetail(上),以下纹理设置两路共用 */
   if (tex) {
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;                   // 原生环绕 = 无缝
     tex.magFilter = THREE.LinearFilter;
@@ -166,7 +219,7 @@ function buildBiomeTex(kind) {                 // kind: 0=植被 1=土质 2=岩�
     else
       tex.anisotropy = 8;
   }
-  biomeTexCache[kind] = tex;
+  biomeTexCache[ck] = tex;
   return tex;
 }
 /* 把三通道质感权重打包成一个 vec3 顶点属性(连续量,可插值)。
@@ -235,7 +288,7 @@ function biomePatchMaterial(mat) {
       '  }\n');
   };
   var oldKey = mat.customProgramCacheKey;
-  mat.customProgramCacheKey = function () { return (oldKey ? oldKey.call(this) : '') + '|biome-v3-detailfade'; };
+  mat.customProgramCacheKey = function () { return (oldKey ? oldKey.call(this) : '') + '|biome-v4-stone'; };   // v4:岩质换 fBm 石质,shader 缓存失活
   return mat;
 }
 

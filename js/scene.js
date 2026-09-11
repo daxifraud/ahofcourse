@@ -128,7 +128,7 @@ function buildGroundMeshes() {
     var cIdx = new Uint16Array(CHUNK_CELLS * CHUNK_CELLS * 6), ip = 0;
     for (lz = 0; lz < CHUNK_CELLS; lz++) for (lx = 0; lx < CHUNK_CELLS; lx++) {
       var qa = lz * V + lx, qb = qa + 1, qc = qa + V, qd = qc + 1;
-      if (((lx + lz) & 1) === 0) {          // 偶格:反对角线(qc–qb),绕向使法线 +Y(朝上)
+      if (groundCellParity(cX * CHUNK_CELLS + lx, cZ * CHUNK_CELLS + lz) === 0) {   // 偶格:反对角线(qc–qb),绕向使法线 +Y(朝上)
         cIdx[ip++] = qa; cIdx[ip++] = qc; cIdx[ip++] = qb;
         cIdx[ip++] = qc; cIdx[ip++] = qd; cIdx[ip++] = qb;
       } else {                              // 奇格:主对角线(qa–qd)
@@ -167,6 +167,7 @@ function buildGroundMeshes() {
     vehHullMat.needsUpdate = true;
     vehHullMatPlayer.map = vehTex;
     vehHullMatPlayer.needsUpdate = true;
+    if (typeof vehBodyMatPlayer !== 'undefined') { vehBodyMatPlayer.map = vehTex; vehBodyMatPlayer.needsUpdate = true; }   // P0-2 companion:玩家炮塔系同挂画集
   }
 }
 /* 开局建场入口:应用地图参数 → 显式建高度表 → 重建地面 →
@@ -174,6 +175,8 @@ function buildGroundMeshes() {
 function setupMapWorld(seed, rough, side, mat, wid) {
   applyMapConfig(seed, rough, side, mat, wid);
   buildTerrainBaseTable();               // 菜单期 tbLat 可能已按旧参数惰性构建:开局显式重建
+  if (typeof navGridBuild === 'function') navGridBuild();   // 奇观连通性验证需 nav 网格(spawnTeams 内幂等重建,约 10ms)
+  if (typeof wonderEnsureConnected === 'function') wonderEnsureConnected();   // 验证失败→确定性重布奇观(≤3 次);恒在建地面网格之前
   buildGroundMeshes();
   swapGroundStyle(MAP.mat);
   buildHillRing(MAP.mat);

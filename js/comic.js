@@ -1,5 +1,6 @@
 
 /* ===== Module: comic.js ===== */
+window.__FXTAG='2026-09-10 fx7';   // FX4:版本探针(F12控制台输入__FXTAG验证;与vehicles.BUILD_TAG同源)
 /* ============================================================
    模块: comic.js — 漫画渲染(唯一渲染模式:卡通全屏后处理+全套手绘特效)
    (加载顺序由 index.html MODULES 表决定,勿单独调整)
@@ -448,15 +449,15 @@ function _comicFxTick() {
   _comicRocketLaunchUpdate(dt);                        // 发射架中央单团烟:扩散+反向漂移/ONE InstancedMesh
   _comicRocketTrailUpdate(dt);                         // 全航程火箭尾迹烟:ONE InstancedMesh
   _comicGroundDustUpdate(dt);                          // 地面扬尘卡(啃地/部署):ONE InstancedMesh
+  _comicTrackDigUpdate(dt);                            // P3 履带刨土:ONE InstancedMesh
   _comicRocketLineTailUpdate(dt);                      // 尾端按对应弹体飞行速度向固定终点收缩
   _comicRocketLineFlush();                             // 合并上传0.09s解析更新及收尾脏区
   _comicMotionSmokeUpdate(dt);                         // 发动机烟/双履带尘/飘散片:固定世界尺寸 atlas
   if(typeof _hzSmokeUpdate==='function')_hzSmokeUpdate(dt);   // B1:地平线远景硝烟带(10实例·+1 draw call)
     _comicBurnSync(nw / 1000);                           // 持续燃烧实例
   _comicAntennaSync();                                 // 天线稳定线(降级直渲路径同样受益:深度/雾正确)
-  _sqbTick();                                          // 小队标识:关闭一次布尔早退,开启紧凑写入(Backspace 事件开关)
-  _iffTick();                                          // 敌我标识(T 开关):地形挡、烟不挡
-  _abgStarTick();                                      // A射B导 僚机五角星:关闭一次布尔早退(直升机座舱 Backspace 开关)
+  _tacTick();                                          // 战术标识:门=_tacOn||指挥模式
+  _cmdStarTick();                                      // 指挥星:被指挥/被借用者头顶星
 }
 function comicRender(sc, cam) {
   if (_comicFailed) {
@@ -496,7 +497,8 @@ function comicRender(sc, cam) {
    ============================================================ */
 var COMIC_BURN_MAX = 192, COMIC_BURN_SMOKE_MAX = COMIC_BURN_MAX * 2;
 var _comicBurnTex = null, _comicBurnGeo = null, _comicBurnMat = null, _comicBurnMesh = null;
-var _comicBurnSmokeTex=null,_comicBurnSmokeGeo=null,_comicBurnSmokeMat=null,_comicBurnSmokeMesh=null,_comicBurnSmokeA=null;
+var _comicBurnSmokeTex=null,_comicBurnSmokeGeo=null,_comicBurnSmokeMat=null,_comicBurnSmokeMesh=null,_comicBurnSmokeA=null,_comicBurnSmokeUvA=null;
+var _burnSmokeFrames=[[.02,.51,.46,.47],[.52,.51,.46,.47],[.02,.01,.46,.47],[.52,.01,.46,.47]];
 var _comicBurnList = [];                             // 事件登记的燃烧车;灭火后保留到黑烟尾段结束
 var _comicBurnM4 = new THREE.Matrix4(), _comicBurnQ = new THREE.Quaternion();
 var _comicBurnPos = new THREE.Vector3();
@@ -516,6 +518,41 @@ function _comicCanvasTex(cv) {
 }
 
 /* 独立绘制透明火焰,不读取参考图棋盘背景,也不复用爆炸/火箭贴图。 */
+/* FX1 A2柔体烟共用画笔(shape 0圆/1柱/2展/3碎;r/g/b=烘焙基色,有tint系统烘浅灰由tint着色)。
+   噪点擦除+顶光罩=柔边体积感;种子固定保证烘焙可复现。 */
+function _fxA2(g,cx,cy,R,seed,r,gg,b,shape,soft){
+  var rnd=mulberry32(seed),i,T=r+','+gg+','+b;
+  var sx=shape===2?1.32:(shape===1?.74:1),sy=shape===1?1.32:(shape===2?.74:1);
+  var BN=soft?21:15,SN=soft?9:(shape===0?0:6),BA=soft?.34:.52,BM=soft?.17:.26,SA=soft?.26:.40;   // FX3-FLAT:尘土展平(多珠低alpha)
+  for(i=0;i<BN;i++){var px=cx+(rnd()-.5)*R*1.15*sx,py=cy+(rnd()-.5)*R*sy,rr=R*(.30+rnd()*.40);
+    var gr=g.createRadialGradient(px,py,0,px,py,rr);
+    gr.addColorStop(0,'rgba('+T+','+BA+')');gr.addColorStop(.65,'rgba('+T+','+BM+')');gr.addColorStop(1,'rgba('+T+',0)');
+    g.fillStyle=gr;g.beginPath();g.arc(px,py,rr,0,TAU);g.fill();}
+  for(i=0;i<SN;i++){var qx,qy;
+    if(shape===1){qx=cx+(rnd()-.5)*R*.45;qy=cy+(rnd()-.5)*R*1.5;}else{qx=cx+(rnd()-.5)*R*1.9;qy=cy+(rnd()-.5)*R*.45;}
+    if(shape===3){qx=cx+(rnd()-.5)*R*1.6;qy=cy+(rnd()-.5)*R*1.2;}
+    var rr2=R*(.22+rnd()*.30),g2=g.createRadialGradient(qx,qy,0,qx,qy,rr2);
+    g2.addColorStop(0,'rgba('+T+','+SA+')');g2.addColorStop(1,'rgba('+T+',0)');
+    g.fillStyle=g2;g.beginPath();g.arc(qx,qy,rr2,0,TAU);g.fill();}
+  g.save();g.globalCompositeOperation='destination-out';
+  var ne=soft?8:(shape===3?16:11),er=soft?.05:.06,ex=soft?.08:.12;
+  for(i=0;i<ne;i++){g.globalAlpha=soft?.16:.30;g.beginPath();g.arc(cx+(rnd()-.5)*R*1.5*sx,cy+(rnd()-.5)*R*1.3*sy,R*(er+rnd()*ex),0,TAU);g.fill();}
+  g.save();g.translate(cx,cy);g.scale(sx,sy);g.translate(-cx,-cy);
+  var em=g.createRadialGradient(cx,cy,R*.70,cx,cy,R*1.10);
+  em.addColorStop(0,'rgba(0,0,0,0)');em.addColorStop(1,'rgba(0,0,0,'+(soft?0.92:0.55)+')');
+  g.fillStyle=em;g.beginPath();g.arc(cx,cy,R*1.10,0,TAU);g.fill();g.restore();
+  g.restore();g.globalAlpha=1;
+  if(soft){var hw=g.createRadialGradient(cx,cy,0,cx,cy,R*.95);
+  hw.addColorStop(0,'rgba('+T+',.20)');hw.addColorStop(1,'rgba('+T+',0)');
+  g.fillStyle=hw;g.beginPath();g.arc(cx,cy,R*.95,0,TAU);g.fill();}
+  if(!soft){var hl=g.createRadialGradient(cx-R*.3,cy-R*.35,0,cx-R*.3,cy-R*.35,R*.9);
+  hl.addColorStop(0,'rgba(255,252,240,.14)');hl.addColorStop(1,'rgba(255,252,240,0)');
+  g.fillStyle=hl;g.beginPath();g.arc(cx-R*.3,cy-R*.35,R*.9,0,TAU);g.fill();}
+}
+function _fxA2col(g,cx,topY,botY,W,seed,r,gg,b){   // FX1:柱形烟(燃烧烟柱):沿竖轴串珠
+  var H=botY-topY;for(var i=0;i<5;i++){var k=i/4;_fxA2(g,cx+(mulberry32(seed+i*7)()-.5)*W*.5,botY-H*k,W*(.62-.18*k),seed+i*13,r,gg,b,i===2?0:1);}}
+
+function _fxUvW(arr,count,frames,v){var f=frames[v|0]||frames[0],o=count*4;arr[o]=f[0];arr[o+1]=f[1];arr[o+2]=f[2];arr[o+3]=f[3];}
 function _comicBurnMakeTex() {
   var cv = document.createElement('canvas'); cv.width = cv.height = 512;
   var g = cv.getContext('2d');
@@ -604,14 +641,447 @@ function _comicBurnMakeTex() {
 }
 
 /* 参考燃烧烟重绘:连续S形黑烟柱、炭黑主体、灰紫受光卷边;透明背景不使用原图棋盘。 */
-function _comicBurnMakeSmokeTex(){var cv=document.createElement('canvas');cv.width=512;cv.height=1024;var g=cv.getContext('2d'),rnd=mulberry32(0xB1AC5A0C);g.clearRect(0,0,512,1024);g.lineJoin='round';g.lineCap='round';
-  function burnPuff(x,y,rx,ry,fill,shade,seed){var rr=mulberry32(seed),pts=[],n=18;for(var i=0;i<n;i++){var a=i/n*TAU,k=1+(rr()-.5)*.22;pts.push([x+Math.cos(a)*rx*k,y+Math.sin(a)*ry*k]);}g.beginPath();g.moveTo(pts[0][0],pts[0][1]);for(i=1;i<n;i++)g.lineTo(pts[i][0],pts[i][1]);g.closePath();g.fillStyle=fill;g.fill();g.strokeStyle='rgba(13,13,18,.88)';g.lineWidth=11;g.stroke();g.beginPath();g.ellipse(x-rx*.18,y-ry*.20,rx*.53,ry*.34,-.18,0,TAU);g.fillStyle=shade;g.fill();g.strokeStyle='rgba(91,88,105,.58)';g.lineWidth=6;g.beginPath();g.arc(x-rx*.12,y-ry*.05,Math.min(rx,ry)*.48,3.18,5.65);g.stroke();}
-  /* 先以宽曲线连成连续烟柱,避免分离圆团。 */g.beginPath();g.moveTo(258,1000);g.bezierCurveTo(208,900,321,832,250,742);g.bezierCurveTo(182,660,300,582,235,491);g.bezierCurveTo(175,407,294,334,245,242);g.bezierCurveTo(218,179,286,116,260,26);g.strokeStyle='rgba(20,20,27,.96)';g.lineWidth=112;g.stroke();g.beginPath();g.moveTo(244,990);g.bezierCurveTo(207,899,292,831,241,746);g.bezierCurveTo(201,672,278,587,235,500);g.bezierCurveTo(205,426,279,344,246,250);g.bezierCurveTo(230,174,279,112,257,30);g.strokeStyle='rgba(62,60,72,.70)';g.lineWidth=48;g.stroke();
-  var ps=[[246,906,91,105],[296,797,87,101],[221,688,82,96],[278,580,86,99],[217,471,78,92],[275,365,81,91],[231,265,74,83],[291,171,82,78],[180,116,104,76],[326,102,108,82]];for(var i=0;i<ps.length;i++){var q=ps[i],dark=i%3===0?'rgba(12,12,18,.97)':'rgba(25,24,32,.95)',hi=i%2?'rgba(70,67,82,.58)':'rgba(53,51,64,.62)';burnPuff(q[0],q[1],q[2],q[3],dark,hi,700+i);}
-  /* 少量炭屑直接烘焙,不产生粒子。 */for(i=0;i<8;i++){g.beginPath();g.arc(116+rnd()*310,110+rnd()*800,2+rnd()*4,0,TAU);g.fillStyle='rgba(24,23,29,.72)';g.fill();}
-  return _comicCanvasTex(cv);}
-function _comicBurnSmokeEnsure(){if(_comicBurnSmokeMesh||!scene)return;if(!_comicBurnSmokeTex)_comicBurnSmokeTex=_comicBurnMakeSmokeTex();_comicBurnSmokeA=new Float32Array(COMIC_BURN_SMOKE_MAX);_comicBurnSmokeGeo=new THREE.PlaneGeometry(1,1);_comicBurnSmokeGeo.translate(0,.5,0);_comicBurnSmokeGeo.setAttribute('iAlpha',new THREE.InstancedBufferAttribute(_comicBurnSmokeA,1).setUsage(THREE.DynamicDrawUsage));var vs=['attribute float iAlpha;varying vec2 vUv;varying float vA;','#include <common>','#include <logdepthbuf_pars_vertex>','void main(){vUv=uv;vA=iAlpha;vec4 mv=modelViewMatrix*instanceMatrix*vec4(position,1.);gl_Position=projectionMatrix*mv;','#include <logdepthbuf_vertex>','}'].join('\n'),fs=['uniform sampler2D map;varying vec2 vUv;varying float vA;','#include <logdepthbuf_pars_fragment>','void main(){','#include <logdepthbuf_fragment>','vec4 t=texture2D(map,vUv);float a=t.a*vA;if(a<.014)discard;gl_FragColor=vec4(t.rgb,a);}'].join('\n');_comicBurnSmokeMat=new THREE.ShaderMaterial({uniforms:{map:{value:_comicBurnSmokeTex}},vertexShader:vs,fragmentShader:fs,transparent:true,depthWrite:false,depthTest:true,side:THREE.DoubleSide,blending:THREE.NormalBlending,toneMapped:false,fog:false});_comicBurnSmokeMesh=new THREE.InstancedMesh(_comicBurnSmokeGeo,_comicBurnSmokeMat,COMIC_BURN_SMOKE_MAX);_comicBurnSmokeMesh.count=0;_comicBurnSmokeMesh.visible=false;_comicBurnSmokeMesh.frustumCulled=false;_comicBurnSmokeMesh.renderOrder=6;_comicBurnSmokeMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);scene.add(_comicBurnSmokeMesh);}
-function _comicBurnSmokeWrite(index,x,y,z,w,h,alpha){if(index>=COMIC_BURN_SMOKE_MAX||alpha<=.004)return index;comicTextureFace(_comicBurnQ,x,y,z,COMIC_FACE_YAW);_comicBurnPos.set(x,y,z);_comicBurnScale.set(w,h,1);_comicBurnM4.compose(_comicBurnPos,_comicBurnQ,_comicBurnScale);_comicBurnSmokeMesh.setMatrixAt(index,_comicBurnM4);_comicBurnSmokeA[index]=alpha;return index+1;}
+/* ===== FX7 烟样式扩充:helper+painters(与 fx_art/smoke_paint.js 同源,勿手改) ===== */
+function DP_rimSeg(g, cx, cy, r, a0, a1, color, w, alpha, seed){
+  var rnd = mulberry32(seed), n = 3, i;
+  g.save(); g.strokeStyle = color; g.lineWidth = w; g.lineCap = 'round'; g.globalAlpha = alpha;
+  for(i = 0; i < n; i++){
+    var s0 = a0 + (a1 - a0) * (i / n + rnd() * .04), s1 = a0 + (a1 - a0) * ((i + .72) / n);
+    g.beginPath(); g.arc(cx, cy, r * (0.97 + rnd() * .06), s0, s1); g.stroke();
+  }
+  g.restore();
+}
+
+function DP_softShadow(g, cx, cy, rx, ry, color, alpha){
+  g.save(); g.translate(cx, cy); g.scale(rx / ry, 1); g.translate(-cx, -cy);
+  var gr = g.createRadialGradient(cx, cy, 0, cx, cy, ry);
+  gr.addColorStop(0, 'rgba(' + color + ',' + alpha + ')'); gr.addColorStop(1, 'rgba(' + color + ',0)');
+  g.fillStyle = gr; g.beginPath(); g.arc(cx, cy, ry, 0, TAU); g.fill(); g.restore();
+}
+
+function DP_speckOut(g, x, y, w, h, seed, n, rmax, alpha){
+  var rnd = mulberry32(seed), i;
+  g.save(); g.globalCompositeOperation = 'destination-out';
+  for(i = 0; i < n; i++){ g.globalAlpha = alpha * (0.35 + rnd() * 0.65);
+    g.beginPath(); g.arc(x + rnd() * w, y + rnd() * h, 1 + rnd() * rmax, 0, TAU); g.fill(); }
+  g.restore(); g.globalAlpha = 1;
+}
+
+function DP_dots(g, x, y, w, h, seed, n, rmin, rmax, color, alpha){
+  var rnd = mulberry32(seed), i;
+  g.save(); g.fillStyle = color; g.globalAlpha = alpha;
+  for(i = 0; i < n; i++){ g.beginPath(); g.arc(x + rnd() * w, y + rnd() * h, rmin + rnd() * (rmax - rmin), 0, TAU); g.fill(); }
+  g.restore(); g.globalAlpha = 1;
+}
+
+function DP_tendril(g, x, y, len, seed, color, w, alpha, dir){
+  var rnd = mulberry32(seed);
+  var x1 = x + (rnd() - .5) * len * .5 * dir, y1 = y - len * .33;
+  var x2 = x1 + (rnd() - .5) * len * .6 * dir, y2 = y - len * .66;
+  var x3 = x2 + (rnd() - .5) * len * .5 * dir, y3 = y - len;
+  g.save(); g.strokeStyle = color; g.lineWidth = w; g.lineCap = 'round'; g.globalAlpha = alpha;
+  g.beginPath(); g.moveTo(x, y); g.bezierCurveTo(x1, y1, x2, y2, x3, y3); g.stroke(); g.restore();
+}
+
+function DP_clod(g, x, y, r, seed){
+  var rr = mulberry32(seed), pts = [], n = 9, i;
+  for(i = 0; i < n; i++){ var a = i / n * TAU, k = 1 + (rr() - .5) * .5; pts.push([x + Math.cos(a) * r * k, y + Math.sin(a) * r * k]); }
+  g.beginPath(); g.moveTo(pts[0][0], pts[0][1]);
+  for(i = 1; i < n; i++) g.lineTo(pts[i][0], pts[i][1]);
+  g.closePath(); g.fillStyle = '#4a3826'; g.fill();
+  g.strokeStyle = '#241b12'; g.lineWidth = Math.max(2, r * .11); g.stroke();
+  g.beginPath(); g.ellipse(x - r * .2, y - r * .24, r * .4, r * .28, -.2, 0, TAU); g.fillStyle = '#6b543a'; g.fill();
+}
+
+var BURN_PROF={W:376,H:493,rows:[[22, 215.0, 228.0], [24, 213.0, 230.2], [30, 200.4, 237.0], [36, 65.6, 239.0], [42, 46.8, 238.6], [48, 35.0, 236.4], [54, 26.8, 237.0], [60, 21.6, 280.8], [66, 19.0, 281.8], [72, 17.2, 307.8], [78, 20.2, 312.2], [84, 26.4, 313.4], [90, 29.4, 313.2], [96, 36.4, 310.2], [102, 41.0, 316.8], [108, 42.8, 321.4], [114, 39.2, 322.0], [120, 62.6, 319.0], [126, 85.0, 309.0], [132, 76.2, 301.6], [138, 93.8, 286.0], [144, 103.6, 282.0], [150, 104.8, 316.8], [156, 146.4, 315.8], [162, 145.4, 308.2], [168, 148.2, 329.8], [174, 155.6, 340.2], [180, 159.2, 344.2], [186, 150.4, 353.4], [192, 155.4, 357.6], [198, 177.4, 335.0], [204, 135.0, 328.0], [210, 191.2, 325.4], [216, 210.6, 333.6], [222, 141.2, 337.0], [228, 191.4, 337.2], [234, 184.0, 333.2], [240, 175.2, 334.6], [246, 172.2, 336.2], [252, 171.6, 339.8], [258, 174.8, 365.8], [264, 182.4, 352.0], [270, 188.4, 356.8], [276, 165.0, 355.6], [282, 158.0, 352.0], [288, 151.4, 322.0], [294, 148.2, 299.0], [300, 142.6, 298.2], [306, 141.0, 327.4], [312, 143.6, 318.0], [318, 143.8, 319.8], [324, 141.8, 314.8], [330, 139.6, 318.8], [336, 144.0, 330.0], [342, 151.8, 344.8], [348, 158.0, 322.2], [354, 156.4, 313.8], [360, 156.0, 366.8], [366, 158.0, 352.7], [372, 149.2, 319.0], [378, 171.4, 287.3], [384, 178.3, 323.5], [390, 172.5, 318.1], [396, 172.0, 312.7], [402, 148.2, 307.3], [408, 125.2, 301.9], [414, 128.8, 296.5], [420, 128.3, 291.2], [426, 121.0, 285.8], [432, 103.6, 280.4], [438, 141.2, 275.0], [444, 146.4, 269.6], [450, 141.6, 264.2]],spine:[[28, 230], [34, 231], [40, 201], [46, 199], [52, 134], [58, 111], [64, 109], [70, 212], [76, 187], [82, 173], [88, 185], [94, 187], [100, 190], [106, 211], [112, 191], [118, 202], [124, 190], [130, 181], [136, 190], [142, 204], [148, 202], [154, 197], [160, 193], [166, 199], [172, 201], [178, 211], [184, 216], [190, 214], [196, 227], [202, 234], [208, 241], [214, 251], [220, 257], [226, 248], [232, 245], [238, 240], [244, 237], [250, 238], [256, 236], [262, 239], [268, 233], [274, 234], [280, 228], [286, 211], [292, 203], [298, 200], [304, 195], [310, 194], [316, 191], [322, 186], [328, 184], [334, 190], [340, 194], [346, 206], [352, 207], [358, 214], [364, 217], [370, 219], [376, 209], [382, 228], [388, 220], [394, 222], [400, 291]]};
+/* ============================================================
+   FX8-SMOKE 烟效重绘运行模块（v1）：发动机烟 / 行进烟 / 炮弹击中地面烟 / 地面尘 / 燃烧烟
+   ------------------------------------------------------------
+   · 轮廓先算后画：极坐标多谐波 + 羽流剖面 + 两端端帽；轮廓是数据，可审计、可复现
+   · 烘焙零描边：实心剪影并集 → 剪影内铺软渐变调子 → 底部 destination-out → 整体高斯羽化
+     （旧画法的 DP_rimSeg 内弧 / 直线拉丝 / DP_dots 深色点 / destination-out 挖洞全部不再使用）
+   · 通用尺寸抖动：_sfxJit() → SmokeFX.randSize()，任何烟生成时必须乘一次 [0.85,1.15]
+   · 贴图尺寸与单元格完全沿用旧的（256x256，燃烧烟 256x512），UV 帧不动
+   ============================================================ */
+/* ============================================================================
+ * smoke-fx.js —— 烟效重绘 运行文件（v1，5 个烟族：发动机/行进/击中地面/地面尘/燃烧）
+ * 从「烟效美术演示.html」抽取，与演示页烘焙出的贴图逐像素一致。
+ * 蘑菇云待配色验收后并入 v2。
+ *
+ * 用法：
+ *   SmokeFX.build();                       // 启动时烘焙一次，约 20 张离屏画布
+ *   var t = SmokeFX.tex('dust', i);        // 取第 i 张行进烟贴图（canvas）
+ *   var s = baseSize * SmokeFX.randSize(); // ★ 每团烟都必须乘一次 [0.85,1.15]
+ *   g.drawImage(t, x - s / 2, y - s * t.height / t.width / 2, s, s * t.height / t.width);
+ * ========================================================================== */
+var SmokeFX = (function () {
+'use strict';
+
+var TAU = Math.PI * 2;
+function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+function lerp(a, b, t) { return a + (b - a) * t; }
+function smoothstep(e0, e1, x) { var t = clamp((x - e0) / (e1 - e0 || 1e-6), 0, 1); return t * t * (3 - 2 * t); }
+function mulberry32(a) {
+  return function () { a |= 0; a = a + 0x6D2B79F5 | 0; var t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+
+function smResample(p, N) {                       // 按弧长重采样，体检与采样密度解耦
+  N = N || 128; var n = p.length, seg = []; var total = 0;
+  for (var i = 0; i < n; i++) {
+    var b = p[i], c = p[(i + 1) % n];
+    var d = Math.hypot(c[0] - b[0], c[1] - b[1]); seg.push(d); total += d;
+  }
+  var step = total / N, out = []; var acc = 0, si = 0;
+  for (var i = 0; i < N; i++) {
+    var target = i * step;
+    while (si < n - 1 && acc + seg[si] < target) { acc += seg[si]; si++; }
+    var u = seg[si] > 1e-9 ? (target - acc) / seg[si] : 0;
+    var a0 = p[si], a1 = p[(si + 1) % n];
+    out.push([a0[0] + (a1[0] - a0[0]) * u, a0[1] + (a1[1] - a0[1]) * u]);
+  }
+  return out;
+}
+
+function smProfileW(prof, t) {
+  var n = prof.length;
+  if (t <= prof[0][0]) return prof[0][1];
+  if (t >= prof[n - 1][0]) return prof[n - 1][1];
+  var i = 0; while (i < n - 2 && prof[i + 1][0] < t) i++;
+  var p0 = prof[Math.max(0, i - 1)], p1 = prof[i], p2 = prof[i + 1], p3 = prof[Math.min(n - 1, i + 2)];
+  var u = (t - p1[0]) / (p2[0] - p1[0] || 1e-6);
+  var mu = (p2[1] - p0[1]) / (p2[0] - p0[0] || 1e-6), nu = (p3[1] - p1[1]) / (p3[0] - p1[0] || 1e-6);
+  var u2 = u * u, u3 = u2 * u;
+  return (2 * p1[1] - 2 * p2[1] + mu + nu) * u3 + (-3 * p1[1] + 3 * p2[1] - 2 * mu - nu) * u2 + mu * u + p1[1];
+}
+/* 团块：极坐标半径 R(θ)=R·(1+Σ a_k cos(kθ+φ_k))，叠加 squash / taper / topBias
+   要点：只用低阶谐波（k=2,3,5）且振幅逐级减半 —— 保证"不规整"的同时不会出现尖角 */
+function smBlobPts(o) {
+  var rnd = mulberry32(o.seed || 1), N = 128;
+  var R = o.R, cx = o.cx, cy = o.cy, sq = o.squash == null ? 1 : o.squash;
+  var Hr = o.harm || [[2, .10], [3, .05], [5, .022]];
+  var ph = o.phases || (function () { var q = []; for (var z = 0; z < Hr.length; z++) q.push(rnd() * TAU); return q; })();
+  var rot = o.rot || 0, taper = o.taper || 0, topBias = o.topBias || 0;
+  var pts = [];
+  for (var i = 0; i < N; i++) {
+    var a = i / N * TAU, ca = Math.cos(a), sa = Math.sin(a);
+    var s = 0; for (var k = 0; k < Hr.length; k++) s += Hr[k][1] * Math.cos(Hr[k][0] * a + ph[k]);
+    var r = R * (1 + s);
+    if (taper) r *= 1 - taper * Math.max(0, ca) * Math.abs(sa);      // +x 方向收成水滴尾
+    if (topBias) r *= 1 + topBias * Math.max(0, -sa) * (1 - Math.abs(ca));
+    var x = r * ca, y = r * sa * sq;
+    pts.push([cx + x * Math.cos(rot) - y * Math.sin(rot), cy + x * Math.sin(rot) + y * Math.cos(rot)]);
+  }
+  return pts;
+}
+/* 柱体（燃烧烟 / 蘑菇云柄盖）：剖面 + 两端半椭圆端帽（胶囊式，保证 C1 连续） */
+function smColumnPts(o) {
+  var prof = o.prof, W = o.W, H = o.H, cx = o.cx, yBot = o.yBot, M = o.M || 46;
+  var Hr = o.harm || [[2, .12], [3, .07], [4, .034]];
+  var rnd = mulberry32(o.seed || 1);
+  var phL = [], phR = [];
+  for (var k = 0; k < Hr.length; k++) { phL.push(rnd() * TAU); phR.push(rnd() * TAU); }
+  var g0 = o.gate0 == null ? 0.12 : o.gate0, g1 = o.gate1 == null ? 0.88 : o.gate1;
+  function sideW(t, ph) {
+    var w = smProfileW(prof, t) * W, s = 0;
+    for (var k = 0; k < Hr.length; k++) s += Hr[k][1] * Math.cos(Hr[k][0] * Math.PI * t + ph[k]);
+    var gate = smoothstep(0, g0, t) * (1 - smoothstep(g1, 1, t));  // 两端谐波归零，端帽接缝不出现折角
+    return Math.max(2, w * (1 + s * gate));
+  }
+  var sh = o.shear || 0, pts = [];
+  var rb = Math.max(2, smProfileW(prof, 0) * W), B = 10;
+  for (var i = 0; i <= B; i++) {                       // 底帽：右 → 下 → 左
+    var a = i / B * Math.PI;
+    pts.push([cx + Math.cos(a) * rb, yBot + Math.sin(a) * rb * (o.botRound || .8)]);
+  }
+  for (var i = 0; i <= M; i++) { var t = i / M; pts.push([cx + sh * t - sideW(t, phL), yBot - t * H]); }
+  var wL = sideW(1, phL), wR = sideW(1, phR);        // 顶帽：左 → 顶 → 右
+  var wa = (wL + wR) / 2, ha = wa * (o.topRound == null ? .9 : o.topRound), yTop = yBot - H, K = 16;
+  for (var i = 0; i <= K; i++) {
+    var ta = Math.PI * (1 - i / K), ww = wR + (wL - wR) * (i / K);
+    pts.push([cx + sh + Math.cos(ta) * ww, yTop - Math.sin(ta) * ha]);
+  }
+  for (var i = M; i >= 0; i--) { var t = i / M; pts.push([cx + sh * t + sideW(t, phR), yBot - t * H]); }
+  return pts;
+}
+
+var SIZE_JITTER = [0.85, 1.15];
+function smokeSizeMul() {
+  var k = SIZE_JITTER[0] + Math.random() * (SIZE_JITTER[1] - SIZE_JITTER[0]);
+  return k;
+}
+
+var PAL = {
+  engine: { base: [198, 203, 209], light: [240, 244, 247], dark: [86, 92, 102], core: [148, 154, 163] },
+  dust:   { base: [214, 192, 152], light: [242, 228, 200], dark: [112, 90, 62], core: [172, 146, 108] },
+  hit:    { base: [190, 170, 136], light: [232, 216, 186], dark: [78, 66, 52], core: [120, 96, 70], ember: [198, 108, 54] },
+  ground: { base: [208, 184, 144], light: [238, 222, 192], dark: [104, 84, 58], core: [164, 138, 102] },
+  burn:   { base: [78, 72, 74], light: [152, 150, 158], dark: [22, 20, 26], warm: [148, 100, 60], top: [130, 130, 138] }
+};
+
+function T(dx, dy, r, key, a, at, R) { return { dx: dx, dy: dy, r: r, key: key, a: a, at: at, R: R }; }
+
+var BURN_PROF = [[0, .28], [.06, .285], [.16, .34], [.32, .47], [.48, .62], [.64, .76], [.78, .86], [.90, .86], [.96, .80], [1, .76]];
+var STEM_PROF = [[0, .34], [.10, .36], [.30, .46], [.55, .60], [.75, .70], [.88, .68], [.96, .62], [1, .58]];
+var CAP_PROF  = [[0, .60], [.06, .62], [.18, .86], [.32, 1.00], [.48, 1.00], [.64, .90], [.80, .70], [.92, .46], [1, .40]];
+var CAP2_PROF = [[0, .50], [.12, .84], [.28, .90], [.50, .82], [.70, .64], [.86, .42], [1, .28]];
+
+var FAMILIES = {
+  engine: { key: 'engine', cell: [256, 256], alpha: .62, feather: 7, draw: 96, variants: [
+    { name: 'E0 团涌', geom: { kind: 'blob', cx: 128, cy: 142, R: 86, squash: 1.02, harm: [[2, .095], [3, .05], [5, .022]], rot: -.12, topBias: .10, seed: 0x1001 },
+      tone: [T(-.26, -.30, .60, 'light', .26), T(.22, .26, .62, 'dark', .22), T(.02, .10, .50, 'core', .16), T(-.42, .18, .30, 'light', .12), T(.34, -.30, .26, 'dark', .10)] },
+    { name: 'E1 横拖', geom: { kind: 'blob', cx: 122, cy: 140, R: 76, squash: .64, harm: [[2, .11], [3, .05], [5, .02]], taper: .36, rot: .05, seed: 0x1002 },
+      tone: [T(-.30, -.28, .58, 'light', .26), T(.10, .24, .60, 'dark', .22), T(-.05, .04, .44, 'core', .18), T(.30, .10, .28, 'dark', .12), T(-.46, .06, .26, 'light', .10)] },
+    { name: 'E2 双涌', geom: { kind: 'blob', cx: 128, cy: 142, R: 84, squash: 1.10, harm: [[2, .13], [3, .05], [5, .02]], phases: [Math.PI, 1.1, 2.3], rot: .04, topBias: .06, seed: 0x1003 },
+      tone: [T(-.24, -.40, .46, 'light', .24), T(-.22, .34, .44, 'light', .18), T(.24, .02, .56, 'dark', .22), T(-.02, -.06, .40, 'core', .16), T(.36, -.40, .24, 'dark', .10)] }
+  ] },
+  dust: { key: 'dust', cell: [256, 256], alpha: .56, feather: 7, draw: 118, variants: [
+    { name: 'D0 圆尘', geom: { kind: 'blob', cx: 128, cy: 150, R: 86, squash: .92, harm: [[2, .10], [3, .055], [5, .024]], seed: 0x2001 },
+      tone: [T(-.28, -.32, .58, 'light', .26), T(.24, .18, .60, 'dark', .24), T(.00, .04, .48, 'core', .18), T(.38, -.24, .26, 'dark', .12)], contact: .34 },
+    { name: 'D1 宽裙', geom: { kind: 'blob', cx: 128, cy: 156, R: 78, squash: .54, harm: [[2, .10], [3, .05], [5, .02]], taper: .18, seed: 0x2002 },
+      tone: [T(-.16, -.34, .60, 'light', .26), T(.10, .22, .62, 'dark', .26), T(-.30, .12, .36, 'light', .14), T(.42, -.10, .28, 'dark', .12)], contact: .42 },
+    { name: 'D2 扬柱', geom: { kind: 'blob', cx: 128, cy: 148, R: 70, squash: 1.42, harm: [[2, .09], [3, .05], [5, .022]], topBias: .22, seed: 0x2003 },
+      tone: [T(-.26, -.36, .54, 'light', .26), T(.24, .10, .58, 'dark', .22), T(-.02, .18, .44, 'core', .18), T(.30, -.28, .26, 'dark', .12)], contact: .30 }
+  ] },
+  hit: { key: 'hit', cell: [256, 256], alpha: .60, feather: 6, draw: 128, variants: [
+    { name: 'H0 爆散', geom: { kind: 'blob', cx: 128, cy: 140, R: 74, squash: .95, harm: [[2, .075], [3, .045], [6, .018], [7, .012]], seed: 0x3001 },
+      tone: [T(-.24, -.28, .52, 'light', .26), T(.20, .22, .56, 'dark', .24), T(-.04, .02, .40, 'ember', .18), T(.34, -.30, .26, 'dark', .14), T(-.38, .22, .24, 'light', .12)], contact: .38 },
+    { name: 'H1 滚穹', geom: { kind: 'blob', cx: 128, cy: 150, R: 74, squash: .58, harm: [[2, .10], [3, .05], [5, .02]], taper: .20, seed: 0x3002 },
+      tone: [T(-.18, -.32, .58, 'light', .26), T(.12, .20, .60, 'dark', .24), T(-.34, .06, .34, 'light', .14), T(.40, -.14, .28, 'dark', .14)], contact: .44 },
+    { name: 'H2 冲柱', geom: { kind: 'blob', cx: 128, cy: 146, R: 66, squash: 1.38, harm: [[2, .09], [3, .05], [5, .022]], topBias: .25, seed: 0x3003 },
+      tone: [T(-.24, -.38, .52, 'light', .26), T(.22, .08, .56, 'dark', .22), T(-.02, .14, .40, 'ember', .16), T(.28, -.26, .24, 'dark', .12)], contact: .30 }
+  ] },
+  ground: { key: 'ground', cell: [256, 256], alpha: .54, feather: 7, draw: 116, variants: [
+    { name: 'G0', geom: { kind: 'blob', cx: 128, cy: 128, R: 100, squash: .96, harm: [[2, .10], [3, .05], [5, .022]], seed: 0x4001 },
+      tone: [T(-.28, -.30, .58, 'light', .24), T(.24, .20, .60, 'dark', .24), T(.00, .04, .46, 'core', .16)], contact: .40 },
+    { name: 'G1', geom: { kind: 'blob', cx: 128, cy: 128, R: 98, squash: .72, harm: [[2, .10], [3, .055], [5, .024]], seed: 0x4002 },
+      tone: [T(-.20, -.32, .58, 'light', .24), T(.16, .20, .60, 'dark', .24), T(-.36, .10, .32, 'light', .12)], contact: .44 },
+    { name: 'G2', geom: { kind: 'blob', cx: 128, cy: 128, R: 96, squash: 1.18, harm: [[2, .09], [3, .05], [5, .022]], topBias: .14, seed: 0x4003 },
+      tone: [T(-.26, -.34, .56, 'light', .24), T(.22, .12, .58, 'dark', .22), T(.02, .16, .42, 'core', .16)], contact: .34 },
+    { name: 'G3', geom: { kind: 'blob', cx: 128, cy: 128, R: 100, squash: .88, harm: [[2, .115], [3, .05], [5, .02]], rot: .5, seed: 0x4004 },
+      tone: [T(-.24, -.26, .58, 'light', .24), T(.26, .22, .58, 'dark', .24), T(-.40, .18, .28, 'light', .12)], contact: .40 }
+  ] },
+  burn: { key: 'burn', cell: [256, 512], alpha: .70, feather: 8, draw: 108, variants: (function () { var _a = []; for (var v = 0; v < 4; v++) _a.push({
+      name: 'B' + v,
+      geom: { kind: 'col', cx: 128, yBot: 452, H: 330, W: 116 + v * 4, prof: BURN_PROF, seed: 0x5001 + v,
+              harm: [[2, .155], [3, .085], [4, .042]], topRound: 1.05, botRound: .88 },
+      tone: [T(.10, .58, .70, 'warm', .34), T(.00, .82, .52, 'warm', .22),
+             T(-.34, -.10, .62, 'light', .22), T(.34, .16, .60, 'dark', .30),
+             T(-.10, -.62, .58, 'top', .26), T(.22, -.34, .40, 'top', .16), T(-.30, .34, .38, 'warm', .16)],
+      fade: { y0: 400, y1: 500, a: .9 } }); return _a; })() }
+};
+
+function pathFromPts(pts) {                    // Catmull-Rom → 三次贝塞尔
+  var P = new Path2D(), n = pts.length;
+  P.moveTo(pts[0][0], pts[0][1]);
+  for (var i = 0; i < n; i++) {
+    var a = pts[i], b = pts[(i + 1) % n], c = pts[(i + 2) % n], e = pts[(i - 1 + n) % n];
+    P.bezierCurveTo(a[0] + (b[0] - e[0]) / 6, a[1] + (b[1] - e[1]) / 6,
+                    b[0] - (c[0] - a[0]) / 6, b[1] - (c[1] - a[1]) / 6, b[0], b[1]);
+  }
+  P.closePath(); return P;
+}
+function makeCanvas(w, h) { var c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+function rgb(c, a) { return 'rgba(' + (c[0] | 0) + ',' + (c[1] | 0) + ',' + (c[2] | 0) + ',' + a + ')'; }
+
+/* 烘焙一张烟贴图：实心剪影 → 内部软渐变调子 → 整体羽化 */
+function bakeSmokeTex(spec) {
+  var w = spec.cell[0], h = spec.cell[1];
+  var hard = makeCanvas(w, h), hc = hard.getContext('2d');
+  var pal = spec.pal, base = pal.base || pal.capBody;
+  hc.clearRect(0, 0, w, h);
+  /* (a) 剪影并集：所有部件一次性 clip，实心填充 —— 没有描边、没有逐圈堆壳 */
+  var uni = new Path2D();
+  for (var pts of spec.parts) uni.addPath(pathFromPts(pts));
+  hc.save(); hc.clip(uni);
+  hc.fillStyle = rgb(base, 1); hc.fillRect(0, 0, w, h);
+  /* (b) 内部调子：全部是软渐变团，圆心偏移 + 半径 <= 0.92R，边缘已衰减到 0，不会产生硬边 */
+  for (var t of (spec.tone || [])) {
+    var at = t.at || spec.center, R = t.R || spec.refR || 1;
+    var x = at[0] + t.dx * R, y = at[1] + t.dy * R, r = t.r * R;
+    var lim = R * 0.92, d = Math.hypot(x - at[0], y - at[1]);
+    if (d + r > lim) { var s = (lim - d) / r; if (s <= .08) continue; r *= s; }
+    if (r <= 1) continue;
+    var col = pal[t.key] || base;
+    var g = hc.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, rgb(col, 1)); g.addColorStop(.55, rgb(col, .5)); g.addColorStop(1, rgb(col, 0));
+    hc.fillStyle = g; hc.beginPath(); hc.arc(x, y, r, 0, TAU); hc.fill();
+  }
+  /* (c) 接地压暗 / 底部渐隐 —— 同样是渐变不是线条 */
+  if (spec.contact) {
+    var c = spec.center, R = spec.refR;
+    var y0 = c[1] + R * .10, y1 = c[1] + R * 1.05;
+    var g = hc.createLinearGradient(0, y0, 0, y1);
+    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,' + spec.contact + ')');
+    hc.fillStyle = g; hc.fillRect(0, y0, w, y1 - y0 + 1);
+  }
+  hc.restore();
+  if (spec.fade) {
+    hc.globalCompositeOperation = 'destination-out';
+    var g = hc.createLinearGradient(0, spec.fade.y0, 0, spec.fade.y1);
+    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,' + spec.fade.a + ')');
+    hc.fillStyle = g; hc.fillRect(0, spec.fade.y0, w, spec.fade.y1 - spec.fade.y0);
+    hc.globalCompositeOperation = 'source-over';
+  }
+  /* (d) 羽化：整体高斯模糊，边缘自然化开 */
+  var out = makeCanvas(w, h), oc = out.getContext('2d');
+  oc.filter = 'blur(' + spec.feather + 'px)';
+  oc.drawImage(hard, 0, 0);
+  oc.filter = 'none';
+  return out;
+}
+
+/* ------------------------------- 纹理库 ------------------------------- */
+var TEX = {};
+var KINDS = ['engine', 'dust', 'hit', 'ground', 'burn'];
+var DRAW_SIZE = { engine: 96, dust: 118, hit: 128, ground: 116, burn: 108 };
+
+function build() {
+  for (var n = 0; n < KINDS.length; n++) {
+    var k = KINDS[n], F = FAMILIES[k];
+    if (TEX[k] && TEX[k].length) continue;
+    TEX[k] = [];
+    for (var v = 0; v < F.variants.length; v++) {
+      var gm = F.variants[v].geom;
+      var pts = gm.kind === 'col' ? smColumnPts(gm) : smBlobPts(gm);
+      var P = smResample(pts, 128);
+      TEX[k].push(bakeSmokeTex({
+        cell: F.cell, pal: PAL[F.key], parts: [P], tone: F.variants[v].tone,
+        contact: F.variants[v].contact, fade: F.variants[v].fade,
+        center: [gm.cx, gm.cy != null ? gm.cy : gm.yBot - gm.H * .5],
+        refR: gm.R || gm.W, feather: F.feather
+      }));
+    }
+  }
+  return TEX;
+}
+
+/* 贴图可见底边（0=顶 1=底），把烟底压在地面上时用：
+   drawY = groundY - (BOTTOM[kind] - 0.5) * 贴图高 */
+var BOTTOM = { engine: 0.895, dust: 0.861, hit: 0.850, ground: 0.872, burn: 0.929 };
+
+return {
+  build: build,
+  kinds: KINDS,
+  drawSize: DRAW_SIZE,
+  bottom: BOTTOM,
+  sizeJitter: SIZE_JITTER,
+  randSize: smokeSizeMul,               /* ★ 每团烟生成时调用一次 */
+  tex: function (k, i) { var a = TEX[k] || (TEX[k] = []); return a[i % a.length]; },
+  rand: function (k) { return this.tex(k, (Math.random() * 99999) | 0); },
+  count: function (k) { return (TEX[k] || []).length; },
+  cell: function (k) { return FAMILIES[k].cell; },
+  bake: bakeSmokeTex,                   /* 需要自定义规格时用 */
+  blobPts: smBlobPts, colPts: smColumnPts, resample: smResample,
+  PAL: PAL, FAMILIES: FAMILIES, BURN_PROF: BURN_PROF
+};
+})();
+if (typeof module !== 'undefined' && module.exports) module.exports = SmokeFX;
+
+var _sfxReady = false;
+function _sfxTex(kind, i){ if(!_sfxReady){ try{ SmokeFX.build(); _sfxReady = true; }catch(e){ _sfxReady = false; } }
+  return _sfxReady ? SmokeFX.tex(kind, i) : null; }
+function _sfxJit(){ try{ return SmokeFX.randSize(); }catch(e){ return 1; } }   /* ★ 每一团烟都必须乘一次 */
+
+function paintCSM_E(g, v){
+  /* FX8-SMOKE: 预烘焙贴图；已删除 v=1 的 5 条内部直线与全部 DP_rimSeg 内弧 */
+  var t = _sfxTex('engine', v); if(!t) return;
+  g.drawImage(t, 0, 0, 256, 256);
+}
+
+function paintCSM_D(g, v){
+  /* FX8-SMOKE 行进烟三格：0 = 新版 D0 圆尘 / 1 = 旧版 D0 圆尘（按要求加回来的原样画法）
+     / 2 = 新版 D2 扬柱。三格都由 SmokeFX 提供（1 号格走旧版画法烘焙），
+     单元格 256×256 与 UV 帧 _csmFrames 均不变。 */
+  var t = _sfxTex('dust', v); if(!t) return;
+  g.drawImage(t, 0, 0, 256, 256);
+}
+
+function paintCHS(g, v){
+  /* FX8-SMOKE: 预烘焙贴图；已删除三处 DP_dots 深色点与 DP_rimSeg 内弧 */
+  var t = _sfxTex('hit', v); if(!t) return;
+  g.drawImage(t, 0, 0, 256, 256);
+}
+
+function paintCTD(g, v){
+  var S = 0xE560 + v * 0x10, rnd = mulberry32(S + 9), i;
+  if(v === 0){           // T0 土块飞溅
+    _fxA2(g, 128, 190, 80, S, 168, 142, 104, 2, 1);
+    _fxA2(g, 128, 140, 56, S + 1, 178, 152, 112, 0, 1);
+    DP_clod(g, 110, 120, 34, S + 2); DP_clod(g, 168, 150, 26, S + 3);
+    DP_clod(g, 76, 170, 22, S + 4); DP_clod(g, 190, 100, 18, S + 5);
+    DP_dots(g, 40, 60, 176, 140, S + 6, 18, 2, 5, '#4a3826', .65);
+  } else if(v === 1){    // T1 尘带（土块散布）
+    _fxA2(g, 128, 162, 70, S, 168, 142, 104, 2, 1);
+    _fxA2(g, 128, 192, 60, S + 1, 158, 132, 96, 2, 1);
+    for(i = 0; i < 8; i++){ var xx = 28 + i * 26 + rnd() * 18;
+      DP_clod(g, xx, 92 + rnd() * 58, 8 + rnd() * 9, S + 2 + i); }
+    g.save(); g.strokeStyle = 'rgba(74,56,38,.4)'; g.lineWidth = 3; g.lineCap = 'round';
+    for(i = 0; i < 4; i++){ var yy = 140 + i * 18;
+      g.beginPath(); g.moveTo(24, yy); g.lineTo(120 + rnd() * 60, yy - 6); g.stroke(); }
+    g.restore();
+  } else {               // T2 旋扬
+    _fxA2(g, 128, 170, 66, S, 168, 142, 104, 0, 1);
+    _fxA2(g, 128, 130, 44, S + 1, 178, 152, 112, 0, 1);
+    g.save(); g.strokeStyle = 'rgba(74,56,38,.55)'; g.lineCap = 'round';
+    for(i = 0; i < 3; i++){ g.lineWidth = 5 - i;
+      g.beginPath(); g.arc(128, 190, 44 + i * 26, Math.PI * (1.15 + i * .1), Math.PI * (1.85 - i * .06)); g.stroke(); }
+    g.restore();
+    DP_clod(g, 84, 118, 22, S + 2); DP_clod(g, 128, 88, 26, S + 3); DP_clod(g, 172, 118, 22, S + 4);
+    DP_dots(g, 60, 60, 136, 130, S + 5, 16, 2, 5, '#4a3826', .6);
+    DP_speckOut(g, 60, 100, 136, 110, S + 6, 16, 6, .5);
+  }
+}
+
+function paintCB(g, v){
+  var S = 0xE5C0 + v * 0x40, i;
+  var L = [
+    {capY:300, capDX:0,   capW:1.0,  colX:512, lean:0,   skirtW:1.0,  colW:1.0},
+    {capY:262, capDX:-30, capW:1.18, colX:470, lean:-46, skirtW:1.14, colW:.85},
+    {capY:336, capDX:36,  capW:.88,  colX:552, lean:52,  skirtW:.9,   colW:1.2}
+  ][v];
+  var cx = 512 + L.capDX;
+  g.fillStyle = 'rgba(35,33,31,.85)';
+  g.beginPath(); g.ellipse(520, 930, 250 * L.skirtW, 26, -.02, 0, TAU); g.fill();
+  for(i = 0; i < 7; i++)
+    _fxA2(g, 520 + (i - 3) * 73 * L.skirtW, 895, 95, S + 100 + i * 3, 120, 110, 96, 2, 0);
+  for(i = 0; i < 7; i++)
+    _fxA2(g, L.colX + ((i * 37) % 30) + L.lean * i / 7, 840 - i * 58, (92 - i * 5) * L.colW, S + 30 + i * 3, 140, 132, 120, 1, 0);
+  var cap = [[-.78, .44], [-.42, .16], [-.08, -.04], [.26, -.02], [.6, .18], [.88, .42]];
+  for(i = 0; i < cap.length; i++)
+    _fxA2(g, cx + cap[i][0] * 380 * L.capW, L.capY + 12 + cap[i][1] * 250, 118 * L.capW, S + 50 + i * 3, 104, 97, 89, 0, 0);
+  for(i = 0; i < cap.length; i++)
+    _fxA2(g, cx + cap[i][0] * 380 * L.capW, L.capY + cap[i][1] * 250, (112 + (i % 3) * 12) * L.capW, S + 60 + i * 3,
+      i % 2 ? 210 : 178, i % 2 ? 196 : 160, i % 2 ? 178 : 138, 0, 0);
+  var fro = [[-.5, .3], [-.14, .05], [.24, .07], [.5, .36]];
+  for(i = 0; i < fro.length; i++)
+    _fxA2(g, cx + fro[i][0] * 380 * L.capW, L.capY + 30 + fro[i][1] * 250, 104, S + 80 + i * 3, 222, 216, 204, 0, 0);
+  _fxA2(g, cx - 110, L.capY + 175, 88, S + 100, 88, 84, 78, 0, 0);
+  _fxA2(g, cx + 60, L.capY + 182, 92, S + 101, 88, 84, 78, 0, 0);
+  _fxA2(g, cx - 150, L.capY + 168, 60, S + 102, 84, 80, 74, 0, 0);
+  _fxA2(g, cx - 20, L.capY + 195, 70, S + 103, 84, 80, 74, 0, 0);
+  _fxA2(g, cx - 90, L.capY - 100, 70, S + 104, 240, 236, 222, 0, 0);
+  _fxA2(g, cx + 50, L.capY - 105, 75, S + 105, 240, 236, 222, 0, 0);
+  DP_speckOut(g, cx - 220 * L.capW, L.capY - 160, 440 * L.capW, 260, S + 110, 26, 11, .35);
+  DP_dots(g, 200, 700, 624, 260, S + 111, 26, 3, 8, '#3a332c', .5);
+}
+
+function paintBurnCell(g, x0, y0, v){
+  /* FX8-SMOKE: 预烘焙羽流贴图（上大下小、圆柱外形、内部零描边）；
+     已删除脊线墨脉/扭褶等 stroke() 与逐圈 _fxA2 堆壳。
+     贴图可见底边在 0.929 处，整体放大 1.1 倍并下移，让柱底贴到单元格底边（平面原点=底边）。 */
+  var t = _sfxTex('burn', v); if(!t) return;
+  g.save(); g.beginPath(); g.rect(x0, y0, 256, 512); g.clip();
+  g.drawImage(t, x0 - 12.8, y0 - 21.6, 281.6, 563.2);
+  g.restore();
+}
+
+function _comicBurnMakeSmokeTex(){var cv=document.createElement('canvas');cv.width=512;cv.height=1024;var g=cv.getContext('2d');g.clearRect(0,0,512,1024);g.lineJoin='round';g.lineCap='round';
+  /* FX7-BURN:黑烟柱水墨重绘(参考图剪影雕刻,无火焰;帧位不变) */
+  paintBurnCell(g,0,0,0);paintBurnCell(g,256,0,1);paintBurnCell(g,0,512,2);paintBurnCell(g,256,512,3);
+  var t=new THREE.CanvasTexture(cv);t.minFilter=THREE.LinearFilter;t.magFilter=THREE.LinearFilter;t.generateMipmaps=false;return t;}
+function _comicBurnSmokeEnsure(){if(_comicBurnSmokeMesh||!scene)return;if(!_comicBurnSmokeTex)_comicBurnSmokeTex=_comicBurnMakeSmokeTex();_comicBurnSmokeA=new Float32Array(COMIC_BURN_SMOKE_MAX);_comicBurnSmokeUvA=new Float32Array(COMIC_BURN_SMOKE_MAX*4);_comicBurnSmokeGeo=new THREE.PlaneGeometry(1,1);_comicBurnSmokeGeo.translate(0,.5,0);_comicBurnSmokeGeo.setAttribute('iAlpha',new THREE.InstancedBufferAttribute(_comicBurnSmokeA,1).setUsage(THREE.DynamicDrawUsage));_comicBurnSmokeGeo.setAttribute('iUvRect',new THREE.InstancedBufferAttribute(_comicBurnSmokeUvA,4).setUsage(THREE.DynamicDrawUsage));var vs=['attribute vec4 iUvRect;attribute float iAlpha;varying vec2 vUv;varying float vA;','#include <common>','#include <logdepthbuf_pars_vertex>','void main(){vUv=iUvRect.xy+uv*iUvRect.zw;vA=iAlpha;vec4 mv=modelViewMatrix*instanceMatrix*vec4(position,1.);gl_Position=projectionMatrix*mv;','#include <logdepthbuf_vertex>','}'].join('\n'),fs=['uniform sampler2D map;varying vec2 vUv;varying float vA;','#include <logdepthbuf_pars_fragment>','void main(){','#include <logdepthbuf_fragment>','vec4 t=texture2D(map,vUv);float a=t.a*vA;if(a<.014)discard;gl_FragColor=vec4(t.rgb,a);}'].join('\n');_comicBurnSmokeMat=new THREE.ShaderMaterial({uniforms:{map:{value:_comicBurnSmokeTex}},vertexShader:vs,fragmentShader:fs,transparent:true,depthWrite:false,depthTest:true,side:THREE.DoubleSide,blending:THREE.NormalBlending,toneMapped:false,fog:false});_comicBurnSmokeMesh=new THREE.InstancedMesh(_comicBurnSmokeGeo,_comicBurnSmokeMat,COMIC_BURN_SMOKE_MAX);_comicBurnSmokeMesh.count=0;_comicBurnSmokeMesh.visible=false;_comicBurnSmokeMesh.frustumCulled=false;_comicBurnSmokeMesh.renderOrder=6;_comicBurnSmokeMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);scene.add(_comicBurnSmokeMesh);}
+function _comicBurnSmokeWrite(index,x,y,z,w,h,alpha,v){if(index>=COMIC_BURN_SMOKE_MAX||alpha<=.004)return index;comicTextureFace(_comicBurnQ,x,y,z,COMIC_FACE_YAW);_comicBurnPos.set(x,y,z);_comicBurnScale.set(w,h,1);_comicBurnM4.compose(_comicBurnPos,_comicBurnQ,_comicBurnScale);_comicBurnSmokeMesh.setMatrixAt(index,_comicBurnM4);_comicBurnSmokeA[index]=alpha;_fxUvW(_comicBurnSmokeUvA,index,_burnSmokeFrames,v);return index+1;}
 function _comicBurnEnsure() {
   if (_comicBurnMesh || typeof scene === 'undefined' || !scene) return;
   if (!_comicBurnTex) _comicBurnTex = _comicBurnMakeTex();
@@ -659,12 +1129,12 @@ function _comicBurnSync(nowS) {
       var farK=t._comicBurnFarK,phase=t._comicBurnPhase||0,kindK=t.kind==='arty'?.90:1;
       if(active&&shown<COMIC_BURN_MAX){var pulse=Math.sin(nowS*7.1+phase),pulse2=Math.sin(nowS*10.7+phase*1.73),w=5.5*kindK*farK*(.96+pulse*.035),h=6.4*kindK*farK*(.97+pulse2*.045),yaw=comicTextureFace(_comicBurnQ,p.x,p.y,p.z,COMIC_FACE_YAW),sway=Math.sin(nowS*5.3+phase)*.13*farK;_comicBurnPos.set(p.x+Math.cos(yaw)*sway,p.y+.48,p.z-Math.sin(yaw)*sway);_comicBurnScale.set(w,h,1);_comicBurnM4.compose(_comicBurnPos,_comicBurnQ,_comicBurnScale);_comicBurnMesh.setMatrixAt(shown++,_comicBurnM4);}
       if(!_comicBurnSmokeMesh)continue;
-      if(active){var clock=(nowS+phase*.31)%2.6;if(clock<0)clock+=2.6;for(var si=0;si<2&&smokeOut<COMIC_BURN_SMOKE_MAX;si++){var age=(clock+si*1.3)%2.6,E=comicSmokeExpand(age,2.6,.10,1.86,.68,.58,3.5,.46),ang=phase+si*2.17,dr=E.drift*.42,sw=3.8*kindK*farK*E.scale,sh=7.2*kindK*farK*(1+.62*E.k);smokeOut=_comicBurnSmokeWrite(smokeOut,p.x+Math.sin(ang)*dr,p.y+1.12+E.rise,p.z+Math.cos(ang)*dr,sw,sh,.72*E.alpha);}}
-      else if(smokeOut<COMIC_BURN_SMOKE_MAX){var TE=comicSmokeExpand(.25+tailAge,1.8,.08,1.72,.70,.62,3.2,.46),ta=phase+1.1,td=TE.drift*.34;smokeOut=_comicBurnSmokeWrite(smokeOut,p.x+Math.sin(ta)*td,p.y+1.18+TE.rise,p.z+Math.cos(ta)*td,3.9*kindK*farK*TE.scale,7.4*kindK*farK*(1+.52*TE.k),.78*TE.alpha);}
+      if(active){var clock=(nowS+phase*.31)%2.6;if(clock<0)clock+=2.6;for(var si=0;si<2&&smokeOut<COMIC_BURN_SMOKE_MAX;si++){if(t._fxBVar===undefined){t._fxBVar=(Math.random()*4)|0;t._fxBSJit=_sfxJit();}var age=(clock+si*1.3)%2.6,E=comicSmokeExpand(age,2.6,.10,1.86,.68,.58,3.5,.46),ang=phase+si*2.17,dr=E.drift*.42,sbj=t._fxBSJit||1,sw=3.8*kindK*farK*E.scale*sbj,sh=7.2*kindK*farK*(1+.62*E.k)*sbj;smokeOut=_comicBurnSmokeWrite(smokeOut,p.x+Math.sin(ang)*dr,p.y+1.12+E.rise,p.z+Math.cos(ang)*dr,sw,sh,.72*E.alpha,(t._fxBVar+si)%4);}}
+      else if(smokeOut<COMIC_BURN_SMOKE_MAX){var TE=comicSmokeExpand(.25+tailAge,1.8,.08,1.72,.70,.62,3.2,.46),ta=phase+1.1,td=TE.drift*.34;smokeOut=_comicBurnSmokeWrite(smokeOut,p.x+Math.sin(ta)*td,p.y+1.18+TE.rise,p.z+Math.cos(ta)*td,3.9*kindK*farK*TE.scale*(t._fxBSJit||1),7.4*kindK*farK*(1+.52*TE.k)*(t._fxBSJit||1),.78*TE.alpha,t._fxBVar|0);}
     }
     _comicBurnList.length=write;
     if(_comicBurnMesh){_comicBurnMesh.count=shown;_comicBurnMesh.visible=shown>0;if(shown)_comicBurnMesh.instanceMatrix.needsUpdate=true;}
-    if(_comicBurnSmokeMesh){_comicBurnSmokeMesh.count=smokeOut;_comicBurnSmokeMesh.visible=smokeOut>0;if(smokeOut){var im=_comicBurnSmokeMesh.instanceMatrix;im.updateRange.offset=0;im.updateRange.count=smokeOut*16;im.needsUpdate=true;var aa=_comicBurnSmokeGeo.attributes.iAlpha;aa.updateRange.offset=0;aa.updateRange.count=smokeOut;aa.needsUpdate=true;}}
+    if(_comicBurnSmokeMesh){_comicBurnSmokeMesh.count=smokeOut;_comicBurnSmokeMesh.visible=smokeOut>0;if(smokeOut){var im=_comicBurnSmokeMesh.instanceMatrix;im.updateRange.offset=0;im.updateRange.count=smokeOut*16;im.needsUpdate=true;var aa=_comicBurnSmokeGeo.attributes.iAlpha,au=_comicBurnSmokeGeo.attributes.iUvRect;aa.updateRange.offset=0;aa.updateRange.count=smokeOut;au.updateRange.offset=0;au.updateRange.count=smokeOut*4;aa.needsUpdate=au.needsUpdate=true;}}
   }catch(e){if(_comicBurnMesh){_comicBurnMesh.count=0;_comicBurnMesh.visible=false;}if(_comicBurnSmokeMesh){_comicBurnSmokeMesh.count=0;_comicBurnSmokeMesh.visible=false;}}
 }
 
@@ -679,17 +1149,18 @@ var _cmzSideMesh=null,_cmzFrontMesh=null,_cmzSmokeMesh=null,_cmzIllumMesh=null,_
 var _cmzX=new THREE.Vector3(1,0,0),_cmzQ=new THREE.Quaternion(),_cmzRollQ=new THREE.Quaternion(),_cmzZ=new THREE.Vector3(0,0,1),_cmzDir=new THREE.Vector3();
 var _cmzM1=new THREE.Matrix4(),_cmzM2=new THREE.Matrix4(),_cmzM3=new THREE.Matrix4(),_cmzM4=new THREE.Matrix4();
 var _cmzPos=new THREE.Vector3(),_cmzScale=new THREE.Vector3(),_cmzAnchorP=new THREE.Vector3();
-var _cmzSmokeFrames=[[.010,.020,.480,.960],[.510,.020,.480,.960]];
+var _cmzSmokeFrames=[[.008,.508,.234,.484],[.258,.508,.234,.484],[.008,.008,.234,.484],[.258,.008,.234,.484],[.508,.508,.234,.484],[.758,.508,.234,.484],[.508,.008,.234,.484],[.758,.008,.234,.484]];   // FX1:0-3爆烟/4-7上飘烟
 function _cmzTex(w,h,draw,mip){var cv=document.createElement('canvas');cv.width=w;cv.height=h;var g=cv.getContext('2d');g.clearRect(0,0,w,h);g.lineJoin='round';g.lineCap='round';draw(g,w,h);var t=new THREE.CanvasTexture(cv);t.minFilter=mip?THREE.LinearMipmapLinearFilter:THREE.LinearFilter;t.magFilter=THREE.LinearFilter;t.generateMipmaps=!!mip;return t;}
 function _cmzBuildTex(){
   _cmzSideTex=_cmzTex(512,256,function(g){g.beginPath();g.moveTo(10,130);g.bezierCurveTo(50,105,70,91,101,103);g.bezierCurveTo(111,67,154,54,181,79);g.bezierCurveTo(197,38,252,31,278,67);g.bezierCurveTo(313,37,365,54,369,94);g.bezierCurveTo(421,71,474,96,466,139);g.bezierCurveTo(500,163,474,206,430,190);g.bezierCurveTo(397,225,345,213,323,185);g.bezierCurveTo(280,222,223,202,211,174);g.bezierCurveTo(171,202,126,185,119,157);g.bezierCurveTo(74,168,42,151,10,130);g.closePath();g.fillStyle='rgba(255,109,13,.88)';g.fill();
     g.beginPath();g.moveTo(9,129);g.bezierCurveTo(63,114,89,91,125,111);g.bezierCurveTo(140,76,182,71,203,101);g.bezierCurveTo(230,61,280,67,296,104);g.bezierCurveTo(330,70,376,91,369,129);g.bezierCurveTo(408,118,434,148,414,174);g.bezierCurveTo(373,194,328,174,309,155);g.bezierCurveTo(267,185,219,167,202,145);g.bezierCurveTo(159,172,119,149,108,134);g.closePath();g.fillStyle='rgba(255,211,35,.98)';g.fill();var gr=g.createLinearGradient(0,0,240,0);gr.addColorStop(0,'rgba(255,255,255,1)');gr.addColorStop(.35,'rgba(255,255,224,.98)');gr.addColorStop(1,'rgba(255,235,125,0)');g.fillStyle=gr;g.beginPath();g.moveTo(4,126);g.bezierCurveTo(76,109,138,112,242,130);g.bezierCurveTo(143,147,72,143,4,132);g.closePath();g.fill();},true);
   _cmzFrontTex=_cmzTex(256,256,function(g){var cx=128,cy=128;for(var i=0;i<18;i++){var a=i/18*TAU,r0=i%2?49:58,r1=i%3===0?122:92,w=.035;g.beginPath();g.moveTo(cx+Math.cos(a-w)*r0,cy+Math.sin(a-w)*r0);g.lineTo(cx+Math.cos(a)*r1,cy+Math.sin(a)*r1);g.lineTo(cx+Math.cos(a+w)*r0,cy+Math.sin(a+w)*r0);g.closePath();g.fillStyle=i%2?'rgba(255,103,15,.9)':'rgba(255,190,25,.95)';g.fill();}var r=g.createRadialGradient(cx,cy,0,cx,cy,75);r.addColorStop(0,'rgba(255,255,255,1)');r.addColorStop(.34,'rgba(255,255,215,1)');r.addColorStop(.68,'rgba(255,188,31,.92)');r.addColorStop(1,'rgba(255,80,8,0)');g.fillStyle=r;g.fillRect(45,45,166,166);},true);
-  _cmzSmokeTex=_cmzTex(512,256,function(g){function ovalPuff(cx,cy,rx,ry,c){g.beginPath();g.ellipse(cx,cy,rx,ry,0,0,TAU);g.fillStyle=c;g.fill();g.lineWidth=6;g.strokeStyle='rgba(57,51,45,.82)';g.stroke();}
-    g.save();ovalPuff(70,147,45,42,'rgba(185,178,165,.82)');ovalPuff(119,112,56,50,'rgba(220,214,201,.88)');ovalPuff(175,139,48,43,'rgba(170,164,153,.76)');ovalPuff(139,174,55,41,'rgba(202,196,184,.80)');g.restore();
-    g.save();g.translate(256,0);/* 参考图的竖直S形细烟:深灰外缘+浅灰内芯。 */
-    g.beginPath();g.moveTo(128,238);g.bezierCurveTo(92,207,102,181,139,160);g.bezierCurveTo(174,139,171,113,137,96);g.bezierCurveTo(104,79,103,51,132,20);g.strokeStyle='rgba(67,62,57,.82)';g.lineWidth=27;g.stroke();
-    g.beginPath();g.moveTo(128,238);g.bezierCurveTo(92,207,102,181,139,160);g.bezierCurveTo(174,139,171,113,137,96);g.bezierCurveTo(104,79,103,51,132,20);g.strokeStyle='rgba(226,222,213,.96)';g.lineWidth=17;g.stroke();g.restore();},false);
+  _cmzSmokeTex=_cmzTex(1024,512,function(g){
+    /* FX1/FX2:左半爆烟A2 2x2/右半上飘烟A2 2x2 */
+    function burst(x,y,sd,sh){_fxA2(g,x,y,100,sd,150,160,170,sh);_fxA2(g,x+20,y+24,56,sd+9,110,120,132,0);}
+    burst(128,128,0xC2B0,0);burst(384,128,0xC2B1,2);burst(128,384,0xC2B2,1);burst(384,384,0xC2B3,3);
+    /* FX4:上飘烟删除,右半留空(小爆烟复用左半0-3格随机) */
+  },false);
   _cmzIllumTex=_cmzTex(128,128,function(g){var r=g.createRadialGradient(64,64,0,64,64,63);r.addColorStop(0,'rgba(255,255,235,.88)');r.addColorStop(.24,'rgba(255,226,130,.50)');r.addColorStop(.62,'rgba(255,151,42,.17)');r.addColorStop(1,'rgba(255,108,20,0)');g.fillStyle=r;g.fillRect(0,0,128,128);},true);
 }
 var CMZ_VERT=['attribute float iAlpha;varying vec2 vUv;varying float vA;','#include <common>','#include <logdepthbuf_pars_vertex>','void main(){vUv=uv;vA=iAlpha;vec4 mv=modelViewMatrix*instanceMatrix*vec4(position,1.0);gl_Position=projectionMatrix*mv;','#include <logdepthbuf_vertex>','}'].join('\n');
@@ -700,9 +1171,9 @@ function _cmzEnsure(){if(_cmzPool||!scene)return;_cmzBuildTex();var p1=new THREE
   var illumGeo=new THREE.PlaneGeometry(1,1);illumGeo.rotateX(-Math.PI*.5); // 单水平片;每次事件写车体和地面两个实例
   var A=_cmzMakeMesh(cross2,_cmzSideTex,THREE.AdditiveBlending,1.15,17,CMZ_POOL,false),B=_cmzMakeMesh(new THREE.PlaneGeometry(1,1),_cmzFrontTex,THREE.AdditiveBlending,1.25,18,CMZ_POOL,false),C=_cmzMakeMesh(new THREE.PlaneGeometry(1,1),_cmzSmokeTex,THREE.NormalBlending,1,15,CMZ_SMOKE_CAP,true),D=_cmzMakeMesh(illumGeo,_cmzIllumTex,THREE.AdditiveBlending,1.12,16,CMZ_ILLUM_CAP,false);
   _cmzSideMesh=A.mesh;_cmzSideA=A.alpha;_cmzFrontMesh=B.mesh;_cmzFrontA=B.alpha;_cmzSmokeMesh=C.mesh;_cmzSmokeA=C.alpha;_cmzSmokeUvA=C.uv;_cmzIllumMesh=D.mesh;_cmzIllumA=D.alpha;_cmzPool=[];
-  for(var i=0;i<CMZ_POOL;i++)_cmzPool.push({on:false,age:0,life:1.82,len:7,rot:0,px:0,py:0,pz:0,dx:0,dy:0,dz:1,anchor:null,wispBorn:false,wispAge:0,wx:0,wy:0,wz:0,bx:0,by:0,bz:0,gx:0,gy:0,gz:0,bodyQ:new THREE.Quaternion()});}
+  for(var i=0;i<CMZ_POOL;i++)_cmzPool.push({on:false,age:0,life:1.82,len:7,rot:0,px:0,py:0,pz:0,dx:0,dy:0,dz:1,anchor:null,puffBorn:false,puffAge:0,puffDead:false,wx:0,wy:0,wz:0,bx:0,by:0,bz:0,gx:0,gy:0,gz:0,bodyQ:new THREE.Quaternion(),bVar:0,sVar:0});}
 function comicMuzzleBurst(pos,dir,len,anchor,owner){if(!pos||!dir)return;_cmzEnsure();if(!_cmzPool)return;var it=null;for(var i=0;i<CMZ_POOL;i++){var q=_cmzPool[(_cmzRing+i)%CMZ_POOL];if(!q.on){it=q;_cmzRing=(_cmzRing+i+1)%CMZ_POOL;break;}}if(!it){it=_cmzPool[_cmzRing];_cmzRing=(_cmzRing+1)%CMZ_POOL;}if(!it.on)_cmzLive++;_cmzZeroed=false;
-  it.on=true;it.age=0;it.life=1.82;it.len=(len||3.2)*2.15;it.rot=(Math.random()-.5)*.25;it.px=pos.x;it.py=pos.y;it.pz=pos.z;it.dx=dir.x;it.dy=dir.y;it.dz=dir.z;it.anchor=anchor||null;it.wispBorn=false;it.wispAge=0;
+  it.on=true;it.age=0;it.life=1.82;it.len=(len||3.2)*2.15;it.rot=(Math.random()-.5)*.25;it.px=pos.x;it.py=pos.y;it.pz=pos.z;it.dx=dir.x;it.dy=dir.y;it.dz=dir.z;it.anchor=anchor||null;it.puffBorn=false;it.puffAge=0;it.bVar=(Math.random()*4)|0;it.sVar=(Math.random()*4)|0;it.own=owner||null;it.puffDead=false;for(var qi=0;qi<CMZ_POOL;qi++){var qq=_cmzPool[qi];if(it.own&&qq!==it&&qq.on&&qq.own===it.own)qq.puffDead=true;}
   if(owner&&owner.group){var gp=owner.group.position;it.bx=pos.x*.46+gp.x*.54;it.by=gp.y+1.34;it.bz=pos.z*.46+gp.z*.54;owner.group.getWorldQuaternion(it.bodyQ);}else{it.bx=pos.x-dir.x*1.5;it.by=pos.y-.9;it.bz=pos.z-dir.z*1.5;it.bodyQ.identity();}
   it.gx=pos.x;it.gz=pos.z;it.gy=(typeof terrainH==='function'?terrainH(pos.x,pos.z):pos.y-2)+.065;
 }
@@ -714,16 +1185,16 @@ function _comicMuzzleUpdate(dt){if(!_cmzPool)return;
      (实例 count 归零/网格隐藏),之后休眠直到下一次 comicMuzzleBurst 事件唤醒。 */
   if(!_cmzLive&&_cmzZeroed)return;
   var fireOut=0,smokeOut=0,illumOut=0,flashAny=false;for(var i=0;i<CMZ_POOL;i++){var it=_cmzPool[i];if(!it.on)continue;it.age+=dt;var k=it.age/it.life;if(k>=1){it.on=false;_cmzLive--;continue;}
-    /* 后续细烟出生边沿只读取一次实时炮口世界位置;之后完全使用快照,不做逐帧炮口检测。 */
-    if(!it.wispBorn&&it.age>=.76){if(it.anchor&&it.anchor.getWorldPosition){it.anchor.getWorldPosition(_cmzAnchorP);it.wx=_cmzAnchorP.x;it.wy=_cmzAnchorP.y;it.wz=_cmzAnchorP.z;}else{it.wx=it.px;it.wy=it.py;it.wz=it.pz;}it.wispBorn=true;it.wispAge=0;}else if(it.wispBorn)it.wispAge+=dt;
+    /* 后续小爆烟出生边沿只读取一次实时炮口世界位置;之后完全使用快照,不做逐帧炮口检测。 */
+    if(!it.puffBorn&&!it.puffDead&&it.age>=.5){if(it.anchor&&it.anchor.getWorldPosition){it.anchor.getWorldPosition(_cmzAnchorP);it.wx=_cmzAnchorP.x;it.wy=_cmzAnchorP.y;it.wz=_cmzAnchorP.z;}else{it.wx=it.px;it.wy=it.py;it.wz=it.pz;}it.puffBorn=true;it.puffAge=0;}else if(it.puffBorn)it.puffAge+=dt;
     if(it.age<.16)flashAny=true;var flashK=Math.min(1,it.age/.12),flashFade=Math.max(0,1-it.age/.15),pop=.35+.75*(1-Math.pow(1-flashK,3));
     _cmzQ.setFromUnitVectors(_cmzX,_cmzDir.set(it.dx,it.dy,it.dz));_cmzPos.set(it.px+it.dx*it.len*.47,it.py+it.dy*it.len*.47,it.pz+it.dz*it.len*.47);_cmzScale.set(it.len*pop,it.len*.72*pop,1);_cmzM1.compose(_cmzPos,_cmzQ,_cmzScale);_cmzSet(_cmzSideMesh,_cmzSideA,fireOut,_cmzM1,flashFade);
     comicTextureFace(_cmzQ,it.px,it.py,it.pz,COMIC_FACE_CAMERA);_cmzRollQ.setFromAxisAngle(_cmzZ,it.rot);_cmzQ.multiply(_cmzRollQ);_cmzPos.set(it.px+it.dx*.08,it.py+it.dy*.08,it.pz+it.dz*.08);_cmzScale.set(5.4*pop,5.4*pop,1);_cmzM2.compose(_cmzPos,_cmzQ,_cmzScale);_cmzSet(_cmzFrontMesh,_cmzFrontA,fireOut,_cmzM2,flashFade);fireOut++;
     /* 亮度贴图只在开火事件快照处淡出:一个贴车体甲板,一个贴炮口下方地面。 */
     if(it.age<.18){var lf=1-it.age/.18;_cmzPos.set(it.bx,it.by,it.bz);_cmzScale.set(7.5,1,5.5);_cmzM4.compose(_cmzPos,it.bodyQ,_cmzScale);_cmzSet(_cmzIllumMesh,_cmzIllumA,illumOut++,_cmzM4,.30*lf);
       _cmzQ.identity();_cmzPos.set(it.gx,it.gy,it.gz);_cmzScale.set(12,1,12);_cmzM4.compose(_cmzPos,_cmzQ,_cmzScale);_cmzSet(_cmzIllumMesh,_cmzIllumA,illumOut++,_cmzM4,.22*lf);}
-    if(it.age<1.02){var ME=comicSmokeExpand(Math.max(0,it.age-.045),.93,.12,3.34,.62,.72,1.1,0),sk=ME.k;comicTextureFace(_cmzQ,it.px,it.py,it.pz,COMIC_FACE_CAMERA);_cmzRollQ.setFromAxisAngle(_cmzZ,it.rot*.35);_cmzQ.multiply(_cmzRollQ);_cmzPos.set(it.px+it.dx*(.55+1.4*sk),it.py+it.dy*(.55+1.4*sk)+ME.rise,it.pz+it.dz*(.55+1.4*sk));var ss=2.4*ME.scale;_cmzScale.set(ss,ss,1);_cmzM3.compose(_cmzPos,_cmzQ,_cmzScale);_cmzSmokeSet(smokeOut++,0,_cmzM3,.72*ME.alpha);}
-    if(it.wispBorn){var WE=comicSmokeExpand(it.wispAge,it.life-.76,.10,1.78,.75,.62,1.7,0),wk=WE.k;comicTextureFace(_cmzQ,it.wx,it.wy,it.wz,COMIC_FACE_YAW);var wsx=1.35*WE.scale,wsy=4.2*(1+.76*wk);_cmzPos.set(it.wx+it.dx*.12*wk,it.wy+wsy*.447+WE.rise,it.wz+it.dz*.12*wk);_cmzScale.set(wsx,wsy,1);_cmzM3.compose(_cmzPos,_cmzQ,_cmzScale);_cmzSmokeSet(smokeOut++,1,_cmzM3,.62*WE.alpha);}}
+    if(it.age<1.02){var ME=comicSmokeExpand(Math.max(0,it.age-.045),.93,.12,3.34,.62,.72,1.1,0),sk=ME.k;comicTextureFace(_cmzQ,it.px,it.py,it.pz,COMIC_FACE_CAMERA);_cmzRollQ.setFromAxisAngle(_cmzZ,it.rot*.35);_cmzQ.multiply(_cmzRollQ);_cmzPos.set(it.px+it.dx*(.55+1.4*sk),it.py+it.dy*(.55+1.4*sk)+ME.rise,it.pz+it.dz*(.55+1.4*sk));var ss=2.4*ME.scale;_cmzScale.set(ss,ss,1);_cmzM3.compose(_cmzPos,_cmzQ,_cmzScale);_cmzSmokeSet(smokeOut++,it.bVar,_cmzM3,.72*ME.alpha);}
+    if(it.puffBorn){var WE=comicSmokeExpand(it.puffAge,it.life-.5,.10,1.78,.75,.62,1.7,0),wk=WE.k;comicTextureFace(_cmzQ,it.wx,it.wy,it.wz,COMIC_FACE_CAMERA);var ps=1.2*WE.scale;_cmzPos.set(it.wx,it.wy+WE.rise,it.wz);_cmzScale.set(ps,ps,1);_cmzM3.compose(_cmzPos,_cmzQ,_cmzScale);_cmzSmokeSet(smokeOut++,it.sVar,_cmzM3,.62*WE.alpha);}}
   _cmzUpload(_cmzSideMesh,_cmzSideA,fireOut);_cmzUpload(_cmzFrontMesh,_cmzFrontA,fireOut);_cmzUpload(_cmzIllumMesh,_cmzIllumA,illumOut);_cmzUpload(_cmzSmokeMesh,_cmzSmokeA,smokeOut,_cmzSmokeUvA);
   _cmzSideMesh.visible=_cmzFrontMesh.visible=flashAny&&fireOut>0;_cmzIllumMesh.visible=illumOut>0;
   if(!_cmzLive)_cmzZeroed=true;}   // 清零收尾帧完成→休眠(下一次 comicMuzzleBurst 事件唤醒)
@@ -742,7 +1213,7 @@ var _chiPos=new THREE.Vector3(),_chiScale=new THREE.Vector3(),_chiZ=new THREE.Ve
 var _chiFrames=[[.010,.020,.480,.960],[.510,.020,.480,.960]];
 function _chiMakeTex(){
   var cv=document.createElement('canvas');cv.width=512;cv.height=256;var g=cv.getContext('2d');g.clearRect(0,0,512,256);g.lineJoin='round';g.lineCap='round';
-  function fireCell(){var rnd=mulberry32(0xC117F1),cx=128,cy=128,n=22,outer=[];   // 帧0命中火环格(与 whiteCell=帧1白闪格成对; 原名 ringCell 与特勋环带格同名异义, 2026-09-01 改名消歧)
+  function fireCell(){var rnd=mulberry32(0xC117F1),cx=128,cy=128,n=22,outer=[];   // 帧0命中火环格(与 whiteCell=帧1白闪格成对)
     for(var i=0;i<n;i++){var a=i/n*TAU,r=72*(.86+rnd()*.20);outer.push([cx+Math.cos(a)*r,cy+Math.sin(a)*r]);}
     for(i=0;i<18;i++){var a2=i/18*TAU+(rnd()-.5)*.10,r0=62+rnd()*8,r1=88+rnd()*38,w=.025+rnd()*.030;
       g.beginPath();g.moveTo(cx+Math.cos(a2-w)*r0,cy+Math.sin(a2-w)*r0);g.lineTo(cx+Math.cos(a2)*r1,cy+Math.sin(a2)*r1);g.lineTo(cx+Math.cos(a2+w)*r0,cy+Math.sin(a2+w)*r0);g.closePath();g.fillStyle='#6b2108';g.fill();
@@ -778,26 +1249,28 @@ function _chiSpawn(p,nWorld,type){_chiEnsure();if(!_chiMesh)return;var it=null;f
   else{it.frame=CHI_RING;if(type==='over'){it.life=.34;it.size=3.15;it.r=1;it.g=.92;it.b=.72;}else{it.life=.26;it.size=2.65;it.r=1;it.g=1;it.b=.90;}}}
 
 var CHS_CAP=48,_chsTex=null,_chsGeo=null,_chsMat=null,_chsMesh=null,_chsPool=[],_chsRing=0,_chsCount=0,_chsLive=0;
-var _chsAlphaA=null,_chsTintA=null;
-function _chsMakeTex(){var cv=document.createElement('canvas');cv.width=cv.height=256;var g=cv.getContext('2d');g.clearRect(0,0,256,256);g.lineJoin='round';g.lineCap='round';
-  function cloudPuff(cx,cy,rx,ry,fill){g.beginPath();g.moveTo(cx-rx,cy);g.bezierCurveTo(cx-rx*1.08,cy-ry*.58,cx-rx*.45,cy-ry*1.12,cx,cy-ry);g.bezierCurveTo(cx+rx*.56,cy-ry*1.10,cx+rx*1.10,cy-ry*.48,cx+rx,cy);g.bezierCurveTo(cx+rx*1.04,cy+ry*.62,cx+rx*.42,cy+ry*1.05,cx,cy+ry);g.bezierCurveTo(cx-rx*.55,cy+ry*1.08,cx-rx*1.06,cy+ry*.52,cx-rx,cy);g.closePath();g.fillStyle=fill;g.fill();g.lineWidth=7;g.strokeStyle='#4b443d';g.stroke();}
-  cloudPuff(75,114,47,42,'#aa9f91');cloudPuff(127,83,53,47,'#c5b9aa');cloudPuff(181,115,45,40,'#a99d8f');cloudPuff(110,154,50,43,'#d8ccbc');cloudPuff(165,157,42,36,'#b7aa9b');
-  g.beginPath();g.ellipse(128,125,48,38,0,0,TAU);g.fillStyle='rgba(247,239,224,.94)';g.fill();g.strokeStyle='rgba(105,94,82,.72)';g.lineWidth=5;g.stroke();
+var _chsAlphaA=null,_chsTintA=null,_chsUvA=null;
+function _chsMakeTex(){var cv=document.createElement('canvas');cv.width=cv.height=512;var g=cv.getContext('2d');g.clearRect(0,0,512,512);g.lineJoin='round';g.lineCap='round';
+  /* FX7-CHS:命中环境烟2x2(格0-2新绘H0-2,格3=H0镜像备) */
+  var i,_cell=[[0,0,0],[256,0,1],[0,256,2]];
+  for(i=0;i<3;i++){g.save();g.translate(_cell[i][0],_cell[i][1]);paintCHS(g,_cell[i][2]);g.restore();}
+  g.save();g.translate(512,256);g.scale(-1,1);paintCHS(g,0);g.restore();
   var tx=new THREE.CanvasTexture(cv);tx.minFilter=THREE.LinearMipmapLinearFilter;tx.magFilter=THREE.LinearFilter;tx.generateMipmaps=true;return tx;}
+var _chsFrames=[[.018,.518,.464,.464],[.518,.518,.464,.464],[.018,.018,.464,.464],[.518,.018,.464,.464]];
 var CHS_VERT=[
-  'attribute float iAlpha;attribute vec3 iTint;varying vec2 vUv;varying float vA;varying vec3 vTint;',
-  '#include <common>','#include <logdepthbuf_pars_vertex>','void main(){vUv=uv;vA=iAlpha;vTint=iTint;vec4 mv=modelViewMatrix*instanceMatrix*vec4(position,1.0);gl_Position=projectionMatrix*mv;','#include <logdepthbuf_vertex>','}'
+  'attribute vec4 iUvRect;attribute float iAlpha;attribute vec3 iTint;varying vec2 vUv;varying float vA;varying vec3 vTint;',
+  '#include <common>','#include <logdepthbuf_pars_vertex>','void main(){vUv=iUvRect.xy+uv*iUvRect.zw;vA=iAlpha;vTint=iTint;vec4 mv=modelViewMatrix*instanceMatrix*vec4(position,1.0);gl_Position=projectionMatrix*mv;','#include <logdepthbuf_vertex>','}'
 ].join('\n');
 var CHS_FRAG=[
   'uniform sampler2D map;varying vec2 vUv;varying float vA;varying vec3 vTint;','#include <logdepthbuf_pars_fragment>','void main(){','#include <logdepthbuf_fragment>','vec4 t=texture2D(map,vUv);float a=t.a*vA;if(a<.018)discard;gl_FragColor=vec4(t.rgb*vTint,a);}'
 ].join('\n');
-function _chsEnsure(){if(_chsMesh||!scene)return;_chsTex=_chsMakeTex();_chsGeo=new THREE.PlaneGeometry(1,1);_chsAlphaA=new Float32Array(CHS_CAP);_chsTintA=new Float32Array(CHS_CAP*3);
-  _chsGeo.setAttribute('iAlpha',new THREE.InstancedBufferAttribute(_chsAlphaA,1).setUsage(THREE.DynamicDrawUsage));_chsGeo.setAttribute('iTint',new THREE.InstancedBufferAttribute(_chsTintA,3).setUsage(THREE.DynamicDrawUsage));
+function _chsEnsure(){if(_chsMesh||!scene)return;_chsTex=_chsMakeTex();_chsGeo=new THREE.PlaneGeometry(1,1);_chsAlphaA=new Float32Array(CHS_CAP);_chsTintA=new Float32Array(CHS_CAP*3);_chsUvA=new Float32Array(CHS_CAP*4);
+  _chsGeo.setAttribute('iAlpha',new THREE.InstancedBufferAttribute(_chsAlphaA,1).setUsage(THREE.DynamicDrawUsage));_chsGeo.setAttribute('iUvRect',new THREE.InstancedBufferAttribute(_chsUvA,4).setUsage(THREE.DynamicDrawUsage));_chsGeo.setAttribute('iTint',new THREE.InstancedBufferAttribute(_chsTintA,3).setUsage(THREE.DynamicDrawUsage));
   _chsMat=new THREE.ShaderMaterial({uniforms:{map:{value:_chsTex}},vertexShader:CHS_VERT,fragmentShader:CHS_FRAG,transparent:true,depthWrite:false,depthTest:true,side:THREE.DoubleSide,blending:THREE.NormalBlending,toneMapped:false,fog:false});
   _chsMesh=new THREE.InstancedMesh(_chsGeo,_chsMat,CHS_CAP);_chsMesh.count=0;_chsMesh.visible=false;_chsMesh.frustumCulled=false;_chsMesh.renderOrder=14;_chsMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);scene.add(_chsMesh);
-  for(var i=0;i<CHS_CAP;i++)_chsPool.push({on:false,age:0,life:.78,x:0,y:0,z:0,size:3,rot:0,r:1,g:1,b:1});}
+  for(var i=0;i<CHS_CAP;i++)_chsPool.push({on:false,age:0,life:.78,x:0,y:0,z:0,size:3,rot:0,r:1,g:1,b:1,var:0});}
 function _chsSpawn(p,nWorld){_chsEnsure();if(!_chsMesh)return;var it=null;for(var i=0;i<CHS_CAP;i++){var q=_chsPool[(_chsRing+i)%CHS_CAP];if(!q.on){it=q;_chsRing=(_chsRing+i+1)%CHS_CAP;break;}}if(!it){it=_chsPool[_chsRing];_chsRing=(_chsRing+1)%CHS_CAP;}
-  var wasOn=it.on,nx=nWorld&&isFinite(nWorld.x)?nWorld.x:0,ny=nWorld&&isFinite(nWorld.y)?nWorld.y:1,nz=nWorld&&isFinite(nWorld.z)?nWorld.z:0;it.x=p.x+nx*.04;it.y=p.y+ny*.04;it.z=p.z+nz*.04;it.age=0;it.life=.72+Math.random()*.18;it.size=2.8+Math.random()*.55;it.rot=(Math.random()-.5)*.28;it.r=.92;it.g=.86;it.b=.76;it.on=true;if(!wasOn)_chsLive++;}
+  var wasOn=it.on,nx=nWorld&&isFinite(nWorld.x)?nWorld.x:0,ny=nWorld&&isFinite(nWorld.y)?nWorld.y:1,nz=nWorld&&isFinite(nWorld.z)?nWorld.z:0;it.x=p.x+nx*.04;it.y=p.y+ny*.04;it.z=p.z+nz*.04;it.age=0;it.life=.72+Math.random()*.18;it.size=(2.8+Math.random()*.55)*_sfxJit();it.rot=(Math.random()-.5)*.28;it.var=(Math.random()*3)|0;it.r=.92;it.g=.86;it.b=.76;it.on=true;if(!wasOn)_chsLive++;}
 function comicHitSpark(p,nWorld,rayDir,type){if(!p)return;if(type==='env')_chsSpawn(p,nWorld);else _chiSpawn(p,nWorld,type);}
 function _comicHitUpdate(dt){
   if(_chiMesh&&_chiLive>0){_chiCount=0;for(var i=0;i<CHI_CAP;i++){var it=_chiPool[i];if(!it.on)continue;it.age+=dt;var k=it.age/it.life;if(k>=1){it.on=false;_chiLive--;continue;}
@@ -806,8 +1279,8 @@ function _comicHitUpdate(dt){
       var fr=_chiFrames[it.frame],o4=_chiCount*4,o3=_chiCount*3;_chiUvA[o4]=fr[0];_chiUvA[o4+1]=fr[1];_chiUvA[o4+2]=fr[2];_chiUvA[o4+3]=fr[3];_chiAlphaA[_chiCount]=fade;_chiTintA[o3]=it.r;_chiTintA[o3+1]=it.g;_chiTintA[o3+2]=it.b;_chiCount++;}
     _chiMesh.count=_chiCount;_chiMesh.visible=_chiCount>0;if(_chiCount){var im=_chiMesh.instanceMatrix;im.updateRange.offset=0;im.updateRange.count=_chiCount*16;im.needsUpdate=true;var uv=_chiGeo.attributes.iUvRect,a=_chiGeo.attributes.iAlpha,c=_chiGeo.attributes.iTint;uv.updateRange.offset=0;uv.updateRange.count=_chiCount*4;a.updateRange.offset=0;a.updateRange.count=_chiCount;c.updateRange.offset=0;c.updateRange.count=_chiCount*3;uv.needsUpdate=a.needsUpdate=c.needsUpdate=true;}}
   if(_chsMesh&&_chsLive>0){_chsCount=0;for(var j=0;j<CHS_CAP;j++){var s=_chsPool[j];if(!s.on)continue;s.age+=dt;if(s.age>=s.life){s.on=false;_chsLive--;continue;}var HE=comicSmokeExpand(s.age,s.life,.10,1.94,.62,.72,.75,0),u=HE.k,grow=.72*HE.scale,al=HE.alpha;
-      comicTextureFace(_chiQ,s.x,s.y,s.z,COMIC_FACE_CAMERA);_chiRollQ.setFromAxisAngle(_chiZ,s.rot);_chiQ.multiply(_chiRollQ);_chiPos.set(s.x,s.y+HE.rise,s.z);_chiScale.set(s.size*grow,s.size*grow,1);_chiM4.compose(_chiPos,_chiQ,_chiScale);_chsMesh.setMatrixAt(_chsCount,_chiM4);_chsAlphaA[_chsCount]=al;var oo=_chsCount*3;_chsTintA[oo]=s.r;_chsTintA[oo+1]=s.g;_chsTintA[oo+2]=s.b;_chsCount++;}
-    _chsMesh.count=_chsCount;_chsMesh.visible=_chsCount>0;if(_chsCount){var sm=_chsMesh.instanceMatrix;sm.updateRange.offset=0;sm.updateRange.count=_chsCount*16;sm.needsUpdate=true;var sa=_chsGeo.attributes.iAlpha,sc=_chsGeo.attributes.iTint;sa.updateRange.offset=0;sa.updateRange.count=_chsCount;sc.updateRange.offset=0;sc.updateRange.count=_chsCount*3;sa.needsUpdate=sc.needsUpdate=true;}}
+      comicTextureFace(_chiQ,s.x,s.y,s.z,COMIC_FACE_CAMERA);_chiRollQ.setFromAxisAngle(_chiZ,s.rot);_chiQ.multiply(_chiRollQ);_chiPos.set(s.x,s.y+HE.rise,s.z);_chiScale.set(s.size*grow,s.size*grow,1);_chiM4.compose(_chiPos,_chiQ,_chiScale);_chsMesh.setMatrixAt(_chsCount,_chiM4);_chsAlphaA[_chsCount]=al;_fxUvW(_chsUvA,_chsCount,_chsFrames,s.var);var oo=_chsCount*3;_chsTintA[oo]=s.r;_chsTintA[oo+1]=s.g;_chsTintA[oo+2]=s.b;_chsCount++;}
+    _chsMesh.count=_chsCount;_chsMesh.visible=_chsCount>0;if(_chsCount){var sm=_chsMesh.instanceMatrix;sm.updateRange.offset=0;sm.updateRange.count=_chsCount*16;sm.needsUpdate=true;var sa=_chsGeo.attributes.iAlpha,sc=_chsGeo.attributes.iTint,su=_chsGeo.attributes.iUvRect;sa.updateRange.offset=0;sa.updateRange.count=_chsCount;sc.updateRange.offset=0;sc.updateRange.count=_chsCount*3;su.updateRange.offset=0;su.updateRange.count=_chsCount*4;sa.needsUpdate=sc.needsUpdate=su.needsUpdate=true;}}
 }
 
 /* ============================================================
@@ -821,7 +1294,7 @@ function _comicHitUpdate(dt){
      相机转向与移动目标由第三人称 120ms、炮镜 50ms 的低频扫描吸收。
    ============================================================ */
 var CSM_MAX_VEH = 1024, CSM_PER_VEH = 8, CSM_CAP = CSM_MAX_VEH * CSM_PER_VEH; // 2发动机烟 + 最多3批×双履带尘
-var CSM_ENGINE = 0, CSM_ENGINE_DRIFT = 1, CSM_DUST = 2;
+var CSM_ENGINE = 0, CSM_ENGINE_B = 1, CSM_ENGINE_C = 2, CSM_DUST = 3, CSM_DUST_B = 4, CSM_DUST_C = 5;   // FX7:3x2(上行发动机烟0-2/下行行进尘3-5)
 var _csmTex = null, _csmGeo = null, _csmMat = null, _csmMesh = null;
 var _csmVehicles = [], _csmVisible = [], _csmActive = 0, _csmClock = 0, _csmVisDirty = true;
 var _csmUvA = null, _csmAlphaA = null, _csmTintA = null, _csmDebugFrame = new Uint8Array(CSM_CAP);
@@ -830,42 +1303,18 @@ var _csmPos = new THREE.Vector3(), _csmScale = new THREE.Vector3();
 var _csmSrc = new THREE.Vector3();
 var _csmVisP = new THREE.Vector3();
 var _csmFrames = [
-  [0.018, 0.518, 0.464, 0.464], [0.518, 0.518, 0.464, 0.464],
-  [0.018, 0.018, 0.464, 0.464]
+  [0.012, 0.518, 0.309, 0.464], [0.345, 0.518, 0.309, 0.464], [0.679, 0.518, 0.309, 0.464],
+  [0.012, 0.018, 0.309, 0.464], [0.345, 0.018, 0.309, 0.464], [0.679, 0.018, 0.309, 0.464]
 ];
 var _csmVis = {ready:false,scoped:false,nextAt:0,cx:0,cy:0,cz:0};
 var CSM_SCOPE_R = 22;                 // 炮镜全屏矩形门米级余量(m):车体 ~7m + 尾烟/履带尘外延 ~15m
 
 function _csmMakeAtlas() {
-  var cv=document.createElement('canvas');cv.width=cv.height=512;var g=cv.getContext('2d');g.clearRect(0,0,512,512);g.lineJoin='round';g.lineCap='round';
-  function cell(ix,iy,fn){g.save();g.translate(ix*256,iy*256);fn();g.restore();}
-  function ink(){g.fillStyle='rgba(255,255,255,.96)';g.fill();g.lineWidth=8;g.strokeStyle='rgba(40,35,30,.94)';g.stroke();}
-  function shadow(fn,a){g.beginPath();fn();g.fillStyle='rgba(70,63,56,'+a+')';g.fill();}
-  /* 发动机厚烟:按柴油不完全燃烧着色,图内保留黑色卷边和炭烟层次。 */
-  cell(0,0,function(){
-    g.beginPath();g.moveTo(27,224);g.bezierCurveTo(18,190,39,168,65,177);g.bezierCurveTo(43,143,64,111,95,124);
-    g.bezierCurveTo(79,87,107,57,139,75);g.bezierCurveTo(151,39,196,38,211,74);g.bezierCurveTo(242,82,245,116,219,133);
-    g.bezierCurveTo(239,161,216,187,184,179);g.bezierCurveTo(160,211,120,207,100,190);g.bezierCurveTo(78,221,47,234,27,224);g.closePath();ink();
-    shadow(function(){g.moveTo(42,211);g.bezierCurveTo(45,170,75,158,92,183);g.bezierCurveTo(91,132,132,119,146,156);g.bezierCurveTo(164,128,202,143,190,177);g.bezierCurveTo(146,201,91,217,42,211);g.closePath();},.74);
-  });
-  /* 发动机飘散:断裂薄烟团,随时间向后上方展开。 */
-  cell(1,0,function(){
-    g.beginPath();g.moveTo(34,211);g.bezierCurveTo(20,174,48,145,79,157);g.bezierCurveTo(65,116,101,88,132,108);
-    g.bezierCurveTo(151,73,198,86,204,126);g.bezierCurveTo(238,135,239,176,211,191);g.bezierCurveTo(183,225,139,213,118,198);g.bezierCurveTo(89,225,52,229,34,211);g.closePath();ink();
-    shadow(function(){g.moveTo(49,203);g.bezierCurveTo(51,166,82,155,98,181);g.bezierCurveTo(101,132,143,124,156,163);g.bezierCurveTo(177,138,211,153,202,186);g.bezierCurveTo(159,207,98,217,49,203);g.closePath();},.60);
-  });
-  /* 通用行进扬尘:近似圆形但保留不规则翻卷瓣;左右履带各放一张。 */
-  cell(0,1,function(){
-    g.beginPath();g.moveTo(48,211);g.bezierCurveTo(22,193,27,158,52,145);g.bezierCurveTo(31,112,56,78,88,85);
-    g.bezierCurveTo(91,48,128,29,157,48);g.bezierCurveTo(184,31,219,57,214,91);g.bezierCurveTo(242,105,239,143,217,158);
-    g.bezierCurveTo(231,190,198,220,169,208);g.bezierCurveTo(147,235,105,230,91,210);g.bezierCurveTo(75,224,57,222,48,211);g.closePath();ink();
-    shadow(function(){g.moveTo(58,198);g.bezierCurveTo(47,166,70,143,95,154);g.bezierCurveTo(87,116,118,93,143,112);
-      g.bezierCurveTo(164,88,199,108,194,142);g.bezierCurveTo(216,159,194,193,169,186);g.bezierCurveTo(146,211,109,204,96,188);g.bezierCurveTo(79,207,66,207,58,198);g.closePath();},.58);
-    g.strokeStyle='rgba(63,56,49,.62)';g.lineWidth=5;
-    g.beginPath();g.moveTo(69,128);g.bezierCurveTo(87,111,104,118,109,137);g.stroke();
-    g.beginPath();g.moveTo(142,75);g.bezierCurveTo(160,64,180,76,181,97);g.stroke();
-    g.beginPath();g.moveTo(139,172);g.bezierCurveTo(158,153,179,159,184,178);g.stroke();
-  });
+  var cv=document.createElement('canvas');cv.width=768;cv.height=512;var g=cv.getContext('2d');g.clearRect(0,0,768,512);g.lineJoin='round';g.lineCap='round';
+  /* FX7-CSM:3x2(上行发动机烟E0-2/下行行进尘D0-2;tint着色) */
+  var i;
+  for(i=0;i<3;i++){g.save();g.translate(i*256,0);paintCSM_E(g,i);g.restore();}
+  for(i=0;i<3;i++){g.save();g.translate(i*256,256);paintCSM_D(g,i);g.restore();}
   var tx=new THREE.CanvasTexture(cv);tx.minFilter=THREE.LinearFilter;tx.magFilter=THREE.LinearFilter;tx.generateMipmaps=false;return tx;
 }
 var CSM_VERT=[
@@ -910,23 +1359,25 @@ function _csmEnsure(){
   _csmMesh=new THREE.InstancedMesh(_csmGeo,_csmMat,CSM_CAP);_csmMesh.count=0;_csmMesh.visible=false;_csmMesh.frustumCulled=false;_csmMesh.renderOrder=6;_csmMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);scene.add(_csmMesh);
   if(_csmThermV)_csmSetThermal(_csmThermV);   // 建材晚于开镜时补落位(边沿事件,非逐帧)
 }
-function _csmMakeDustBatches(){var a=[];for(var i=0;i<3;i++)a.push({on:false,age:0,life:2.8,xL:0,yL:0,zL:0,xR:0,yR:0,zR:0,backX:0,backZ:-1,sideX:1,sideZ:0,v0:2,a:.5,col:0xb5a67f});return a;}
-function _csmEmitDustBatch(t,spd,sign){
-  var B=t._csmDustB[t._csmDustRing];t._csmDustRing=(t._csmDustRing+1)%3;B.on=true;B.age=0;B.life=2.8;
+function _csmMakeDustBatches(){var a=[];for(var i=0;i<3;i++)a.push({on:false,age:0,life:2.8,var:0,xL:0,yL:0,zL:0,xR:0,yR:0,zR:0,backX:0,backZ:-1,sideX:1,sideZ:0,v0:2,a:.5,sz:1,col:0xb5a67f});return a;}
+function _csmEmitDustBatch(t,spd,sign,digK){
+  var B=t._csmDustB[t._csmDustRing];t._csmDustRing=(t._csmDustRing+1)%3;B.on=true;B.age=0;B.life=2.8;B.var=(Math.random()*3)|0;
   var fwdX=Math.sin(t.yaw),fwdZ=Math.cos(t.yaw);B.backX=-fwdX*sign;B.backZ=-fwdZ*sign;B.sideX=Math.cos(t.yaw);B.sideZ=-Math.sin(t.yaw);
-  B.v0=1.5+Math.min(spd,12)*.10;B.a=Math.min(.72,.34+spd*.032);B.col=(typeof startMat!=='undefined'&&startMat==='soil')?0x9b7c58:0xb5a67f;
+  var dg=digK||0;B.v0=1.5+Math.min(spd,12)*.10+dg*1.2;B.a=Math.min(.85,(.34+spd*.032)*(1+dg*.8));B.sz=(1+dg*.9)*_sfxJit();B.col=(typeof startMat!=='undefined'&&startMat==='soil')?0x9b7c58:0xb5a67f;
   var halfW=Math.min(1.38,t.radius*.44),rear=-sign*(t.kind==='arty'?2.35:2.05);
   _csmSrc.set(-halfW,.34,rear);t.group.localToWorld(_csmSrc);B.xL=_csmSrc.x;B.yL=_csmSrc.y;B.zL=_csmSrc.z;
   _csmSrc.set( halfW,.34,rear);t.group.localToWorld(_csmSrc);B.xR=_csmSrc.x;B.yR=_csmSrc.y;B.zR=_csmSrc.z;
 }
 function comicVehicleMotionSmoke(t,dt){
   if(!t||!t.alive)return;
-  if(!t._csmRegistered){t._csmRegistered=true;t._csmSeed=((t.group&&t.group.id||_csmVehicles.length+1)*.61803398875)%1;t._csmRenderSpeed=t.speed||0;
+  if(typeof beltUpdate==='function'&&!isHeliVehicle(t))beltUpdate(t,dt);   // 带速:全存活地面车每帧 spool(帧哨兵)
+  if(!t._csmRegistered){t._csmRegistered=true;t._csmSeed=((t.group&&t.group.id||_csmVehicles.length+1)*.61803398875)%1;t._csmRenderSpeed=t.speed||0;t._csmSJit=_sfxJit();
     t._csmDustB=_csmMakeDustBatches();t._csmDustRing=0;t._csmDustEmitT=0;_csmVehicles.push(t);_csmVisDirty=true;}
   /* 直升机飞行不产生地面行进扬尘;地面车辆移动时触发批次 */
   var spd=Math.abs(t.speed||0);
-  if(!isHeliVehicle(t)&&t._csmVisible&&spd>1.1){t._csmDustEmitT-=dt;if(t._csmDustEmitT<=0){_csmEmitDustBatch(t,spd,Math.sign(t.speed||1));t._csmDustEmitT=.90;}}
-  else if(spd<=1.1||isHeliVehicle(t))t._csmDustEmitT=0;
+  var digK=(!isHeliVehicle(t)&&typeof trackDigLevel==='function')?trackDigLevel(t):0;   // P3 刨土强度:打滑/空转/侧滑→尘更浓更快
+  if(!isHeliVehicle(t)&&t._csmVisible&&(spd>1.1||digK>0.25)){t._csmDustEmitT-=dt*(1+2*digK);if(t._csmDustEmitT<=0){_csmEmitDustBatch(t,Math.max(spd,2.5*digK),Math.sign(t.speed||t._throttle||1),digK);t._csmDustEmitT=.90;}}
+  else if((spd<=1.1&&digK<=0.25)||isHeliVehicle(t))t._csmDustEmitT=0;
 }
 function comicMotionSmokeInvalidate(){_csmVisDirty=true;}
 function _csmRefreshVisible(nowS,force){
@@ -1062,7 +1513,7 @@ function wreckSmokeRegister(t){
   for(var i=0;i<_wreckSmokeList.length;i++)if(_wreckSmokeList[i].t===t)return;
   while(_wreckSmokeList.length>=WRSMOKE_MAX)_wreckSmokeList.shift();   // 上限 999 柱,最旧优先熄灭
   var now=(typeof _csmClock!=='undefined')?_csmClock:0;
-  _wreckSmokeList.push({t:t,born:now,seed:Math.random(),ph:Math.random()});
+  _wreckSmokeList.push({t:t,born:now,seed:Math.random(),ph:Math.random(),sj:_sfxJit()});
 }
 function wreckSmokeClear(){_wreckSmokeList.length=0;}
 function _wreckSmokeWrite(){
@@ -1081,9 +1532,9 @@ function _wreckSmokeWrite(){
       var E=comicSmokeExpand(cyc*life,life,0.10,2.6,0.70,0.62,(k===0?13:16),0.55);
       var lean=2+10*E.k;   // 上升后被风吹散:横向偏移随高度增长,柱体倾斜
       var X=px+wx*lean+(k===1?wx*2.2:0),Z=pz+wz*lean+(k===1?wz*2.2:0);
-      var sx=(k===0?4.6:6.2)*E.scale,sy=(k===0?7.5:9.0)+9.5*E.k;   // 细柱:宽 5~8m 级,高拉长
+      var sjw=W.sj||1,sx=(k===0?4.6:6.2)*E.scale*sjw,sy=((k===0?7.5:9.0)+9.5*E.k)*sjw;   // 细柱:宽 5~8m 级,高拉长
       var a=(k===0?0.50:0.30)*E.alpha*envA*WRSMOKE_AMT;
-      _csmWrite(CSM_ENGINE,X,py+2.0+E.rise,Z,sx,sy,a,0x2e2a26,wx,wz);   // 发动机厚烟格=热像发动机档(uTGE)
+      _csmWrite(CSM_ENGINE+((((W.ph*3)|0)+k)%3),X,py+2.0+E.rise,Z,sx,sy,a,0x2e2a26,wx,wz);   // 发动机厚烟格=热像发动机档(uTGE)
     }
   }
 }
@@ -1103,16 +1554,16 @@ function _comicMotionSmokeUpdate(dt){
     if(engineOn){
       var col=hurt?0x332d28:(load?0x493e34:(spd>3?0x685f55:0x8b8379)),baseA=hurt?.90:(load?.82:(spd>3?.66:.48));
       if(typeof engineExhaustSourceLocal==='function')engineExhaustSourceLocal(t,_csmSrc,0,0);else _csmSrc.set(0,1.78,-2.55);t.group.localToWorld(_csmSrc);
-      var seed=t._csmSeed||0;
+      var seed=t._csmSeed||0,sjt=t._csmSJit||1;
       if(isHeli){
         /* 直升机发动机排气:位于机身上方发动机排气口,旋翼下洗流使烟雾迅速完成消散 */
         var k1=(_csmClock*2.2+seed)%1;
         var E1=comicSmokeExpand(k1,0.40,0.05,1.45,0.65,1.9,0.35,0);
-        _csmWrite(CSM_ENGINE,_csmSrc.x+backX*(0.12+0.65*E1.k),_csmSrc.y+0.12+E1.rise,_csmSrc.z+backZ*(0.12+0.65*E1.k),0.85*E1.scale,1.05*(1+1.1*E1.k),baseA*0.50*E1.alpha,col,backX,backZ);
+        _csmWrite(CSM_ENGINE+(((seed*3)|0)%3),_csmSrc.x+backX*(0.12+0.65*E1.k),_csmSrc.y+0.12+E1.rise,_csmSrc.z+backZ*(0.12+0.65*E1.k),0.85*E1.scale*sjt,1.05*(1+1.1*E1.k)*sjt,baseA*0.50*E1.alpha,col,backX,backZ);
       }else{
         var k1=(_csmClock*.62+seed)%1,k2=(k1+.5)%1;
-        var E1=comicSmokeExpand(k1,1,.08,2.75,.72,.62,1.8,0);_csmWrite(CSM_ENGINE,_csmSrc.x+backX*(.25+1.5*E1.k),_csmSrc.y+.25+E1.rise,_csmSrc.z+backZ*(.25+1.5*E1.k),1.6*E1.scale,2.1*(1+1.48*E1.k),baseA*E1.alpha,col,backX,backZ);
-        var E2=comicSmokeExpand(k2,1,.08,2.52,.72,.68,1.45,0);_csmWrite(CSM_ENGINE_DRIFT,_csmSrc.x+backX*(.8+2.2*E2.k),_csmSrc.y+.65+E2.rise,_csmSrc.z+backZ*(.8+2.2*E2.k),2.1*E2.scale,1.8*(1+1.56*E2.k),baseA*.58*E2.alpha,col,backX,backZ);
+        var E1=comicSmokeExpand(k1,1,.08,2.75,.72,.62,1.8,0);_csmWrite(CSM_ENGINE+(((seed*3)|0)%3),_csmSrc.x+backX*(.25+1.5*E1.k),_csmSrc.y+.25+E1.rise,_csmSrc.z+backZ*(.25+1.5*E1.k),1.6*E1.scale*sjt,2.1*(1+1.48*E1.k)*sjt,baseA*E1.alpha,col,backX,backZ);
+        var E2=comicSmokeExpand(k2,1,.08,2.52,.72,.68,1.45,0);_csmWrite(CSM_ENGINE+((((seed*3)|0)+1)%3),_csmSrc.x+backX*(.8+2.2*E2.k),_csmSrc.y+.65+E2.rise,_csmSrc.z+backZ*(.8+2.2*E2.k),2.1*E2.scale*sjt,1.8*(1+1.56*E2.k)*sjt,baseA*.58*E2.alpha,col,backX,backZ);
       }
     }
     /* 最多三批,每批严格左右各一团。位移采用指数阻力积分,离出生点越远瞬时速度越低。 */
@@ -1120,9 +1571,9 @@ function _comicMotionSmokeUpdate(dt){
     if(batches)for(var bj=0;bj<3;bj++){var B=batches[bj];if(!B.on)continue;
       var age=B.age,DE=comicSmokeExpand(age,B.life,.14,2,1,.42,.55,1.05),k=DE.k,travel=B.v0*DE.drift;
       var sideDrift=.38*(1-Math.exp(-1.35*age)),rise=.10+DE.rise;
-      var sx=4.4*DE.scale,sy=4.2*DE.scale,alpha=B.a*DE.alpha;
-      _csmWrite(CSM_DUST,B.xL+B.backX*travel-B.sideX*sideDrift,B.yL+rise,B.zL+B.backZ*travel-B.sideZ*sideDrift,sx,sy,alpha,B.col,B.backX,B.backZ);
-      _csmWrite(CSM_DUST,B.xR+B.backX*travel+B.sideX*sideDrift,B.yR+rise,B.zR+B.backZ*travel+B.sideZ*sideDrift,sx,sy,alpha,B.col,B.backX,B.backZ);
+      var sx=4.4*DE.scale*(B.sz||1),sy=4.2*DE.scale*(B.sz||1),alpha=B.a*DE.alpha;
+      _csmWrite(CSM_DUST+B.var,B.xL+B.backX*travel-B.sideX*sideDrift,B.yL+rise,B.zL+B.backZ*travel-B.sideZ*sideDrift,sx,sy,alpha,B.col,B.backX,B.backZ);
+      _csmWrite(CSM_DUST+((B.var+1)%3),B.xR+B.backX*travel+B.sideX*sideDrift,B.yR+rise,B.zR+B.backZ*travel+B.sideZ*sideDrift,sx,sy,alpha,B.col,B.backX,B.backZ);
     }
   }
   if(typeof _wreckSmokeWrite==='function')_wreckSmokeWrite();   // B2:残骸烟柱并入 CSM(零新增 draw call)
@@ -1136,26 +1587,72 @@ function _comicMotionSmokeUpdate(dt){
    漫画火箭飞行尾迹:整张高亮排烟贴图片段池(ONE InstancedMesh)
    整张高亮排烟贴图片段池;固定世界尺寸,黑夜亦保持暖白高亮。
    ============================================================ */
-var CRT_CAP=512,_crtTex=null,_crtGeo=null,_crtMat=null,_crtMesh=null,_crtPool=[],_crtRing=0,_crtCount=0,_crtLive=0,_crtList=[];   // _crtList=活跃槽紧凑表:更新只遍历活烟卡,不再每帧扫全部 512 槽
+var CRT_CAP=1200,_crtTex=null,_crtGeo=null,_crtMat=null,_crtMesh=null,_crtPool=[],_crtRing=0,_crtCount=0,_crtLive=0,_crtList=[],_crtUvA=null;   // _crtList=活跃槽紧凑表:更新只遍历活烟卡,不再每帧扫全部 1200 槽
 var _crtAlphaA=null,_crtTintA=null,_crtM=new THREE.Matrix4(),_crtQ=new THREE.Quaternion(),_crtP=new THREE.Vector3(),_crtS=new THREE.Vector3();
-function _crtMakeTrailTex(){var cv=document.createElement('canvas');cv.width=cv.height=512;var g=cv.getContext('2d'),rnd=mulberry32(0x7A11F11E);g.clearRect(0,0,512,512);g.lineJoin='round';
-  function trailPuff(x,y,rx,ry,a,n){var pts=[];for(var i=0;i<n;i++){var ang=i/n*TAU,rr=1+(rnd()-.5)*.22;pts.push([x+Math.cos(ang)*rx*rr,y+Math.sin(ang)*ry*rr]);}g.beginPath();g.moveTo(pts[0][0],pts[0][1]);for(i=1;i<n;i++)g.lineTo(pts[i][0],pts[i][1]);g.closePath();g.fillStyle='rgba(255,255,255,'+a+')';g.fill();g.strokeStyle='rgba(238,235,225,'+(a*.34)+')';g.lineWidth=5;g.stroke();}
-  /* 一整段沿航迹展开的烟,不用点粒子;大团在后、小团在喷口方向。 */
-  trailPuff(78,276,58,55,.50,13);trailPuff(139,241,73,66,.68,15);trailPuff(219,260,88,73,.76,16);trailPuff(304,230,82,68,.70,15);trailPuff(378,260,70,60,.61,14);trailPuff(438,244,48,43,.46,13);
-  trailPuff(174,319,65,44,.42,13);trailPuff(279,316,79,49,.48,14);trailPuff(366,307,58,42,.38,13);
-  var gr=g.createRadialGradient(286,260,12,286,260,178);gr.addColorStop(0,'rgba(255,252,229,.82)');gr.addColorStop(.50,'rgba(255,249,222,.34)');gr.addColorStop(1,'rgba(255,255,255,0)');g.fillStyle=gr;g.fillRect(88,68,386,370);
-  var t=new THREE.CanvasTexture(cv);t.minFilter=THREE.LinearMipmapLinearFilter;t.magFilter=THREE.LinearFilter;t.generateMipmaps=true;return t;}
+var _crtRollQ=new THREE.Quaternion(),_crtZAx=new THREE.Vector3(0,0,1);   // 方案B:每卡滚转(面向相机四元数×Z轴滚转,烘进 instanceMatrix)
+var _crtWt=0,_crtWindX=0,_crtWindZ=0;                                    // 方案B:慢变伪风场状态(滞留烟柱随风漂移)
+function _crtMakeTrailTex(){var cv=document.createElement('canvas');cv.width=cv.height=512;var g=cv.getContext('2d');g.clearRect(0,0,512,512);g.lineJoin='round';g.lineCap='round';
+  /* FX1:A2柔体2x2变体(tint着色故烘焙暖白) */
+  _fxA2(g,128,128,100,0xC270,235,230,220,0);_fxA2(g,384,128,100,0xC271,235,230,220,1);
+  _fxA2(g,128,384,100,0xC272,235,230,220,2);_fxA2(g,384,384,100,0xC273,235,230,220,3);
+  var t=new THREE.CanvasTexture(cv);t.minFilter=THREE.LinearFilter;t.magFilter=THREE.LinearFilter;t.generateMipmaps=false;return t;}
+var _crtFrames=[[.018,.518,.464,.464],[.518,.518,.464,.464],[.018,.018,.464,.464],[.518,.018,.464,.464]];
 function _crtEnsure(){if(_crtMesh||!scene)return;_crtTex=_crtMakeTrailTex();
-  _crtGeo=new THREE.PlaneGeometry(1,1);_crtAlphaA=new Float32Array(CRT_CAP);_crtTintA=new Float32Array(CRT_CAP*3);_crtGeo.setAttribute('iAlpha',new THREE.InstancedBufferAttribute(_crtAlphaA,1).setUsage(THREE.DynamicDrawUsage));_crtGeo.setAttribute('iTint',new THREE.InstancedBufferAttribute(_crtTintA,3).setUsage(THREE.DynamicDrawUsage));
-  var vs=['attribute float iAlpha;attribute vec3 iTint;varying vec2 vUv;varying float vA;varying vec3 vT;','#include <common>','#include <logdepthbuf_pars_vertex>','void main(){vUv=uv;vA=iAlpha;vT=iTint;vec4 mv=modelViewMatrix*instanceMatrix*vec4(position,1.0);gl_Position=projectionMatrix*mv;','#include <logdepthbuf_vertex>','}'].join('\n');
+  _crtGeo=new THREE.PlaneGeometry(1,1);_crtAlphaA=new Float32Array(CRT_CAP);_crtTintA=new Float32Array(CRT_CAP*3);_crtUvA=new Float32Array(CRT_CAP*4);_crtGeo.setAttribute('iAlpha',new THREE.InstancedBufferAttribute(_crtAlphaA,1).setUsage(THREE.DynamicDrawUsage));_crtGeo.setAttribute('iTint',new THREE.InstancedBufferAttribute(_crtTintA,3).setUsage(THREE.DynamicDrawUsage));_crtGeo.setAttribute('iUvRect',new THREE.InstancedBufferAttribute(_crtUvA,4).setUsage(THREE.DynamicDrawUsage));
+  var vs=['attribute vec4 iUvRect;attribute float iAlpha;attribute vec3 iTint;varying vec2 vUv;varying float vA;varying vec3 vT;','#include <common>','#include <logdepthbuf_pars_vertex>','void main(){vUv=iUvRect.xy+uv*iUvRect.zw;vA=iAlpha;vT=iTint;vec4 mv=modelViewMatrix*instanceMatrix*vec4(position,1.0);gl_Position=projectionMatrix*mv;','#include <logdepthbuf_vertex>','}'].join('\n');
   var fs=['uniform sampler2D map;varying vec2 vUv;varying float vA;varying vec3 vT;','#include <logdepthbuf_pars_fragment>','void main(){','#include <logdepthbuf_fragment>','vec4 t=texture2D(map,vUv);float a=t.a*vA;if(a<.015)discard;gl_FragColor=vec4(t.rgb*vT*1.28,a);}'].join('\n');
   _crtMat=new THREE.ShaderMaterial({uniforms:{map:{value:_crtTex}},vertexShader:vs,fragmentShader:fs,transparent:true,depthWrite:false,depthTest:true,side:THREE.DoubleSide,blending:THREE.NormalBlending,toneMapped:false,fog:false});_crtMesh=new THREE.InstancedMesh(_crtGeo,_crtMat,CRT_CAP);_crtMesh.count=0;_crtMesh.visible=false;_crtMesh.frustumCulled=false;_crtMesh.renderOrder=8;_crtMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);scene.add(_crtMesh);
-  for(var i=0;i<CRT_CAP;i++)_crtPool.push({on:false,age:0,life:1,x:0,y:0,z:0,vx:0,vy:0,vz:0,size:1,a:.5,r:1,g:1,b:1});}
+  for(var i=0;i<CRT_CAP;i++)_crtPool.push({on:false,kind:0,age:0,life:1,x:0,y:0,z:0,vx:0,vy:0,vz:0,size:1,a:.5,r:1,g:1,b:1,var:0,rot:0,rv:0});}
+/* ===== 方案B · 卷曲噪声湍流烟柱(trail_smoke_demo.html P2 移植;_rkl 发光尾迹线原样保留) =====
+   物理依据:固体发动机白烟主体=Al₂O₃ 凝结核颗粒(DTIC ADA268719 / NASA NTRS 19770011266);
+   烟柱久滞、随风切变漂移扭曲(FAA contrails)。双层结构:主烟体(curl 湍流+弱风) + 滞留烟霭(强风、大而淡、长寿命)。 */
+function _crtPsi(x,z,t){return 2.2*Math.sin(x*.55+t*.9)*Math.cos(z*.47-t*.7)+1.2*Math.sin(x*1.15-t*1.3+1.7)*Math.cos(z*.95+t*1.1+.4);}
+function _crtCurlX(x,z,t){var e=.8;return (_crtPsi(x,z+e,t)-_crtPsi(x,z-e,t))/(2*e);}
+function _crtCurlZ(x,z,t){var e=.8;return -(_crtPsi(x+e,z,t)-_crtPsi(x-e,z,t))/(2*e);}
+function _crtWindStep(dt){_crtWt+=dt;_crtWindX=1.6*Math.sin(_crtWt*.11)+.9*Math.sin(_crtWt*.037+2.1);_crtWindZ=1.4*Math.cos(_crtWt*.09+.8)+.8*Math.sin(_crtWt*.031+4.2);}
 function comicRocketTrailSpawn(x,y,z,dir,burn){_crtEnsure();if(!_crtMesh)return;
-  /* O(1)固定环覆盖:全航程高频登记时不扫描512槽,也不扩容。 */
-  var slot=_crtRing;_crtRing=(_crtRing+1)%CRT_CAP;var it=_crtPool[slot];if(!it.on){_crtLive++;_crtList.push(slot);}it.on=true;it.age=0;it.life=burn?1.50:1.24;it.x=x;it.y=y;it.z=z;it.vx=-dir.x*(burn?.30:.16);it.vy=burn?.36:.22;it.vz=-dir.z*(burn?.30:.16);it.size=burn?1.32:1.02;it.a=burn?.82:.56;if(burn){it.r=1;it.g=.95;it.b=.72;}else{it.r=.90;it.g=.87;it.b=.80;}}
-function _comicRocketTrailUpdate(dt){if(!_crtMesh||!_crtList.length)return;_crtCount=0;for(var li=_crtList.length-1;li>=0;li--){var i=_crtList[li],it=_crtPool[i];it.age+=dt;if(it.age>=it.life){it.on=false;_crtLive--;_crtList[li]=_crtList[_crtList.length-1];_crtList.pop();continue;}var E=comicSmokeExpand(it.age,it.life,.035,3.0,.66,.72,.75,1.15);it.x+=it.vx*dt;it.y+=it.vy*dt;it.z+=it.vz*dt;var dr=Math.exp(-1.15*dt);it.vx*=dr;it.vz*=dr;comicTextureFace(_crtQ,it.x,it.y,it.z,COMIC_FACE_CAMERA);_crtP.set(it.x,it.y+E.rise,it.z);_crtS.set(it.size*E.scale,it.size*E.scale,1);_crtM.compose(_crtP,_crtQ,_crtS);_crtMesh.setMatrixAt(_crtCount,_crtM);_crtAlphaA[_crtCount]=it.a*E.alpha;var o=_crtCount*3;_crtTintA[o]=it.r;_crtTintA[o+1]=it.g;_crtTintA[o+2]=it.b;_crtCount++;}
-  _crtMesh.count=_crtCount;_crtMesh.visible=_crtCount>0;if(_crtCount){var im=_crtMesh.instanceMatrix;im.updateRange.offset=0;im.updateRange.count=_crtCount*16;im.needsUpdate=true;var a=_crtGeo.attributes.iAlpha,c=_crtGeo.attributes.iTint;a.updateRange.offset=0;a.updateRange.count=_crtCount;c.updateRange.offset=0;c.updateRange.count=_crtCount*3;a.needsUpdate=c.needsUpdate=true;}}
+  /* O(1)固定环覆盖 + 池压稀疏化:齐射风暴时优先降密度,不抢占老烟卡(容量 1200)。 */
+  var press=_crtLive/CRT_CAP;if(press>.92)return;
+  if(press>.55&&Math.random()<(press-.55)*2.0)return;
+  var slot=_crtRing;_crtRing=(_crtRing+1)%CRT_CAP;var it=_crtPool[slot];if(!it.on){_crtLive++;_crtList.push(slot);}
+  it.on=true;it.kind=0;it.age=0;it.life=burn?(2.5+Math.random()):(2.1+Math.random()*.9);
+  it.x=x+(Math.random()-.5)*.5;it.y=y+(Math.random()-.5)*.5;it.z=z+(Math.random()-.5)*.5;
+  var bk=burn?.55:.32;it.vx=-dir.x*bk+(Math.random()-.5)*.30;it.vy=(burn?.42:.26)+(Math.random()-.5)*.14;it.vz=-dir.z*bk+(Math.random()-.5)*.30;
+  it.size=burn?(1.30+Math.random()*.36):(1.18+Math.random()*.38);it.a=burn?.62:.54;   /* 巡航段烟卡加大提亮:配合全程 60Hz 烟链的连续度 */
+  if(burn){it.r=1;it.g=.95;it.b=.74;}else{it.r=.92;it.g=.90;it.b=.86;}
+  it.var=(Math.random()*4)|0;it.rot=Math.random()*6.283;it.rv=(Math.random()-.5)*2.4;
+  if(Math.random()<.14)_crtHazeSpawn(x,y,z);   /* 滞留烟霭层 ≈7Hz:大而淡长寿命,燃尽后仍随风漂移 */
+}
+function _crtHazeSpawn(x,y,z){
+  if(_crtLive/CRT_CAP>.72)return;              /* 池压高时烟霭层先让位主烟体 */
+  var slot=_crtRing;_crtRing=(_crtRing+1)%CRT_CAP;var it=_crtPool[slot];if(!it.on){_crtLive++;_crtList.push(slot);}
+  it.on=true;it.kind=1;it.age=0;it.life=4.8+Math.random()*2.2;
+  it.x=x+(Math.random()-.5)*1.4;it.y=y+(Math.random()-.5)*1.0;it.z=z+(Math.random()-.5)*1.4;
+  it.vx=(Math.random()-.5)*.22;it.vy=.10+Math.random()*.10;it.vz=(Math.random()-.5)*.22;
+  it.size=2.5+Math.random()*1.3;it.a=.16+Math.random()*.05;
+  it.r=.78;it.g=.78;it.b=.82;it.var=(Math.random()*4)|0;it.rot=Math.random()*6.283;it.rv=(Math.random()-.5)*.5;
+}
+function _comicRocketTrailUpdate(dt){if(!_crtMesh||!_crtList.length)return;_crtWindStep(dt);_crtCount=0;
+  for(var li=_crtList.length-1;li>=0;li--){var i=_crtList[li],it=_crtPool[i];it.age+=dt;
+    if(it.age>=it.life){it.on=false;_crtLive--;_crtList[li]=_crtList[_crtList.length-1];_crtList.pop();continue;}
+    var E,dr,u;
+    if(it.kind===1){E=comicSmokeExpand(it.age,it.life,.10,4.6,.60,1.05,2.6,.55);   /* 烟霭:大扩张、高浮升、慢阻力、强风耦合 */
+      it.vx+=(_crtWindX*1.15-it.vx)*dt*.30;it.vz+=(_crtWindZ*1.15-it.vz)*dt*.30;
+    }else{E=comicSmokeExpand(it.age,it.life,.05,3.6,.62,.85,1.35,1.05);            /* 主烟体:curl 湍流速度场 + 弱风 */
+      it.vx+=(_crtCurlX(it.x,it.z,_crtWt)*2.2-it.vx*.5)*dt*1.1;
+      it.vz+=(_crtCurlZ(it.x,it.z,_crtWt)*2.2-it.vz*.5)*dt*1.1;
+      it.vx+=(_crtWindX*.55-it.vx)*dt*.16;it.vz+=(_crtWindZ*.55-it.vz)*dt*.16;
+    }
+    u=E.k;it.x+=it.vx*dt;it.y+=it.vy*dt;it.z+=it.vz*dt;
+    dr=Math.exp(-(it.kind===1?.55:1.05)*dt);it.vx*=dr;it.vy*=dr;it.vz*=dr;
+    it.rot+=it.rv*dt;
+    comicTextureFace(_crtQ,it.x,it.y,it.z,COMIC_FACE_CAMERA);_crtRollQ.setFromAxisAngle(_crtZAx,it.rot);_crtQ.multiply(_crtRollQ);
+    _crtP.set(it.x,it.y+E.rise,it.z);var ss=it.size*E.scale;_crtS.set(ss,ss,1);_crtM.compose(_crtP,_crtQ,_crtS);
+    _crtMesh.setMatrixAt(_crtCount,_crtM);_fxUvW(_crtUvA,_crtCount,_crtFrames,it.var);_crtAlphaA[_crtCount]=it.a*E.alpha;
+    var o=_crtCount*3,mix=clamp((u-.16)/.55,0,1),gr=it.kind===1?.62:.58;            /* 色龄渐变:暖白→中性灰(烟柱冷却) */
+    _crtTintA[o]=it.r+(gr-it.r)*mix;_crtTintA[o+1]=it.g+(gr-it.g)*mix;_crtTintA[o+2]=it.b+(gr+.04-it.b)*mix;
+    _crtCount++;}
+  _crtMesh.count=_crtCount;_crtMesh.visible=_crtCount>0;if(_crtCount){var im=_crtMesh.instanceMatrix;im.updateRange.offset=0;im.updateRange.count=_crtCount*16;im.needsUpdate=true;var a=_crtGeo.attributes.iAlpha,c=_crtGeo.attributes.iTint,u=_crtGeo.attributes.iUvRect;a.updateRange.offset=0;a.updateRange.count=_crtCount;c.updateRange.offset=0;c.updateRange.count=_crtCount*3;u.updateRange.offset=0;u.updateRange.count=_crtCount*4;a.needsUpdate=c.needsUpdate=u.needsUpdate=true;}}
 
 /* ============================================================
    漫画特效:地面扬尘卡(炮弹啃地 / 载具部署尘土)
@@ -1164,20 +1661,16 @@ function _comicRocketTrailUpdate(dt){if(!_crtMesh||!_crtList.length)return;_crtC
    贴图直接以泥土色作画(墨线轮廓+受光/阴影瓣),无需逐实例 tint 通道,
    复用 _crlCardGeo/_crlMaterial(iAlpha+对数深度)。
    ============================================================ */
-var CGD_CAP=96,_cgdPool=[],_cgdRing=0,_cgdLive=0,_cgdTex=null,_cgdGeo=null,_cgdMat=null,_cgdMesh=null,_cgdAlpha=null;
+var CGD_CAP=288,_cgdPool=[],_cgdRing=0,_cgdLive=0,_cgdTex=null,_cgdGeo=null,_cgdMat=null,_cgdMesh=null,_cgdAlpha=null,_cgdUvA=null;
+var _cgdFrames=[[.018,.518,.464,.464],[.518,.518,.464,.464],[.018,.018,.464,.464],[.518,.018,.464,.464]];
 var _cgdM=new THREE.Matrix4(),_cgdQ=new THREE.Quaternion(),_cgdP=new THREE.Vector3(),_cgdS=new THREE.Vector3();
-function _cgdMakeTex(){var cv=document.createElement('canvas');cv.width=cv.height=512;var g=cv.getContext('2d'),rnd=mulberry32(0xD05DDA57);g.clearRect(0,0,512,512);g.lineJoin='round';g.lineCap='round';
-  function dustPuff(x,y,rx,ry,fill,shade,hi,seed){var rr=mulberry32(seed),pts=[],n=15;for(var i=0;i<n;i++){var a=i/n*TAU,k=1+(rr()-.5)*.24;pts.push([x+Math.cos(a)*rx*k,y+Math.sin(a)*ry*k]);}g.beginPath();g.moveTo(pts[0][0],pts[0][1]);for(i=1;i<n;i++)g.lineTo(pts[i][0],pts[i][1]);g.closePath();g.fillStyle=fill;g.fill();g.strokeStyle='rgba(84,68,48,.62)';g.lineWidth=9;g.stroke();g.beginPath();g.ellipse(x+rx*.20,y+ry*.28,rx*.62,ry*.44,.10,0,TAU);g.fillStyle=shade;g.fill();g.beginPath();g.ellipse(x-rx*.22,y-ry*.24,rx*.44,ry*.30,-.14,0,TAU);g.fillStyle=hi;g.fill();}
-  /* 一团完整泥尘:大瓣在下、碎瓣在上,土色三层(亮沙/中褐/暗烬)。 */
-  dustPuff(256,318,150,118,'#c7ad7d','#9c8259','#e2cf9d',11);
-  dustPuff(150,256,96,82,'#b59a6e','#8a7350','#d8c391',12);
-  dustPuff(366,262,102,86,'#bfa476','#93794f','#dcc794',13);
-  dustPuff(256,180,88,72,'#cdb383','#a08a5e','#e8d6a4',14);
-  dustPuff(180,150,52,44,'#c2a878','#957d55','#dfcb98',15);
-  dustPuff(332,146,56,46,'#c9ae7e','#9a8156','#e4d09e',16);
-  var t=new THREE.CanvasTexture(cv);t.minFilter=THREE.LinearMipmapLinearFilter;t.magFilter=THREE.LinearFilter;t.generateMipmaps=true;if(THREE.sRGBEncoding)t.encoding=THREE.sRGBEncoding;return t;}
-function _cgdEnsure(){if(_cgdMesh||!scene)return;_cgdTex=_cgdMakeTex();_cgdAlpha=new Float32Array(CGD_CAP);_cgdGeo=_crlCardGeo(_cgdAlpha);_cgdMat=_crlMaterial(_cgdTex);_cgdMesh=new THREE.InstancedMesh(_cgdGeo,_cgdMat,CGD_CAP);_cgdMesh.count=0;_cgdMesh.visible=false;_cgdMesh.frustumCulled=false;_cgdMesh.renderOrder=6;_cgdMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);scene.add(_cgdMesh);for(var i=0;i<CGD_CAP;i++)_cgdPool.push({on:false,age:0,life:1,x:0,y:0,z:0,vx:0,vz:0,rise:1,size:3,a:.5});}
-function _cgdPut(x,y,z,vx,vz,rise,size,life,a){var it=_cgdPool[_cgdRing];_cgdRing=(_cgdRing+1)%CGD_CAP;if(!it.on)_cgdLive++;it.on=true;it.age=0;it.life=life;it.x=x;it.y=y;it.z=z;it.vx=vx;it.vz=vz;it.rise=rise;it.size=size;it.a=a;}
+function _cgdMakeTex(){var cv=document.createElement('canvas');cv.width=cv.height=512;var g=cv.getContext('2d');g.clearRect(0,0,512,512);g.lineJoin='round';g.lineCap='round';
+  /* FX1:A2扬尘2x2变体(无tint,直接烘焙土色+暗瓣) */
+  function cell(x,y,sd,sh){_fxA2(g,x,y,112,sd,199,173,125,sh,1);_fxA2(g,x+22,y+26,64,sd+9,140,118,84,0);}
+  cell(128,128,0xCD60,0);cell(384,128,0xCD61,1);cell(128,384,0xCD62,2);cell(384,384,0xCD63,3);
+  var t=new THREE.CanvasTexture(cv);t.minFilter=THREE.LinearFilter;t.magFilter=THREE.LinearFilter;t.generateMipmaps=false;return t;}
+function _cgdEnsure(){if(_cgdMesh||!scene)return;_cgdTex=_cgdMakeTex();_cgdAlpha=new Float32Array(CGD_CAP);_cgdUvA=new Float32Array(CGD_CAP*4);_cgdGeo=_crlCardGeo(_cgdAlpha,_cgdUvA);_cgdMat=_crlMaterial(_cgdTex,true);_cgdMesh=new THREE.InstancedMesh(_cgdGeo,_cgdMat,CGD_CAP);_cgdMesh.count=0;_cgdMesh.visible=false;_cgdMesh.frustumCulled=false;_cgdMesh.renderOrder=6;_cgdMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);scene.add(_cgdMesh);for(var i=0;i<CGD_CAP;i++)_cgdPool.push({on:false,age:0,life:1,x:0,y:0,z:0,vx:0,vz:0,rise:1,size:3,a:.5,var:0});}
+function _cgdPut(x,y,z,vx,vz,rise,size,life,a){var it=_cgdPool[_cgdRing];_cgdRing=(_cgdRing+1)%CGD_CAP;if(!it.on)_cgdLive++;it.on=true;it.age=0;it.life=life;it.x=x;it.y=y;it.z=z;it.vx=vx;it.vz=vz;it.rise=rise;it.size=size;it.a=a;it.var=(Math.random()*4)|0;}
 function comicGroundDust(x,y,z,big){_cgdEnsure();if(!_cgdMesh)return;
   if(typeof fxEventVisible==='function'&&!fxEventVisible(_cgdP.set(x,y,z)))return;   // 与命中事件同口径:600m/炮镜圈外不生成
   var n=big?7:4,i;
@@ -1192,30 +1685,127 @@ function _comicGroundDustUpdate(dt){if(!_cgdMesh||!_cgdLive)return;var n=0;
     it.x+=it.vx*dt;it.z+=it.vz*dt;var dr=Math.exp(-1.9*dt);it.vx*=dr;it.vz*=dr;   // 外抛减速定格,土是重的
     comicTextureFace(_cgdQ,it.x,it.y,it.z,COMIC_FACE_CAMERA);
     _cgdP.set(it.x,it.y+E.rise,it.z);_cgdS.set(it.size*E.scale,it.size*E.scale,1);
-    _cgdM.compose(_cgdP,_cgdQ,_cgdS);_cgdMesh.setMatrixAt(n,_cgdM);_cgdAlpha[n]=it.a*E.alpha;n++;}
+    _cgdM.compose(_cgdP,_cgdQ,_cgdS);_cgdMesh.setMatrixAt(n,_cgdM);_fxUvW(_cgdUvA,n,_cgdFrames,it.var);_cgdAlpha[n]=it.a*E.alpha;n++;}
   _cgdMesh.count=n;_cgdMesh.visible=n>0;
   if(n){var im=_cgdMesh.instanceMatrix;im.updateRange.offset=0;im.updateRange.count=n*16;im.needsUpdate=true;
-    var a=_cgdGeo.attributes.iAlpha;a.updateRange.offset=0;a.updateRange.count=n;a.needsUpdate=true;}}
+    var a=_cgdGeo.attributes.iAlpha,u=_cgdGeo.attributes.iUvRect;a.updateRange.offset=0;a.updateRange.count=n;u.updateRange.offset=0;u.updateRange.count=n*4;a.needsUpdate=u.needsUpdate=true;}}
 
+/* ============================================================
+   P3 履带刨土(CTD):打滑/空转/侧滑时履带从接地边缘一圈向四周抛土块(旋转贴图,落地粘附)。
+   128 槽 ONE InstancedMesh,弹道+落地粘附;发射由 world.js comicTrackDig(t,dt)
+   逐车驱动(与行进尘同 visible 门/直升机豁免);决策纯函数 trackDigLevel 可无头单测。
+   环形覆盖:全场刨土再多也不增 draw call、不增内存,只复用最旧槽。
+   ============================================================ */
+function trackDigLevel(t) {   // 刨土强度 0~1(纯函数:只读 _throttle/speed/_slip/_slideV/_beltK)
+  if (!t) return 0;
+  var thr = Math.abs(t._throttle || 0), spd = Math.abs(t.speed || 0), dig = 0;
+  if (thr > 0.15 && spd < 2.5) dig = thr * (1 - spd / 2.5);   // 空转:油门大、车不动
+  if (t._slip) { var s = 0.45 + 0.55 * thr; if (s > dig) dig = s; }   // SLIP 兜底
+  var sv = Math.abs(t._slideV || 0);
+  if (sv > 0.5) { var sk = sv / 3; if (sk > 1) sk = 1; if (sk > dig) dig = sk; }   // 侧滑抛土
+  if (t._beltK !== undefined && t._beltK !== null) {   // 失配刨土:带速 vs 实际侧速 κ(无带速输入走旧分支,T5 逐位兼容)
+    var _kk = Math.abs(t._beltK);
+    var _k0 = (typeof TRK_DIG_K0 === 'undefined') ? 0.25 : TRK_DIG_K0;
+    var _k1 = (typeof TRK_DIG_K1 === 'undefined') ? 0.75 : TRK_DIG_K1;
+    var _ds = (_kk - _k0) / (_k1 - _k0); if (_ds < 0) _ds = 0; else if (_ds > 1) _ds = 1;
+    if (_ds > dig) dig = _ds;
+  }
+  return dig > 1 ? 1 : dig;
+}
+var CTD_CAP=128,_ctdPool=[],_ctdRing=0,_ctdLive=0,_ctdTex=null,_ctdGeo=null,_ctdMat=null,_ctdMesh=null,_ctdAlpha=null,_ctdUvA=null;
+var _ctdM=new THREE.Matrix4(),_ctdQ=new THREE.Quaternion(),_ctdP=new THREE.Vector3(),_ctdS=new THREE.Vector3(),_ctdSrc=new THREE.Vector3();
+var _ctdRollQ=new THREE.Quaternion(),_ctdZ=new THREE.Vector3(0,0,1),_ctdRimO=[0,0,0,0];
+function _ctdMakeTex(){var cv=document.createElement('canvas');cv.width=cv.height=512;var g=cv.getContext('2d');g.clearRect(0,0,512,512);g.lineJoin='round';g.lineCap='round';
+  /* FX7-CTD:履带刨土2x2(格0-2新绘T0-2,格3=T0镜像备) */
+  var i,_cell=[[0,0,0],[256,0,1],[0,256,2]];
+  for(i=0;i<3;i++){g.save();g.translate(_cell[i][0],_cell[i][1]);paintCTD(g,_cell[i][2]);g.restore();}
+  g.save();g.translate(512,256);g.scale(-1,1);paintCTD(g,0);g.restore();
+  var t=new THREE.CanvasTexture(cv);t.minFilter=THREE.LinearMipmapLinearFilter;t.magFilter=THREE.LinearFilter;t.generateMipmaps=true;if(THREE.sRGBEncoding)t.encoding=THREE.sRGBEncoding;return t;}
+var _ctdFrames=[[.018,.518,.464,.464],[.518,.518,.464,.464],[.018,.018,.464,.464],[.518,.018,.464,.464]];
+function _ctdEnsure(){if(_ctdMesh||typeof scene==='undefined'||!scene)return;_ctdAlpha=new Float32Array(CTD_CAP);_ctdUvA=new Float32Array(CTD_CAP*4);_ctdTex=_ctdMakeTex();_ctdGeo=_crlCardGeo(_ctdAlpha,_ctdUvA);_ctdMat=_crlMaterial(_ctdTex,true);_ctdMesh=new THREE.InstancedMesh(_ctdGeo,_ctdMat,CTD_CAP);_ctdMesh.count=0;_ctdMesh.visible=false;_ctdMesh.frustumCulled=false;_ctdMesh.renderOrder=6;_ctdMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);scene.add(_ctdMesh);for(var i=0;i<CTD_CAP;i++)_ctdPool.push({on:false,age:0,life:1,x:0,y:0,z:0,vx:0,vy:0,vz:0,size:.3,a:.85,rest:0,rot:0,vrot:0,var:0});}
+function _ctdRim(t,sgn,thrS,out){   // 接地片周界采样→out=[lx,lz,nx,nz](局部坐标+外法向);无表回落旧车尾点
+  var rim=null,sk=(typeof suspKeyOf==='function')?suspKeyOf(t.team,t.kind):null;
+  if(t.kind==='arty'){
+    var ax=(typeof ARTY_RIM_AXLES_OF!=='undefined')?(ARTY_RIM_AXLES_OF[t.team]||ARTY_RIM_AXLES_OF.ally):[2.6,-0.3,-1.4],r0=Math.random(),ai;
+    var wx2=(typeof ARTY_RIM_X_OF!=='undefined')?(ARTY_RIM_X_OF[t.team]||1.10):1.10;
+    if(thrS>=0)ai=r0<0.5?2:(r0<0.8?1:0);else ai=r0<0.5?0:(r0<0.8?1:2);   // 前进后轴多刨,倒车镜像
+    rim={x:wx2,z0:ax[ai]-0.5,z1:ax[ai]+0.5,hw:0.28};
+  }else if(sk&&typeof TRK_RIM!=='undefined'&&TRK_RIM[sk])rim=TRK_RIM[sk];
+  if(!rim){out[0]=sgn*Math.min(1.38,(t.radius||4)*0.44);out[1]=-thrS*1.2;out[2]=0;out[3]=-thrS;return out;}
+  var cx=sgn*rim.x,w=rim.hw*2,d=rim.z1-rim.z0;
+  var wRear=thrS>=0?0.30:0.20,wFront=thrS>=0?0.20:0.30,e=Math.random(),u;   // 倒车前后互换
+  if(e<wRear){u=Math.random();out[0]=cx-rim.hw+u*w;out[1]=rim.z0;out[2]=0;out[3]=-1;return out;}
+  e-=wRear;
+  if(e<wFront){u=Math.random();out[0]=cx-rim.hw+u*w;out[1]=rim.z1;out[2]=0;out[3]=1;return out;}
+  e-=wFront;
+  if(e<0.25){u=Math.random();out[0]=cx+sgn*rim.hw;out[1]=rim.z0+u*d;out[2]=sgn;out[3]=0;return out;}
+  u=Math.random();out[0]=cx-sgn*rim.hw;out[1]=rim.z0+u*d;out[2]=-sgn;out[3]=0;return out;
+}
+function _ctdThrow(t,dig){
+  var it=_ctdPool[_ctdRing];_ctdRing=(_ctdRing+1)%CTD_CAP;if(!it.on)_ctdLive++;
+  t._ctdSide=(t._ctdSide||0)^1;var sgn=t._ctdSide?1:-1;
+  var thrS=(t._throttle||0)>=0?1:-1;
+  if(t._beltKSide&&t._beltK!==undefined&&Math.abs(t._beltK)>0.5&&Math.random()<0.7)sgn=t._beltKSide;   // 打滑侧多刨
+  var rm=_ctdRim(t,sgn,thrS,_ctdRimO);
+  _ctdSrc.set(rm[0],0.12,rm[1]);t.group.localToWorld(_ctdSrc);
+  it.on=true;it.age=0;it.rest=0;it.life=.7+Math.random()*.4;
+  it.x=_ctdSrc.x;it.z=_ctdSrc.z;
+  it.y=(typeof terrainH==='function'?terrainH(_ctdSrc.x,_ctdSrc.z):_ctdSrc.y)+.06;   // 落位 snap(坡地不内嵌)
+  it.rot=Math.random()*TAU;it.vrot=(Math.random()-.5)*2.4;   // 旋转贴图:发射随机相位+慢速自旋(落地定格)
+  var fx=Math.sin(t.yaw),fz=Math.cos(t.yaw),sv=t._slideV||0;
+  var ospd=1.5+Math.random()*2*dig+dig*2;   // 外法向抛速
+  var wnx=fz*rm[2]+fx*rm[3],wnz=-fx*rm[2]+fz*rm[3];   // 局部法向→世界(右轴*nx+前轴*nz)
+  it.vx=wnx*ospd+fz*sv*.9+(Math.random()-.5)*1.6;
+  it.vz=wnz*ospd+(-fx)*sv*.9+(Math.random()-.5)*1.6;
+  it.vy=2+Math.random()*2.5*dig+dig*1.5;
+  it.size=.22+Math.random()*.23+dig*.1;it.a=.85;it.var=(Math.random()*3)|0;
+}
+function comicTrackDig(t,dt){   // 世界逐车钩(world.js:行进尘邻行):刨土发射
+  if(!t||!t.alive||isHeliVehicle(t))return;
+  if(t._throttleLock){t._ctdAcc=0;return;}   // 齐射驻锄禁发
+  if(typeof beltUpdate==='function')beltUpdate(t,dt);   // 带速新鲜度(帧哨兵,多调无害)
+  if(!t._csmRegistered||!t._csmVisible)return;
+  if(typeof trackDigLevel!=='function')return;
+  var dig=trackDigLevel(t);
+  if(dig<0.25){t._ctdAcc=0;return;}
+  _ctdEnsure();if(!_ctdMesh)return;
+  t._ctdAcc=(t._ctdAcc||0)+dig*26*dt;
+  var n=0;
+  while(t._ctdAcc>=1&&n<4){t._ctdAcc-=1;n++;_ctdThrow(t,dig);}
+  if(n>=4)t._ctdAcc=0;   // 长帧截断,防追赶风暴
+}
+function _comicTrackDigUpdate(dt){if(!_ctdMesh||!_ctdLive)return;var n=0;
+  for(var i=0;i<CTD_CAP;i++){var it=_ctdPool[i];if(!it.on)continue;it.age+=dt;if(it.age>=it.life){it.on=false;_ctdLive--;continue;}
+    if(!it.rest){it.vy-=9.8*dt;it.rot+=it.vrot*dt;it.x+=it.vx*dt;it.y+=it.vy*dt;it.z+=it.vz*dt;
+      var gy=terrainH(it.x,it.z)+.04;if(it.y<=gy){it.y=gy;it.rest=1;it.vx=it.vy=it.vz=0;it.vrot=0;}}
+    var k=it.age/it.life;
+    comicTextureFace(_ctdQ,it.x,it.y,it.z,COMIC_FACE_CAMERA);_ctdRollQ.setFromAxisAngle(_ctdZ,it.rot);_ctdQ.multiply(_ctdRollQ);
+    _ctdP.set(it.x,it.y,it.z);_ctdS.set(it.size,it.size,1);
+    _ctdM.compose(_ctdP,_ctdQ,_ctdS);_ctdMesh.setMatrixAt(n,_ctdM);_ctdAlpha[n]=it.a*(k<.55?1:1-(k-.55)/.45);_fxUvW(_ctdUvA,n,_ctdFrames,it.var);n++;}
+  _ctdMesh.count=n;_ctdMesh.visible=n>0;
+  if(n){var im=_ctdMesh.instanceMatrix;im.updateRange.offset=0;im.updateRange.count=n*16;im.needsUpdate=true;
+    var a=_ctdGeo.attributes.iAlpha,u=_ctdGeo.attributes.iUvRect;a.updateRange.offset=0;a.updateRange.count=n;u.updateRange.offset=0;u.updateRange.count=n*4;a.needsUpdate=u.needsUpdate=true;}}
 /* ============================================================
    火箭刚离轨专属喷射团烟:只保留一张烟贴图和一只固定容量 InstancedMesh。
    每次发射只在发射架根部中央写一张Y轴面向单卡;扩散同时沿发射方向反向漂移。
    原本实例化锥体尾焰不受影响;团烟无粒子、灯光、反光或泛光。
    ============================================================ */
-var CRL_CAP=64,CRL_SMOKE_CAP=CRL_CAP,_crlPool=[],_crlRing=0,_crlLive=0,_crlSmokeTex=null,_crlSmokeGeo=null,_crlSmokeMat=null,_crlSmokeMesh=null;
+var CRL_CAP=64,CRL_SMOKE_CAP=CRL_CAP,_crlPool=[],_crlRing=0,_crlLive=0,_crlSmokeTex=null,_crlSmokeGeo=null,_crlSmokeMat=null,_crlSmokeMesh=null,_crlSmokeUvA=null;
+var _crlFrames=[[.018,.518,.464,.464],[.518,.518,.464,.464],[.018,.018,.464,.464],[.518,.018,.464,.464]];
 var _crlSmokeAlpha=null,_crlM=new THREE.Matrix4(),_crlQ=new THREE.Quaternion(),_crlP=new THREE.Vector3(),_crlRoot=new THREE.Vector3(),_crlS=new THREE.Vector3(),_crlDir=new THREE.Vector3();
-function _crlMakeJetSmokeTex(){var cv=document.createElement('canvas');cv.width=cv.height=1024;var g=cv.getContext('2d'),rnd=mulberry32(0xB16C2026);g.clearRect(0,0,1024,1024);g.lineJoin='round';g.lineCap='round';
-  function jetPuff(x,y,rx,ry,fill,shade,hi,seed){var rr=mulberry32(seed),pts=[],n=18;for(var i=0;i<n;i++){var a=i/n*TAU,k=1+(rr()-.5)*.22;pts.push([x+Math.cos(a)*rx*k,y+Math.sin(a)*ry*k]);}g.beginPath();g.moveTo(pts[0][0],pts[0][1]);for(i=1;i<n;i++)g.lineTo(pts[i][0],pts[i][1]);g.closePath();g.fillStyle=fill;g.fill();g.strokeStyle='rgba(105,91,82,.68)';g.lineWidth=12;g.stroke();g.beginPath();g.ellipse(x+rx*.18,y+ry*.26,rx*.70,ry*.50,.12,0,TAU);g.fillStyle=shade;g.fill();g.beginPath();g.ellipse(x-rx*.24,y-ry*.25,rx*.50,ry*.31,-.16,0,TAU);g.fillStyle=hi;g.fill();g.strokeStyle='rgba(255,248,216,.66)';g.lineWidth=6;g.beginPath();g.arc(x-rx*.17,y-ry*.13,Math.min(rx,ry)*.48,3.28,5.82);g.stroke();}
-  /* 新版喷射烟是一整块巨型团烟:先画统一不规则外轮廓,不再保留旧细长烟柱。 */var bed=g.createLinearGradient(0,250,0,990);bed.addColorStop(0,'rgba(247,220,158,.96)');bed.addColorStop(.50,'rgba(224,151,91,.94)');bed.addColorStop(.78,'rgba(137,143,137,.93)');bed.addColorStop(1,'rgba(83,105,111,.84)');g.beginPath();g.moveTo(48,790);g.bezierCurveTo(7,720,33,631,105,612);g.bezierCurveTo(65,528,130,447,219,474);g.bezierCurveTo(202,365,310,302,391,365);g.bezierCurveTo(436,247,589,243,636,358);g.bezierCurveTo(722,301,824,369,811,464);g.bezierCurveTo(911,439,981,521,946,613);g.bezierCurveTo(1020,664,1012,773,948,812);g.bezierCurveTo(988,890,897,968,819,930);g.bezierCurveTo(756,1000,650,974,612,923);g.bezierCurveTo(552,998,431,991,392,925);g.bezierCurveTo(312,982,204,944,199,884);g.bezierCurveTo(120,923,45,873,48,790);g.closePath();g.fillStyle=bed;g.fill();g.strokeStyle='rgba(86,79,75,.76)';g.lineWidth=15;g.stroke();
-  /* 少量超大云瓣覆盖整块烟座,避免旧贴图多排小圆烟球的颗粒感。 */var cloud=[[164,690,151,137,'#e8c789','#7e9597','#fff0b5'],[305,520,166,148,'#f1d398','#d78352','#fff2c2'],[487,433,184,159,'#f5dda7','#e79759','#fff5cd'],[680,493,178,153,'#eed49f','#9aa59a','#fff0bf'],[846,632,150,137,'#d8c69b','#748d92','#f3e5b8'],[250,785,175,143,'#f0cf8e','#d56d4d','#fff0b5'],[477,705,191,158,'#f5d79b','#d97c50','#fff3bf'],[699,762,183,151,'#efcd91','#bd6651','#ffedb1'],[505,861,185,128,'#e9bd80','#875e5d','#ffe2a0']];for(var i=0;i<cloud.length;i++){var q=cloud[i];jetPuff(q[0],q[1],q[2],q[3],q[4],q[5],q[6],400+i);}
-  /* 喷口接触区只保留一团暖白受热烟,不再画贯穿整图的静态尾柱。 */jetPuff(508,329,104,91,'#f7dea6','#e59055','#fff8d6',520);
-  var t=new THREE.CanvasTexture(cv);t.minFilter=THREE.LinearMipmapLinearFilter;t.magFilter=THREE.LinearFilter;t.generateMipmaps=true;if(THREE.sRGBEncoding)t.encoding=THREE.sRGBEncoding;return t;}
-function _crlCardGeo(alpha){var p=new Float32Array([-.5,-.5,0,.5,-.5,0,.5,.5,0,-.5,.5,0]),uv=new Float32Array([0,0,1,0,1,1,0,1]),ix=new Uint16Array([0,2,1,0,3,2]),g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(p,3));g.setAttribute('uv',new THREE.BufferAttribute(uv,2));g.setAttribute('iAlpha',new THREE.InstancedBufferAttribute(alpha,1).setUsage(THREE.DynamicDrawUsage));g.setIndex(new THREE.BufferAttribute(ix,1));return g;}
-function _crlMaterial(tex){var vs=['attribute float iAlpha;varying vec2 vUv;varying float vA;','#include <common>','#include <logdepthbuf_pars_vertex>','void main(){vUv=uv;vA=iAlpha;vec4 mv=modelViewMatrix*instanceMatrix*vec4(position,1.0);gl_Position=projectionMatrix*mv;','#include <logdepthbuf_vertex>','}'].join('\n'),fs=['uniform sampler2D map;varying vec2 vUv;varying float vA;','#include <logdepthbuf_pars_fragment>','void main(){','#include <logdepthbuf_fragment>','vec4 t=texture2D(map,vUv);float a=t.a*vA;if(a<.018)discard;gl_FragColor=vec4(t.rgb,a);}'].join('\n');return new THREE.ShaderMaterial({uniforms:{map:{value:tex}},vertexShader:vs,fragmentShader:fs,transparent:true,depthWrite:false,depthTest:true,side:THREE.DoubleSide,blending:THREE.NormalBlending,toneMapped:false,fog:false});}
-function _crlEnsure(){if(_crlSmokeMesh||!scene)return;_crlSmokeTex=_crlMakeJetSmokeTex();_crlSmokeAlpha=new Float32Array(CRL_SMOKE_CAP);_crlSmokeGeo=_crlCardGeo(_crlSmokeAlpha);_crlSmokeMat=_crlMaterial(_crlSmokeTex);_crlSmokeMesh=new THREE.InstancedMesh(_crlSmokeGeo,_crlSmokeMat,CRL_SMOKE_CAP);_crlSmokeMesh.count=0;_crlSmokeMesh.visible=false;_crlSmokeMesh.frustumCulled=false;_crlSmokeMesh.renderOrder=7;_crlSmokeMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);scene.add(_crlSmokeMesh);for(var i=0;i<CRL_CAP;i++)_crlPool.push({on:false,age:0,x:0,y:0,z:0,dx:0,dz:1});}
-function comicRocketLaunchBurst(t,dir,pos){_crlEnsure();if(!_crlSmokeMesh||!t)return;var it=_crlPool[_crlRing];_crlRing=(_crlRing+1)%CRL_CAP;if(!it.on)_crlLive++;if(pos){_crlRoot.copy(pos);}else if(t.gunPivot){t.gunPivot.getWorldPosition(_crlRoot);}else if(t.group){t.group.getWorldPosition(_crlRoot);}if(dir){_crlDir.set(dir.x,dir.y||0,dir.z);if(_crlDir.lengthSq()<1e-6)_crlDir.set(Math.sin(t.yaw||0),0,Math.cos(t.yaw||0));else _crlDir.normalize();}else{_crlDir.set(Math.sin(t.yaw||0),0,Math.cos(t.yaw||0));}it.on=true;it.age=0;it.x=_crlRoot.x;it.y=_crlRoot.y;it.z=_crlRoot.z;it.dx=_crlDir.x;it.dy=_crlDir.y||0;it.dz=_crlDir.z;}
-function _comicRocketLaunchUpdate(dt){if(!_crlSmokeMesh||!_crlLive)return;var sn=0;for(var i=0;i<CRL_CAP;i++){var it=_crlPool[i];if(!it.on)continue;it.age+=dt;if(it.age>=2.65){it.on=false;_crlLive--;continue;}var E=comicSmokeExpand(it.age,2.65,.055,2.0,.70,.60,2.2,.62),back=2.65*E.drift;_crlP.set(it.x-it.dx*back,it.y-(it.dy||0)*back+E.rise*.72,it.z-it.dz*back);comicTextureFace(_crlQ,_crlP.x,_crlP.y,_crlP.z,COMIC_FACE_YAW);var size=9.4*E.scale;_crlS.set(size,size,1);_crlM.compose(_crlP,_crlQ,_crlS);_crlSmokeMesh.setMatrixAt(sn,_crlM);_crlSmokeAlpha[sn]=.54*E.alpha;sn++;}
-  _crlSmokeMesh.count=sn;_crlSmokeMesh.visible=sn>0;if(sn){var sm=_crlSmokeMesh.instanceMatrix;sm.updateRange.offset=0;sm.updateRange.count=sn*16;sm.needsUpdate=true;var sa=_crlSmokeGeo.attributes.iAlpha;sa.updateRange.offset=0;sa.updateRange.count=sn;sa.needsUpdate=true;}}
+function _crlMakeJetSmokeTex(){var cv=document.createElement('canvas');cv.width=cv.height=1024;var g=cv.getContext('2d');g.clearRect(0,0,1024,1024);g.lineJoin='round';g.lineCap='round';
+  /* FX1:A2发射烟2x2变体(无tint,直接烘焙暖灰+深瓣) */
+  function cell(x,y,sd,sh){_fxA2(g,x,y,200,sd,200,190,170,sh);_fxA2(g,x+44,y+52,116,sd+9,150,140,128,0);}
+  cell(256,256,0xC260,0);cell(768,256,0xC261,1);cell(256,768,0xC262,2);cell(768,768,0xC263,3);
+  var t=new THREE.CanvasTexture(cv);t.minFilter=THREE.LinearFilter;t.magFilter=THREE.LinearFilter;t.generateMipmaps=false;return t;}
+function _crlCardGeo(alpha,uv){var p=new Float32Array([-.5,-.5,0,.5,-.5,0,.5,.5,0,-.5,.5,0]),quv=new Float32Array([0,0,1,0,1,1,0,1]),ix=new Uint16Array([0,2,1,0,3,2]),g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(p,3));g.setAttribute('uv',new THREE.BufferAttribute(quv,2));g.setAttribute('iAlpha',new THREE.InstancedBufferAttribute(alpha,1).setUsage(THREE.DynamicDrawUsage));if(uv)g.setAttribute('iUvRect',new THREE.InstancedBufferAttribute(uv,4).setUsage(THREE.DynamicDrawUsage));g.setIndex(new THREE.BufferAttribute(ix,1));return g;}
+function _crlMaterial(tex,useUv){var vs=[(useUv?'attribute vec4 iUvRect;attribute float iAlpha;':'attribute float iAlpha;')+'varying vec2 vUv;varying float vA;','#include <common>','#include <logdepthbuf_pars_vertex>','void main(){vUv='+(useUv?'iUvRect.xy+uv*iUvRect.zw':'uv')+';vA=iAlpha;vec4 mv=modelViewMatrix*instanceMatrix*vec4(position,1.0);gl_Position=projectionMatrix*mv;','#include <logdepthbuf_vertex>','}'].join('\n'),fs=['uniform sampler2D map;varying vec2 vUv;varying float vA;','#include <logdepthbuf_pars_fragment>','void main(){','#include <logdepthbuf_fragment>','vec4 t=texture2D(map,vUv);float a=t.a*vA;if(a<.018)discard;gl_FragColor=vec4(t.rgb,a);}'].join('\n');return new THREE.ShaderMaterial({uniforms:{map:{value:tex}},vertexShader:vs,fragmentShader:fs,transparent:true,depthWrite:false,depthTest:true,side:THREE.DoubleSide,blending:THREE.NormalBlending,toneMapped:false,fog:false});}
+function _crlEnsure(){if(_crlSmokeMesh||!scene)return;_crlSmokeTex=_crlMakeJetSmokeTex();_crlSmokeAlpha=new Float32Array(CRL_SMOKE_CAP);_crlSmokeUvA=new Float32Array(CRL_SMOKE_CAP*4);_crlSmokeGeo=_crlCardGeo(_crlSmokeAlpha,_crlSmokeUvA);_crlSmokeMat=_crlMaterial(_crlSmokeTex,true);_crlSmokeMesh=new THREE.InstancedMesh(_crlSmokeGeo,_crlSmokeMat,CRL_SMOKE_CAP);_crlSmokeMesh.count=0;_crlSmokeMesh.visible=false;_crlSmokeMesh.frustumCulled=false;_crlSmokeMesh.renderOrder=7;_crlSmokeMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);scene.add(_crlSmokeMesh);for(var i=0;i<CRL_CAP;i++)_crlPool.push({on:false,age:0,x:0,y:0,z:0,dx:0,dz:1,var:0,sm:1});}
+function comicLaunchSmokeSizeMul(dmg){if(!(dmg>0))return 1;return clamp((dmg-20)/20,.5,3);}
+// FX6:发射烟通用尺寸:伤40=1x当前,伤60=2x(线性过两点,钳0.5~3)
+function comicRocketLaunchBurst(t,dir,pos,dmg){_crlEnsure();if(!_crlSmokeMesh||!t)return;var it=_crlPool[_crlRing];_crlRing=(_crlRing+1)%CRL_CAP;if(!it.on)_crlLive++;if(pos){_crlRoot.copy(pos);}else if(t.gunPivot){t.gunPivot.getWorldPosition(_crlRoot);}else if(t.group){t.group.getWorldPosition(_crlRoot);}if(dir){_crlDir.set(dir.x,dir.y||0,dir.z);if(_crlDir.lengthSq()<1e-6)_crlDir.set(Math.sin(t.yaw||0),0,Math.cos(t.yaw||0));else _crlDir.normalize();}else{_crlDir.set(Math.sin(t.yaw||0),0,Math.cos(t.yaw||0));}it.on=true;it.age=0;it.x=_crlRoot.x;it.y=_crlRoot.y;it.z=_crlRoot.z;it.dx=_crlDir.x;it.dy=_crlDir.y||0;it.dz=_crlDir.z;it.var=(Math.random()*4)|0;it.sm=comicLaunchSmokeSizeMul(dmg);}
+function _comicRocketLaunchUpdate(dt){if(!_crlSmokeMesh||!_crlLive)return;var sn=0;for(var i=0;i<CRL_CAP;i++){var it=_crlPool[i];if(!it.on)continue;it.age+=dt;if(it.age>=2.65){it.on=false;_crlLive--;continue;}var E=comicSmokeExpand(it.age,2.65,.055,2.0,.70,.60,2.2,.62),back=2.65*E.drift*(it.sm||1);_crlP.set(it.x-it.dx*back,it.y-(it.dy||0)*back+E.rise*.72,it.z-it.dz*back);comicTextureFace(_crlQ,_crlP.x,_crlP.y,_crlP.z,COMIC_FACE_YAW);var size=9.4*E.scale*(it.sm||1);_crlS.set(size,size,1);_crlM.compose(_crlP,_crlQ,_crlS);_crlSmokeMesh.setMatrixAt(sn,_crlM);_fxUvW(_crlSmokeUvA,sn,_crlFrames,it.var);_crlSmokeAlpha[sn]=.54*E.alpha;sn++;}
+  _crlSmokeMesh.count=sn;_crlSmokeMesh.visible=sn>0;if(sn){var sm=_crlSmokeMesh.instanceMatrix;sm.updateRange.offset=0;sm.updateRange.count=sn*16;sm.needsUpdate=true;var sa=_crlSmokeGeo.attributes.iAlpha,su=_crlSmokeGeo.attributes.iUvRect;sa.updateRange.offset=0;sa.updateRange.count=sn;su.updateRange.offset=0;su.updateRange.count=sn*4;sa.needsUpdate=su.needsUpdate=true;}}
 
 /* ============================================================
    全航程弹道尾迹线:解析弧固定槽 LineSegments(ONE draw call)
@@ -1327,8 +1917,15 @@ function _comicRocketLineOverlay(cam){if(!_rklScene||!_rklMesh||!_rklMesh.visibl
    旧花瓣球/放射芒/墨滴/炽核四贴图拼接实现已完全删除。
    ============================================================ */
 var CB_POOL=28,_cbPool=null,_cbSerial=0;   // 28 槽=双门齐射交错稳态并发 25.5 全覆盖(2×16 发,0.11s 有效间隔,寿命 2.8s);_cbSerial=抢最旧判据
+/* ★任务27⑥:饱和降级调速器——池按「双门齐射」设计,猎杀 AI 8 门同拍齐射时到达率 ~10/s×2.8s 寿命
+   把 28 槽顶满(实测 cbPeak=28):槽位争抢=卡在同一集群反复闪现,三大张面×3.4 距离补偿=填充率卡。
+   活跃卡 ≥HI 后续爆点降级(短寿命/小幅面/无地面高亮),≤LO 恢复;滞回防振荡。纯视觉,玩法零改动。 */
+var CB_SAT_HI=12,CB_SAT_LO=8,_cbSat=false,_cbDegN=0,_cbLive=0,CB_HARD_MAX=24;
+/*   参数依据(dbg_burstline 实测):到达率峰值 ~10/s → 降级卡稳态并发 ≈ 率×1.2s 寿命 ≈ 12;
+   HI=12 触发时存量满幅卡 ≤12 张(2.8s 内衰减),叠加降级稳态后瞬态 ≤~22 < 28 槽,
+   槽位争抢(丢新保旧抢最旧)全程不触发;≥24 硬顶=极端双风暴时干脆不出卡(扬尘/弹坑/焦土/音效照常)。 */
 var VB_POOL=8,_vbPool=null,_vbSerial=0;
-var _cbPetalTex=null,_cbSplatTex=null,_cbCoreTex=null; // 新火光/烟/亮度贴图
+var _cbPetalTex=null,_cbSplatTex=null,_cbSplatTexs=null,_cbCoreTex=null; // 新火光/烟/亮度贴图
 var _cbFireGeo=null,_comicExplosionSmokeGeo=null,_cbLightGeo=null;
 var _vbCanopyTex=null,_vbStemTex=null,_vbSkirtTex=null,_vbDebrisTex=null,_vbFlashTex=null;
 var _vbCanopyGeo=null,_vbStemGeo=null,_vbSkirtGeo=null,_vbFlashGeo=null;
@@ -1369,30 +1966,21 @@ function _cbMakeRocketFireTex(){
   miniCloud(174,248,54,-.18);miniCloud(846,362,43,.28);miniCloud(846,726,88,.18);miniCloud(924,704,31,-.12);
   /* 极少数微小橙色碎焰。 */for(i=0;i<5;i++){var px=118+rnd()*800,py=205+rnd()*585;if(Math.abs(px-512)<240&&Math.abs(py-512)<230)continue;g.beginPath();g.arc(px,py,8+rnd()*7,0,TAU);g.fillStyle='#ff9500';g.fill();}
   var t=new THREE.CanvasTexture(cv);t.minFilter=THREE.LinearMipmapLinearFilter;t.magFilter=THREE.LinearFilter;t.generateMipmaps=true;if(THREE.sRGBEncoding)t.encoding=THREE.sRGBEncoding;return t;}
-function _cbMakeRocketSmokeTex(){
-  var cv=document.createElement('canvas');cv.width=cv.height=1024;var g=cv.getContext('2d'),rnd=mulberry32(0x5A0CE2026);g.clearRect(0,0,1024,1024);g.lineJoin='round';g.lineCap='round';
-  function rocketPuff(x,y,rx,ry,fill,shade,edge,seed){var rr=mulberry32(seed),pts=[],n=16;for(var i=0;i<n;i++){var a=i/n*TAU,r=1+(rr()-.5)*.18;pts.push([x+Math.cos(a)*rx*r,y+Math.sin(a)*ry*r]);}g.beginPath();g.moveTo(pts[0][0],pts[0][1]);for(i=1;i<n;i++)g.lineTo(pts[i][0],pts[i][1]);g.closePath();g.fillStyle=fill;g.fill();g.strokeStyle=edge||'#343230';g.lineWidth=11;g.stroke();
-    g.beginPath();g.ellipse(x+rx*.18,y+ry*.25,rx*.68,ry*.50,.14,0,TAU);g.fillStyle=shade;g.fill();g.strokeStyle='rgba(50,48,46,.46)';g.lineWidth=6;g.beginPath();g.arc(x-rx*.06,y+ry*.02,Math.min(rx,ry)*.53,.18,2.72);g.stroke();
-    g.strokeStyle='rgba(255,255,252,.72)';g.lineWidth=5;g.beginPath();g.arc(x-rx*.18,y-ry*.18,Math.min(rx,ry)*.44,3.35,5.72);g.stroke();}
-  /* 地面投影与尘座。 */g.fillStyle='rgba(35,33,31,.90)';g.beginPath();g.ellipse(520,922,255,29,-.02,0,TAU);g.fill();g.beginPath();g.moveTo(620,915);g.lineTo(912,939);g.lineTo(632,951);g.closePath();g.fill();
-  var base=[[345,866,75,59],[430,842,88,72],[524,854,91,76],[620,841,86,69],[704,871,73,57]];for(var i=0;i<base.length;i++){var b=base[i];rocketPuff(b[0],b[1],b[2],b[3],'#dedbd5','#8b8882','#3a3835',100+i);}
-  /* 深色竖直烟柱:小而密集,向上逐步变粗。 */var stem=[[520,782,43,49,'#8a8680','#4b4844'],[481,720,51,58,'#77736e','#403e3a'],[548,660,57,65,'#85817a','#494641'],[501,594,63,71,'#6b6862','#383633'],[557,526,70,78,'#7c7871','#413e3a'],[493,463,74,81,'#716d67','#393734']];
-  for(i=0;i<stem.length;i++){var st=stem[i];rocketPuff(st[0],st[1],st[2],st[3],st[4],st[5],'#302e2c',200+i);}
-  /* 蘑菇冠后层。 */var back=[[112,354,93,92],[183,250,112,103],[302,180,126,112],[449,145,142,124],[607,156,138,121],[754,219,118,106],[882,322,94,92],[829,414,104,98],[176,422,105,101]];
-  for(i=0;i<back.length;i++){var q=back[i],col=i<3||i===4?'#e9e7e1':'#d1cec8',sh=i%3===0?'#aaa69f':'#8f8b84';rocketPuff(q[0],q[1],q[2],q[3],col,sh,'#343230',300+i);}
-  /* 冠体中前层,顶部白、底部逐渐深。 */var front=[[257,330,118,108,'#e7e5df','#9a968f'],[380,270,133,116,'#f3f1eb','#b4b0a8'],[526,258,142,123,'#eeece6','#aaa69f'],[674,292,132,117,'#e3e0da','#96928b'],[786,365,112,104,'#cbc7c0','#77736d'],[635,404,125,110,'#bbb7b0','#68645f'],[474,391,128,113,'#ccc8c1','#77736d'],[327,425,110,101,'#b7b3ac','#66625d']];
-  for(i=0;i<front.length;i++){var f=front[i];rocketPuff(f[0],f[1],f[2],f[3],f[4],f[5],'#302e2c',400+i);}
-  /* 冠下极深翻卷烟。 */rocketPuff(431,478,85,74,'#716d67','#353330','#292725',510);rocketPuff(581,477,91,78,'#7a766f','#393733','#292725',511);rocketPuff(506,530,71,68,'#5f5c57','#302e2b','#262422',512);
+function _cbMakeRocketSmokeTex(v){
+  var cv=document.createElement('canvas');cv.width=cv.height=1024;var g=cv.getContext('2d');g.clearRect(0,0,1024,1024);g.lineJoin='round';g.lineCap='round';
+  /* FX7-CB:3变体构图(v=0端正/1宽冠斜柱/2高穹粗柱) */
+  paintCB(g,v||0);
   var t=new THREE.CanvasTexture(cv);t.minFilter=THREE.LinearMipmapLinearFilter;t.magFilter=THREE.LinearFilter;t.generateMipmaps=true;if(THREE.sRGBEncoding)t.encoding=THREE.sRGBEncoding;return t;}
+
 function _cbMakeRocketLightTex(){var cv=document.createElement('canvas');cv.width=cv.height=128;var g=cv.getContext('2d'),r=g.createRadialGradient(64,64,0,64,64,63);r.addColorStop(0,'rgba(255,255,230,.95)');r.addColorStop(.25,'rgba(255,216,92,.62)');r.addColorStop(.65,'rgba(255,112,14,.20)');r.addColorStop(1,'rgba(255,75,5,0)');g.fillStyle=r;g.fillRect(0,0,128,128);var t=new THREE.CanvasTexture(cv);t.minFilter=THREE.LinearMipmapLinearFilter;t.magFilter=THREE.LinearFilter;t.generateMipmaps=true;return t;}
-function _cbBuildEntry(slot){var grp=new THREE.Group(),face=new THREE.Group(),e={on:false,t:0,age:0,life:2.8,mirror:1,sMul:1,sizeJitter:1,yieldK:1,scaleEpoch:-1,rangeVisible:true,distRef:55,distMin:.95,distMax:3.4,scalePointY:0,burstY:0};
+function _cbBuildEntry(slot){var grp=new THREE.Group(),face=new THREE.Group(),e={on:false,t:0,age:0,life:2.8,mirror:1,sMul:1,sizeJitter:_sfxJit(),yieldK:1,scaleEpoch:-1,rangeVisible:true,distRef:55,distMin:.95,distMax:3.4,scalePointY:0,burstY:0};
   e.fireMat=new THREE.MeshBasicMaterial({map:_cbPetalTex,transparent:true,opacity:0,depthWrite:false,side:THREE.DoubleSide,blending:THREE.NormalBlending,toneMapped:false,fog:false});
   e.smokeMat=new THREE.MeshBasicMaterial({map:_cbSplatTex,transparent:true,opacity:0,depthWrite:false,side:THREE.DoubleSide,toneMapped:false,fog:true});
   e.lightMat=new THREE.MeshBasicMaterial({map:_cbCoreTex,transparent:true,opacity:0,depthWrite:false,side:THREE.DoubleSide,blending:THREE.AdditiveBlending,toneMapped:false,fog:false});
   e.fire=new THREE.Mesh(_cbFireGeo,e.fireMat);e.smoke=new THREE.Mesh(_comicExplosionSmokeGeo,e.smokeMat);e.light=new THREE.Mesh(_cbLightGeo,e.lightMat);e.light.renderOrder=9;e.fire.renderOrder=12+slot*.001;e.smoke.renderOrder=11+slot*.001;   // 槽级微差:跨爆点同类卡排序恒定(防深度贴近逐帧翻转闪烁),层间关系不变
   e.fire.position.y=0;
   face.add(e.fire);face.add(e.smoke);grp.add(face);grp.add(e.light);grp.visible=false;e.face=face;e.group=grp;scene.add(grp);return e;}
-function _cbEnsurePool(){if(_cbPool)return;_cbPetalTex=_cbMakeRocketFireTex();if(!_cbSplatTex)_cbSplatTex=_cbMakeRocketSmokeTex();_cbCoreTex=_cbMakeRocketLightTex();
+function _cbEnsurePool(){if(_cbPool)return;_cbPetalTex=_cbMakeRocketFireTex();if(!_cbSplatTex){_cbSplatTex=_cbMakeRocketSmokeTex(0);_cbSplatTexs=[_cbSplatTex,_cbMakeRocketSmokeTex(1),_cbMakeRocketSmokeTex(2)];}_cbCoreTex=_cbMakeRocketLightTex();
   /* 火光使用中心原点(面积扩大至4倍=平面尺寸28×28);爆炸烟贴图/几何同步放大至32×42。 */
   _cbFireGeo=new THREE.PlaneGeometry(28,28);
   if(!_comicExplosionSmokeGeo)_comicExplosionSmokeGeo=new THREE.PlaneGeometry(32,42);_cbLightGeo=new THREE.PlaneGeometry(1,1);_cbLightGeo.rotateX(-Math.PI*.5);
@@ -1638,7 +2226,7 @@ function _vbBuildDebrisGeo(n) {
 function _vbBuildEntry(seedI) {
   var grp = new THREE.Group(), face = new THREE.Group();
   var e = {
-    on: false, age: 0, t: 0, life: 2.75, sMul: 1, sizeJitter: 1, yieldK: 1,
+    on: false, age: 0, t: 0, life: 2.75, sMul: 1, sizeJitter: _sfxJit(), yieldK: 1,
     scaleEpoch: -1, rangeVisible: true, distRef: 70, distMin: 0.94, distMax: 3.1, scalePointY: 1.5,
     phase: seedI * 1.73, spN: 18,
     spDir: new Float32Array(18 * 3), spVel: new Float32Array(18), spSize: new Float32Array(18)
@@ -1674,7 +2262,7 @@ function _vbBuildEntry(seedI) {
 /* 载具火光资源仍独立懒建;只共享通用爆炸烟贴图/几何与出现时序,不创建火箭池槽。 */
 function _vbEnsurePool() {
   if (_vbPool) return;
-  if (!_cbSplatTex) _cbSplatTex = _cbMakeRocketSmokeTex();
+  if (!_cbSplatTex) _cbSplatTex = _cbMakeRocketSmokeTex(0);
   if (!_comicExplosionSmokeGeo) _comicExplosionSmokeGeo = new THREE.PlaneGeometry(16,21);
   _vbCanopyTex = _vbMakeCanopyTex(); _vbStemTex = _vbMakeStemTex();
   _vbSkirtTex = _vbMakeSkirtTex(); _vbDebrisTex = _vbMakeDebrisTex(); _vbFlashTex = _vbMakeFlashTex();
@@ -1709,7 +2297,7 @@ function _cbRefreshActiveScale(e, force) {
   var d2 = dx * dx + dy * dy + dz * dz;
   var scopeNative = C.scoped; // 炮镜原生尺寸/远距门=通用口径(comic_common scopeDistK/scopeFarVisible);GPU 视锥负责屏外剔除
   var distK = scopeDistK(scopeNative, d2, e.distRef, e.distMin, e.distMax) * e.sizeJitter;
-  e.sMul = distK * (e.yieldK || 1);
+  e.sMul = distK * (e.yieldK || 1) * (e.degK || 1);        // ★任务27⑥:降级卡幅面 0.62×(VB 蘑菇云无 degK,恒 1)
   e.scaleEpoch = C.epoch;
   e.rangeVisible = scopeFarVisible(scopeNative, d2);
   e.group.visible = e.rangeVisible;
@@ -1753,15 +2341,20 @@ function comicArtyBurst(bp, rSplash) {
   var C = _cbScaleCtx, dx0 = bp.x - C.cx, dy0 = bp.y - C.cy, dz0 = bp.z - C.cz;
   if (!scopeFarVisible(C.scoped, dx0 * dx0 + dy0 * dy0 + dz0 * dz0)) return;   // 2km 硬裁剪(镜内直通,通用口径)
   _cbEnsurePool();
+  if (_cbLive >= CB_HARD_MAX) return;                      // ★任务27⑥:硬顶跳卡(爆点仍有扬尘/弹坑/焦土/音效,只是不添大卡)
   var e = poolIdleOldest(_cbPool, CB_POOL);               // core.js 通用池规约(空槽优先,全忙抢最旧)
   if (e.on && e.t < e.life * 0.6) return;                 // 丢新保旧:最旧者未播满 60%(烟仍浓)不许抢——中途硬切="突然消失"主根因,极端并发宁缺新爆
-  e.on = true; e.t = 0; e.age = ++_cbSerial; e.scaleEpoch = -1; e.mirror = Math.random() < .5 ? -1 : 1;
-  e.sizeJitter = .92 + Math.random() * .16;
+  e.on = true; e.t = 0; e.age = ++_cbSerial; e.scaleEpoch = -1; e.mirror = Math.random() < .5 ? -1 : 1;e.smokeMat.map=_cbSplatTexs[(Math.random()*3)|0];
+  e.sizeJitter = _sfxJit();
+  e.deg = _cbSat ? 1 : 0;                                   // ★任务27⑥:饱和降级(短寿命/小幅面/无地面高亮)
+  e.degK = e.deg ? 0.62 : 1;
+  e.life = e.deg ? 1.2 : 2.8;
+  if (e.deg) _cbDegN++;
   var splashRadius = (rSplash != null && rSplash > 0) ? rSplash : 22.0;
   e.yieldK = splashRadius / 22.0;                         // 贴图大小与爆炸半径自动线性关联 (22m=1.0x, 11m=0.5x)
   e.burstY = bp.y; e.group.position.copy(bp);
   _cbRefreshRocketGround(e);                              // 火光/高亮先钉当前地表;爆心高度另存给炮镜判定
-  e.fire.visible = e.smoke.visible = e.light.visible = true; _cbRefreshActiveScale(e); _cbAnim(e, 0);
+  e.fire.visible = e.smoke.visible = true; e.light.visible = !e.deg; _cbRefreshActiveScale(e); _cbAnim(e, 0);   // ★任务27⑥:降级卡省掉 36m 加法高亮面
 }
 
 /* ===== 载具蘑菇云入场(燃爆=1.5,殉爆=2.1) ===== */
@@ -1776,7 +2369,7 @@ function comicBurstFX(bp, scale) {
   e.yieldK = clamp((scale || 1.5) / 1.5, 0.9, 1.28);         // 殉爆比燃爆宽/高约 28%,不再简单整贴图翻倍
   /* 炮镜视角整张屏幕使用爆炸当量原生尺寸(燃爆1×、殉爆1.28×),绝不叠加距离补偿;
      退出炮镜后继续采用有限图标化,保证第三人称远景可读。 */
-  e.sizeJitter = 0.96 + Math.random() * 0.08;          // 镜内亦消费但不应用,保持视觉分支 RNG 调用数不变
+  e.sizeJitter = _sfxJit();          // 镜内亦消费但不应用,保持视觉分支 RNG 调用数不变(_sfxJit 同样只消耗 1 个 Math.random(),幅度统一为 [0.85,1.15])
   e.phase = Math.random() * 6.2832;
 
   var rnd = mulberry32((Math.random() * 1e9) | 0);
@@ -1908,7 +2501,13 @@ function _vbWriteDebris(e, t) {
 function _cbTick(dt, nowS) {
   if (!_cbPool && !_vbPool) return;
   var i, any = false;
-  if (_cbPool) for (i = 0; i < CB_POOL; i++) if (_cbPool[i].on) { any = true; break; }
+  if (_cbPool) {                                             // ★任务27⑥:活跃卡普查(既有扫描改计数,零新增遍历)+饱和滞回
+    var live = 0;
+    for (i = 0; i < CB_POOL; i++) if (_cbPool[i].on) live++;
+    _cbLive = live; any = live > 0;
+    if (_cbSat) { if (live <= CB_SAT_LO) _cbSat = false; }
+    else if (live >= CB_SAT_HI) _cbSat = true;
+  }
   if (!any && _vbPool) for (i = 0; i < VB_POOL; i++) if (_vbPool[i].on) { any = true; break; }
   if (!any) return;
   var scaleForwardFresh = _cbPrepareScaleContext(nowS, false);
@@ -1922,262 +2521,121 @@ function _cbTick(dt, nowS) {
 }
 
 /* ============================================================
-   小队标识(Backspace 开关)——盾形徽章悬浮 AI 载具上方
-   · 盾形:顶部直线/底部箭头;边缘条幅=型号代表色(SQB_COLORS 12 色本地预存,
-     对局开始随机洗牌后按型号取色,整场固定);盾面=阵营色(红/蓝);中心=白色小队编号
-     (阿拉伯数字=所在指挥编组序号,火箭炮/无组车空编号只显盾);漫画风:粗墨轮廓+硬色块。
-   · 资源全事件级:编号×型号图集 CanvasTexture 首次开启烘一次(对局重置置脏);
-     单 InstancedMesh+自写着色器(实例 UV 偏移),一次 draw call 收全部徽章。
-   · 逐帧成本:关闭=一次布尔早退(休眠闭环);开启=紧凑写入活车矩阵+UV
-     (位置跟车/绕竖轴面向玩家/温和距离放大),死亡/接管/重新部署经 aliveList 派生自动增删。
-   · 接管踢出编组由 combat.js possess 既有 cmdLeave 完成,徽章随成员派生自动消除。
-   · 战术意图标(盾上方:黄上箭头=进攻/煤灰下箭头=撤退/黄黑警戒纹=保持/白 U 箭头=迂回)与
-     特勋环(盾边幅外圈:金=精锐组·高命中率/灰=护卫组/黑=得分最差组·低命中率进攻令):
-     数据=ai.js cmdDecide 决策期一次写入的 g._intent/g._ring 纯视觉字段(AI 行为零读取),
-     渲染=同一 InstancedMesh 追加实例(每车≤3:环→盾→意图,索引序即叠放序),仍一次 draw call。
-   ============================================================ */
-var SQB_COLORS=['#e6194b','#3cb44b','#ffe119','#4363d8','#f58231','#911eb4','#42d4f4','#f032e6','#bfef45','#fabed4','#469990','#9a6324'];   // 12 色高区分度表(Trubetskoy 色板)
-var SQB_CAP=672,SQB_NMAX=12;                             // 实例容量(每车≤3:特勋环+盾+意图标)/编号列上限(0 列=无编号盾)
-var _sqbOn=false,_sqbMesh=null,_sqbGeo=null,_sqbUvA=null,_sqbTex=null,_sqbDirty=true,_sqbRows=1;
-var _sqbModels=[],_sqbModelRow={},_sqbPal=null;          // 在场型号行表/型号→行/洗牌后色表(对局一次)
-var _sqbM4=new THREE.Matrix4(),_sqbQ=new THREE.Quaternion(),_sqbP=new THREE.Vector3(),_sqbS=new THREE.Vector3(),_sqbY=new THREE.Vector3(0,1,0);
-function sqbBattleReset(){                               // 对局开始一次:洗牌色表+清型号注册+关标识+置图集脏
-  _sqbPal=SQB_COLORS.slice();
-  for(var i=_sqbPal.length-1;i>0;i--){var j=(Math.random()*(i+1))|0,t=_sqbPal[i];_sqbPal[i]=_sqbPal[j];_sqbPal[j]=t;}
-  _sqbModels.length=0;_sqbModelRow={};_sqbDirty=true;
-  _sqbOn=false;if(_sqbMesh){_sqbMesh.visible=false;_sqbMesh.count=0;}
+   战术标识(T 独立开关/指挥模式联动)——AI 载具头顶战术意图标,全场每车至多 1 个。
+   图集:单行 13 列×96px,对局一次静态烘焙(无型号注册、无脏位,增援不影响);
+   列=意图+队偏(0..3 友绿/4..7 敌红);V 恒 0。显示门=_tacOn||sqCmd.active。
+   被指挥者(_detached)不显示战术标,改走 _cmdStarTick 星系。
+   数据=ai.js cmdDecide 决策期一次写入的 g._intent 纯视觉字段(AI 行为零读取)。
+   Mesh:PlaneGeometry(1,1)+iUV 实例属性一次 draw;alpha<0.5 丢弃,无深度测试。
+   瞄准描边(_iffAim*)随本开关:显示期 _tacTick 末驱动 _iffAimSync();关则 _iffAimHide()。 */
+var TAC_CAP=400;                                    // 实例容量(每车≤1,全场 AI 上限)
+var TAC_S=0.8;                                      // 战术标尺寸系数(×2.1 通用基)
+var _tacOn=false,_tacMesh=null,_tacGeo=null,_tacUvA=null,_tacTex=null;
+var _tacM4=new THREE.Matrix4(),_tacQ=new THREE.Quaternion(),_tacP=new THREE.Vector3(),_tacS=new THREE.Vector3(),_tacY=new THREE.Vector3(0,1,0);
+function _tacBaseH(t){                               // 悬浮基准高(刚出机体不压车,按机型)
+  if(t.kind==='ah64'||t.kind==='wz10')return 5.55;
+  if(t.kind==='arty')return 4.35;
+  return 3.35;
 }
-function _sqbModelKey(t){return t.team+'|'+(t.platform||t.kind);}
-function _sqbBakeAtlas(){                                // 图集烘焙(事件级):盾行=型号×编号 0..12;末行=特殊格(意图 4 格+特勋环 3 格)
-  if(typeof aliveList!=='undefined')for(var i=0;i<aliveList.length;i++){var t=aliveList[i];
-    if(t===player||!t.alive)continue;var k=_sqbModelKey(t);
-    if(_sqbModelRow[k]===undefined){_sqbModelRow[k]=_sqbModels.length;_sqbModels.push(k);}}
-  var mRows=Math.max(1,_sqbModels.length),rows=mRows+1,C=96,cv=document.createElement('canvas');
-  cv.width=C*(SQB_NMAX+1);cv.height=C*rows;
+function _tacBakeAtlas(){                            // 图集烘焙(对局一次,静态):列0..3=友军4意图(绿)/列4..7=敌军同形(红)
+  var C=96,cv=document.createElement('canvas');
+  cv.width=C*13;cv.height=C;
   var g=cv.getContext('2d');
-  var shieldPath=function(cx,y0,w,h,inset){g.beginPath();          // 盾形:顶部直线/竖边/底部箭头(所有格共用)
-    var L=cx-w/2+inset,R=cx+w/2-inset,T=y0+inset,S=y0+h*0.58,B=y0+h-inset*1.35;
-    g.moveTo(L,T);g.lineTo(R,T);g.lineTo(R,S);g.lineTo(cx,B);g.lineTo(L,S);g.closePath();};
-  for(var r=0;r<mRows;r++){
-    var mk=_sqbModels[r],edge=(_sqbPal&&_sqbPal[r%_sqbPal.length])||'#ffe119';
-    var face=mk.charAt(0)==='a'?'#d5382c':'#2f66d0';               // 阵营面色:红方(ally)/蓝方
-    for(var n=0;n<=SQB_NMAX;n++){
-      var x0=n*C,w=C*0.74,h=C*0.86,cx=x0+C/2,y0=(C-h)/2+r*C;
-      shieldPath(cx,y0,w,h,0);g.fillStyle='#141414';g.fill();      // 外圈粗墨轮廓(漫画)
-      shieldPath(cx,y0,w,h,C*0.045);g.fillStyle=edge;g.fill();     // 型号代表色边幅
-      shieldPath(cx,y0,w,h,C*0.16);g.fillStyle='#141414';g.fill(); // 内分隔墨线
-      shieldPath(cx,y0,w,h,C*0.185);g.fillStyle=face;g.fill();     // 阵营盾面
-      if(n>0){g.font='bold '+(C*0.44)+'px Consolas,Arial';g.textAlign='center';g.textBaseline='middle';
-        g.lineWidth=C*0.075;g.strokeStyle='#141414';g.strokeText(String(n),cx,y0+h*0.42);
-        g.fillStyle='#ffffff';g.fillText(String(n),cx,y0+h*0.42);}
-    }
-  }
-  /* —— 特殊行(r=mRows):列 0 进攻/1 撤退/2 保持/3 迂回;列 4 金环/5 灰环/6 黑环 —— */
-  var ys=mRows*C,cw,ch2,cxs;
-  var chev=function(x0,cy,up,fill){                                // 宽矮 chevron(横置"》",尖朝上/下)
+  var chev=function(x0,cy,up,fill){
     var d=up?1:-1;g.beginPath();
     g.moveTo(x0+C*0.13,cy+d*C*0.14);g.lineTo(x0+C*0.5,cy);g.lineTo(x0+C*0.87,cy+d*C*0.14);
     g.lineTo(x0+C*0.87,cy+d*C*0.30);g.lineTo(x0+C*0.5,cy+d*C*0.16);g.lineTo(x0+C*0.13,cy+d*C*0.30);g.closePath();
     g.lineWidth=C*0.07;g.strokeStyle='#141414';g.stroke();g.fillStyle=fill;g.fill();};
-  chev(0,ys+C*0.22,true,'#ffd21f');chev(0,ys+C*0.56,true,'#ffd21f');           // 进攻:黄双箭头朝上
-  chev(C,ys+C*0.44,false,'#4a4a4a');chev(C,ys+C*0.78,false,'#4a4a4a');         // 撤退:煤灰双箭头朝下
-  cxs=2*C;                                                          // 保持:黄底黑斜纹方框(警戒线)
-  g.fillStyle='#141414';g.fillRect(cxs+C*0.12,ys+C*0.26,C*0.76,C*0.44);
-  g.fillStyle='#ffd21f';g.fillRect(cxs+C*0.17,ys+C*0.31,C*0.66,C*0.34);
-  g.save();g.beginPath();g.rect(cxs+C*0.17,ys+C*0.31,C*0.66,C*0.34);g.clip();
-  g.strokeStyle='#141414';g.lineWidth=C*0.085;
-  for(var st=-1;st<6;st++){g.beginPath();g.moveTo(cxs+C*0.05+st*C*0.17,ys+C*0.78);g.lineTo(cxs+C*0.25+st*C*0.17,ys+C*0.20);g.stroke();}
-  g.restore();
-  cxs=3*C;                                                          // 迂回:横置白 U 型箭头(黑描边)
-  var uPath=function(){g.beginPath();g.moveTo(cxs+C*0.24,ys+C*0.30);g.lineTo(cxs+C*0.60,ys+C*0.30);
-    g.arc(cxs+C*0.60,ys+C*0.48,C*0.18,-Math.PI/2,Math.PI/2);g.lineTo(cxs+C*0.38,ys+C*0.66);};
-  g.lineCap='round';g.lineJoin='round';
-  uPath();g.lineWidth=C*0.19;g.strokeStyle='#141414';g.stroke();
-  uPath();g.lineWidth=C*0.10;g.strokeStyle='#ffffff';g.stroke();
-  g.beginPath();g.moveTo(cxs+C*0.40,ys+C*0.52);g.lineTo(cxs+C*0.40,ys+C*0.80);g.lineTo(cxs+C*0.16,ys+C*0.66);g.closePath();
-  g.lineWidth=C*0.06;g.strokeStyle='#141414';g.stroke();g.fillStyle='#ffffff';g.fill();
-  var ringCell=function(col,outer,inner){                           // 特勋环带格:盾外扩带(中空,叠底不遮盾)
-    var x0=col*C,cx=x0+C/2,w=C*0.74,h=C*0.86,y0=(C-h)/2+ys;
-    g.save();g.beginPath();g.rect(x0,ys,C,C);g.clip();
-    if(outer){shieldPath(cx,y0-C*0.075,w+C*0.15,h+C*0.15,0);g.fillStyle=outer;g.fill();}
-    shieldPath(cx,y0-C*0.055,w+C*0.11,h+C*0.11,0);g.fillStyle=inner;g.fill();
-    g.globalCompositeOperation='destination-out';
-    shieldPath(cx,y0,w,h,0);g.fill();
-    g.globalCompositeOperation='source-over';g.restore();};
-  ringCell(4,'#141414','#e8b923');                                  // 精锐:金(外细墨边)
-  ringCell(5,'#141414','#9aa4ad');                                  // 护卫:金属灰
-  ringCell(6,'#ffffff','#1d1d1d');                                  // 得分最差:黑(外细白边防与盾墨框融合)
-  cxs=7*C;                                                          // 跟随横杠(小队指挥模式意图标):黑描边+黄芯横杠
-  g.fillStyle='#141414';g.fillRect(cxs+C*0.14,ys+C*0.42,C*0.72,C*0.18);
-  g.fillStyle='#ffd21f';g.fillRect(cxs+C*0.20,ys+C*0.48,C*0.60,C*0.06);
-  var star=function(col,fill){                                      // 接管组五角星格:8=红方黄星/9=蓝方白星(黑描边,漫画风)
-    var x0=col*C,cx=x0+C/2,cy=ys+C*0.52,R=C*0.30,r2=R*0.42,i2,a,rr;
-    g.beginPath();
-    for(i2=0;i2<10;i2++){a=-Math.PI/2+i2*Math.PI/5;rr=(i2&1)===0?R:r2;
-      if(i2===0)g.moveTo(cx+Math.cos(a)*rr,cy+Math.sin(a)*rr);else g.lineTo(cx+Math.cos(a)*rr,cy+Math.sin(a)*rr);}
-    g.closePath();g.lineWidth=C*0.07;g.strokeStyle='#141414';g.stroke();g.fillStyle=fill;g.fill();};
-  star(8,'#ffd21f');
-  star(9,'#ffffff');
-  _sqbRows=rows;
-  if(_sqbTex)_sqbTex.dispose();
-  _sqbTex=new THREE.CanvasTexture(cv);_sqbTex.minFilter=THREE.LinearFilter;_sqbTex.magFilter=THREE.LinearFilter;
-  if(_sqbMesh){_sqbMesh.material.uniforms.map.value=_sqbTex;
-    _sqbMesh.material.uniforms.uCell.value.set(1/(SQB_NMAX+1),1/rows);}
-  _sqbDirty=false;
+  var holdBox=function(x0,fill){                     // 坚守:墨板+暗芯+色方框
+    g.fillStyle='#141414';g.fillRect(x0+C*0.12,C*0.20,C*0.76,C*0.56);
+    g.fillStyle='#0a100a';g.fillRect(x0+C*0.19,C*0.27,C*0.62,C*0.42);
+    g.strokeStyle=fill;g.lineWidth=C*0.07;g.strokeRect(x0+C*0.28,C*0.34,C*0.44,C*0.28);};
+  var flankU=function(x0,fill){                      // 迂回:U 弯箭(黑描边+色芯)
+    var uP=function(){g.beginPath();g.moveTo(x0+C*0.24,C*0.30);g.lineTo(x0+C*0.60,C*0.30);
+      g.arc(x0+C*0.60,C*0.48,C*0.18,-Math.PI/2,Math.PI/2);g.lineTo(x0+C*0.38,C*0.66);};
+    g.lineCap='round';g.lineJoin='round';
+    uP();g.lineWidth=C*0.19;g.strokeStyle='#141414';g.stroke();
+    uP();g.lineWidth=C*0.10;g.strokeStyle=fill;g.stroke();
+    g.beginPath();g.moveTo(x0+C*0.40,C*0.52);g.lineTo(x0+C*0.40,C*0.80);g.lineTo(x0+C*0.16,C*0.66);g.closePath();
+    g.lineWidth=C*0.06;g.strokeStyle='#141414';g.stroke();g.fillStyle=fill;g.fill();};
+  var paintSet=function(c0,fill){                    // c0=列基(0 友/4 敌):0攻1撤2守3迂回
+    chev(c0*C,C*0.22,true,fill);chev(c0*C,C*0.56,true,fill);
+    chev((c0+1)*C,C*0.44,false,fill);chev((c0+1)*C,C*0.78,false,fill);
+    holdBox((c0+2)*C,fill);
+    flankU((c0+3)*C,fill);};
+  paintSet(0,'#3cb44b');
+  paintSet(4,'#ff2d20');
+  if(_tacTex)_tacTex.dispose();
+  _tacTex=new THREE.CanvasTexture(cv);_tacTex.minFilter=THREE.LinearFilter;_tacTex.magFilter=THREE.LinearFilter;
+  if(_tacMesh)_tacMesh.material.uniforms.map.value=_tacTex;
 }
-function _sqbEnsure(){
-  if(_sqbMesh)return;
-  _sqbGeo=new THREE.PlaneGeometry(1,1);
-  _sqbUvA=new Float32Array(SQB_CAP*2);
-  _sqbGeo.setAttribute('iUV',new THREE.InstancedBufferAttribute(_sqbUvA,2).setUsage(THREE.DynamicDrawUsage));
-  var vs='attribute vec2 iUV;uniform vec2 uCell;varying vec2 vUv;\n'+
-    'void main(){vUv=(iUV+uv)*uCell;vec4 mv=modelViewMatrix*instanceMatrix*vec4(position,1.0);gl_Position=projectionMatrix*mv;}';
-  var fs='uniform sampler2D map;varying vec2 vUv;\n'+
-    'void main(){vec4 c=texture2D(map,vUv);if(c.a<0.5)discard;gl_FragColor=c;}';
-  var mat=new THREE.ShaderMaterial({uniforms:{map:{value:null},uCell:{value:new THREE.Vector2(1,1)}},
-    vertexShader:vs,fragmentShader:fs,transparent:true,depthTest:false,depthWrite:false});
-  _sqbMesh=new THREE.InstancedMesh(_sqbGeo,mat,SQB_CAP);
-  _sqbMesh.count=0;_sqbMesh.visible=false;_sqbMesh.frustumCulled=false;_sqbMesh.renderOrder=30;
-  _sqbMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  scene.add(_sqbMesh);
+function _tacEnsure(){
+  if(_tacMesh||typeof scene==='undefined'||!scene)return;
+  _tacGeo=new THREE.PlaneGeometry(1,1);
+  _tacUvA=new Float32Array(TAC_CAP*2);
+  _tacGeo.setAttribute('iUV',new THREE.InstancedBufferAttribute(_tacUvA,2).setUsage(THREE.DynamicDrawUsage));
+  var vs='attribute vec2 iUV;uniform vec2 uCell;varying vec2 vUv;\n'+'#include <common>\n#include <logdepthbuf_pars_vertex>\n'+
+    'void main(){vUv=(iUV+uv)*uCell;vec4 mv=modelViewMatrix*instanceMatrix*vec4(position,1.0);gl_Position=projectionMatrix*mv;#include <logdepthbuf_vertex>\n}';
+  var fs='uniform sampler2D map;varying vec2 vUv;\n#include <logdepthbuf_pars_fragment>\n'+
+    'void main(){#include <logdepthbuf_fragment>\nvec4 c=texture2D(map,vUv);if(c.a<0.5)discard;gl_FragColor=c;}';
+  var mat=new THREE.ShaderMaterial({uniforms:{map:{value:null},uCell:{value:new THREE.Vector2(1/13,1)}},
+    vertexShader:vs,fragmentShader:fs,transparent:true,depthTest:true,depthWrite:false});   // FX1:标识遮挡(地形/残骸),烟不写深度故不挡
+  _tacMesh=new THREE.InstancedMesh(_tacGeo,mat,TAC_CAP);
+  _tacMesh.count=0;_tacMesh.visible=false;_tacMesh.frustumCulled=false;_tacMesh.renderOrder=30;
+  _tacMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  scene.add(_tacMesh);
 }
-function sqbForceOff(){                                 // 外部强制关闭(指挥模式退出/玩家死亡/开局重置时调用)
-  _sqbOn=false;
-  if(_sqbMesh){_sqbMesh.visible=false;_sqbMesh.count=0;}
-  if(typeof sfxHeliDamageVoiceStop === 'function') sfxHeliDamageVoiceStop();
-  if(typeof sfxHeliPullupStop === 'function') sfxHeliPullupStop();
-  // 同步触摸按钮高亮状态
-  try{
-    var b=document.getElementById('tsqb');
-    if(b)b.classList.remove('lit');
-  }catch(e){}
+function tacShow(){                                  // 显示:ensure+烘焙一次+可见(门内调用)
+  _tacEnsure();if(!_tacMesh)return;
+  if(!_tacTex)_tacBakeAtlas();
+  _tacMesh.visible=true;
 }
-function sqbSyncToCmd(){                                 // 与指挥模式同步:sqCmd.active=true 则开徽章,false 则关
-  if(typeof sqCmd!=='undefined'&&sqCmd.active){
-    if(!_sqbOn){_sqbOn=true;_sqbEnsure();if(_sqbDirty)_sqbBakeAtlas();_sqbMesh.visible=true;}
-  }else{
-    sqbForceOff();
+function tacHideMesh(){                              // 隐藏:mesh 关+描边收走
+  if(_tacMesh){_tacMesh.visible=false;_tacMesh.count=0;}
+  if(typeof _iffAimHide==='function')_iffAimHide();
+}
+function tacToggle(){                                // T 键:战术标识独立开关(只开标识+描边,不进指挥模式)
+  _tacOn=!_tacOn;
+  if(_tacOn)tacShow();else tacHideMesh();
+  if(typeof aimHint==='function')aimHint(_tacOn?'战术标识：开':'战术标识：关');
+}
+function tacSyncToCmd(){                             // 与指挥模式同步:进模式则显示
+  tacShow();
+}
+function tacForceOff(){                              // 退出指挥模式:仅 T 未开时隐藏(T 开着则继续显示)
+  if(_tacOn)return;
+  tacHideMesh();
+}
+function tacBattleReset(){                           // 开局/换场:关独立开关+隐藏+描边收走(图集静态不清)
+  _tacOn=false;
+  tacHideMesh();
+}
+function _tacTick(){                                 // 每帧(_comicFxTick 登记):门=_tacOn||指挥模式
+  var show=_tacOn||(typeof sqCmd!=='undefined'&&sqCmd.active);
+  if(!show||!_tacMesh||typeof aliveList==='undefined'||!camera){
+    if(_tacMesh&&_tacMesh.count)_tacMesh.count=0;
+    return;
   }
-}
-function _sqbTick(){                                     // 每帧(_comicFxTick 登记):关闭=一次布尔早退
-  if(!_sqbOn||!_sqbMesh||typeof aliveList==='undefined'||!camera)return;
-  var sn=typeof scoped!=='undefined'&&scoped;            // 炮镜=整屏原生尺寸(与爆点 scopeNative 同口径):帧级取一次,镜内不做距离放大
-  var out=0,uvY,uvX;
-  for(var i=0;i<aliveList.length&&out<SQB_CAP-2;i++){    // 每车最多 3 实例(环+盾+意图),预留余量
+  if(!_tacMesh.visible)_tacMesh.visible=true;
+  var sn=typeof scoped!=='undefined'&&scoped;
+  var out=0;
+  for(var i=0;i<aliveList.length&&out<TAC_CAP;i++){
     var t=aliveList[i];
-    if(t===player||!t.alive)continue;                    // 玩家无徽章;接管后经此过滤自动消除
-    var p=t.group.position,row=_sqbModelRow[_sqbModelKey(t)];
-    uvY=_sqbRows-1-(row===undefined?0:row);              // canvas flipY:图集顶行=V 高位,行序反转
-    var g2=t._cmdG,ix=g2&&g2._c?g2._c.groups.indexOf(g2)+1:0;   // 编号=编组在指挥部序号;无组(火箭炮)=空编号盾
-    if(g2&&g2._detached){uvX=t.team==='ally'?8:9;uvY=0;}   // 接管组:编号→五角星(红方黄/蓝方白);星格在图集特殊行(V=0,漏写则采样到型号行数字盾)
-    else uvX=ix<0?0:(ix>SQB_NMAX?SQB_NMAX:ix);
+    if(t===player||!t.alive||!t.group)continue;
+    var g2=t._cmdG;
+    if(!g2||g2._detached)continue;                  // 无组车无标;被指挥者走星系
+    var p=t.group.position;
     var dx=camera.position.x-p.x,dz=camera.position.z-p.z;
-    var sc=2.1*scopeDistK(sn,dx*dx+dz*dz,55,1,4.2);      // 通用口径:炮镜原生/第三人称温和距离放大
-    _sqbQ.setFromAxisAngle(_sqbY,Math.atan2(dx,dz));            // 绕竖轴面向玩家
-    var ring=(g2&&!(g2._detached))?(g2._ring|0):0;       // 特勋环(决策期字段:1金精锐/2灰护卫/3黑最差):先写=叠底;接管组不显示
-    if(ring){
-      _sqbP.set(p.x,p.y+3.8,p.z);_sqbS.set(sc,sc,1);
-      _sqbM4.compose(_sqbP,_sqbQ,_sqbS);_sqbMesh.setMatrixAt(out,_sqbM4);
-      _sqbUvA[out*2]=3+ring;_sqbUvA[out*2+1]=0;out++;    // 特殊行(canvas 末行,flipY 后 V 行=0)列 4..6
-    }
-    _sqbP.set(p.x,p.y+3.8,p.z);_sqbS.set(sc,sc,1);
-    _sqbM4.compose(_sqbP,_sqbQ,_sqbS);
-    _sqbMesh.setMatrixAt(out,_sqbM4);
-    _sqbUvA[out*2]=uvX;_sqbUvA[out*2+1]=uvY;
-    out++;
-    if(g2){                                              // 战术意图标(决策期字段:0攻/1撤/2保持/3迂回):盾上方;接管组=横杠(跟随玩家,列7)
-      _sqbP.set(p.x,p.y+3.8+sc*0.62,p.z);_sqbS.set(sc*0.62,sc*0.62,1);
-      _sqbM4.compose(_sqbP,_sqbQ,_sqbS);_sqbMesh.setMatrixAt(out,_sqbM4);
-      _sqbUvA[out*2]=(g2._detached?7:(g2._intent|0));_sqbUvA[out*2+1]=0;out++;
-    }
+    var sc=2.1*TAC_S*scopeDistK(sn,dx*dx+dz*dz,55,1,4.2);
+    _tacQ.setFromAxisAngle(_tacY,Math.atan2(dx,dz)); // 绕竖轴面向玩家
+    _tacP.set(p.x,p.y+_tacBaseH(t),p.z);_tacS.set(sc,sc,1);
+    _tacM4.compose(_tacP,_tacQ,_tacS);_tacMesh.setMatrixAt(out,_tacM4);
+    _tacUvA[out*2]=(g2._intent|0)+(t.team==='ally'?0:4);_tacUvA[out*2+1]=0;out++;
   }
-  _sqbMesh.count=out;
-  _sqbMesh.instanceMatrix.needsUpdate=true;
-  _sqbGeo.attributes.iUV.needsUpdate=true;
-}
-/* 敌我标识(T):全场 AI 头顶扁 V,友绿敌红,不含玩家。
-   地形挡、烟不挡。瞄准外轮廓并入本开关。换场 iffBattleReset。 */
-var IFF_CAP = 400;
-var _iffOn = false, _iffMesh = null, _iffA = null;
-var _iffM4 = new THREE.Matrix4(), _iffQ = new THREE.Quaternion(), _iffP = new THREE.Vector3();
-var _iffS = new THREE.Vector3(), _iffY = new THREE.Vector3(0, 1, 0);
-function _iffMakeGeo() {
-  var w = 0.70, y0 = 0.22, y1 = -0.20, th = 0.085, pos = [], dx, dy, len, nx, ny;
-  function stroke(ax, ay, bx, by) {
-    dx = bx - ax; dy = by - ay; len = Math.sqrt(dx * dx + dy * dy) || 1;
-    nx = -dy / len * th; ny = dx / len * th;
-    pos.push(ax + nx, ay + ny, 0, ax - nx, ay - ny, 0, bx - nx, by - ny, 0,
-             ax + nx, ay + ny, 0, bx - nx, by - ny, 0, bx + nx, by + ny, 0);
-  }
-  stroke(-w, y0, 0, y1); stroke(w, y0, 0, y1);
-  var g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  return g;
-}
-function _iffEnsure() {
-  if (_iffMesh || !scene) return;
-  var geo = _iffMakeGeo();
-  _iffA = new Float32Array(IFF_CAP);
-  geo.setAttribute('aIff', new THREE.InstancedBufferAttribute(_iffA, 1).setUsage(THREE.DynamicDrawUsage));
-  var vs = [
-    'attribute float aIff;', 'varying float vIff;',
-    '#include <common>', '#include <logdepthbuf_pars_vertex>',
-    'void main(){ vIff=aIff; vec4 mv=modelViewMatrix*instanceMatrix*vec4(position,1.0); gl_Position=projectionMatrix*mv;',
-    '#include <logdepthbuf_vertex>', '}'
-  ].join('\n');
-  var fs = [
-    'varying float vIff;', '#include <logdepthbuf_pars_fragment>',
-    'void main(){',
-    '#include <logdepthbuf_fragment>',
-    '  gl_FragColor=vec4(mix(vec3(0.14,0.82,0.28), vec3(0.92,0.16,0.12), vIff), 1.0);',
-    '}'
-  ].join('\n');
-  var mat = new THREE.ShaderMaterial({
-    vertexShader: vs, fragmentShader: fs,
-    depthTest: true, depthWrite: false, fog: false, transparent: false,
-    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2
-  });
-  _iffMesh = new THREE.InstancedMesh(geo, mat, IFF_CAP);
-  _iffMesh.count = 0; _iffMesh.visible = false; _iffMesh.frustumCulled = false;
-  _iffMesh.renderOrder = 28;                     // 高于烟尘,低于小队徽章 30
-  _iffMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  scene.add(_iffMesh);
-}
-function _iffSet(on) {
-  _iffOn = !!on;
-  if (_iffOn) { _iffEnsure(); if (_iffMesh) _iffMesh.visible = true; }
-  else { if (_iffMesh) { _iffMesh.visible = false; _iffMesh.count = 0; } _iffAimHide(); }
-}
-function iffToggle() {
-  _iffSet(!_iffOn);
-  if (typeof aimHint === 'function') aimHint(_iffOn ? '敌我标识：开' : '敌我标识：关');
-}
-function iffBattleReset() { _iffSet(false); }
-function _iffH(t) {
-  if (t.kind === 'ah64' || t.kind === 'wz10') return 5.55;
-  if (t.kind === 'arty') return 4.35;
-  return 3.35;
-}
-function _iffTick() {
-  if (!_iffOn) { _iffAimHide(); return; }
-  if (!_iffMesh || typeof aliveList === 'undefined' || !camera) return;
-  var mine = (player && player.team) ? player.team : 'ally';
-  var sn = typeof scoped !== 'undefined' && scoped, out = 0, i, t, p, dx, dz, sc, a = _iffA;
-  for (i = 0; i < aliveList.length && out < IFF_CAP; i++) {
-    t = aliveList[i];
-    if (!t || !t.alive || t === player || !t.group) continue;
-    p = t.group.position;
-    dx = camera.position.x - p.x; dz = camera.position.z - p.z;
-    sc = (typeof scopeDistK === 'function') ? scopeDistK(sn, dx * dx + dz * dz, 70, 1, 3.4) : 1;
-    _iffQ.setFromAxisAngle(_iffY, Math.atan2(dx, dz));
-    _iffP.set(p.x, p.y + _iffH(t), p.z); _iffS.set(sc, sc, 1);
-    _iffM4.compose(_iffP, _iffQ, _iffS); _iffMesh.setMatrixAt(out, _iffM4);
-    a[out] = (t.team === mine) ? 0 : 1; out++;
-  }
-  _iffMesh.count = out; _iffMesh.visible = out > 0;
-  _iffMesh.instanceMatrix.needsUpdate = true;
-  var ia = _iffMesh.geometry.attributes.aIff; ia.needsUpdate = true;
-  _iffAimSync();
+  _tacMesh.count=out;
+  _tacMesh.instanceMatrix.needsUpdate=true;
+  _tacGeo.attributes.iUV.needsUpdate=true;
+  if(typeof _iffAimSync==='function')_iffAimSync();   // 瞄准描边随本开关驱动
 }
 /* 瞄准外轮廓(随 T 开关):不透明反面膨胀壳,只描剪影;hull 用静止装甲,不含履带变形件。 */
 var _iffAimD = new THREE.Vector3(), _iffAimMeshes = null, _iffAimMat = null, _iffAimGeo = {};
@@ -2260,7 +2718,7 @@ function _iffAimMatMake() {
   });
 }
 function _iffAimSync() {
-  if (!_iffOn) { _iffAimHide(); return; }
+  if (!_tacOn && !(typeof sqCmd !== 'undefined' && sqCmd.active)) { _iffAimHide(); return; }   // 门=战术标识显示门(_tacOn||指挥模式)
   var t = _iffAimPick();
   if (!t) { _iffAimHide(); return; }
   if (!_iffAimMat) { _iffAimMat = _iffAimMatMake(); _iffAimMeshes = []; }
@@ -2289,58 +2747,58 @@ function _iffAimSync() {
     m.position.z = (pk === 'gun' && t.gunMesh) ? t.gunMesh.position.z : 0;
   }
 }
-/* ===== A射B导 僚机标识:被借用友机头顶的五角星(与指挥模式接管组五角星同款) =====
-   · 贴图:一次烘焙白芯+粗墨描边五角星,绘制参数与 _sqbBakeAtlas 的 star() 完全一致
-     (中心 (C/2, C*0.52)、外径 C*0.30、内径 ×0.42、墨边 C*0.07),故视觉与小队标识的星格同源;
-     阵营色由实例材质 color 染(红方 ally=黄 #ffd21f / 蓝方=白 #ffffff)——黑描边乘色仍为黑,
-     染色只落在白芯上,与小队标识接管组星完全同款。
-   · 逐帧:关闭/玩家离开直升机=一次布尔早退(并跑一帧隐藏收尾);开启=≤4 次写位置+绕竖轴面向相机,
-     距离放大沿用小队标识同口径 scopeDistK,悬浮高度按直升机机体取 +5.5m(机体高≈4m)。 */
-var _abgStarTex=null,_abgStarGeo=null,_abgStarMeshes=[];
-function _abgStarTexture(){
-  if(_abgStarTex)return _abgStarTex;
+/* ===== 指挥星:被指挥/被借用载具头顶五角星 =====
+   星源=A射B导僚机(heliABG.wings,直升机座舱 Backspace)+地面指挥组员(sqCmd.group.members,地面 Backspace);
+   两源分属不同座舱,天然互斥。贴图一次烘焙白芯+粗墨描边星;阵营色由材质 color 染(ally 黄/余白)。
+   逐帧:双源皆无=一次布尔早退(并跑一帧隐藏收尾)。 */
+var _cmdStarTex=null,_cmdStarGeo=null,_cmdStarMeshes=[];
+function _cmdStarTexture(){
+  if(_cmdStarTex)return _cmdStarTex;
   var C=96,cv=document.createElement('canvas');
   cv.width=C;cv.height=C;
   var g=cv.getContext('2d');
-  var cx=C/2,cy=C*0.52,R=C*0.30,r2=R*0.42,i2,a,rr;      // 与 _sqbBakeAtlas star() 同参
+  var cx=C/2,cy=C*0.52,R=C*0.30,r2=R*0.42,i2,a,rr;
   g.beginPath();
   for(i2=0;i2<10;i2++){a=-Math.PI/2+i2*Math.PI/5;rr=(i2&1)===0?R:r2;
     if(i2===0)g.moveTo(cx+Math.cos(a)*rr,cy+Math.sin(a)*rr);else g.lineTo(cx+Math.cos(a)*rr,cy+Math.sin(a)*rr);}
   g.closePath();g.lineWidth=C*0.07;g.strokeStyle='#141414';g.stroke();
   g.fillStyle='#ffffff';g.fill();                          // 白芯:由实例 color 染阵营色
-  _abgStarTex=new THREE.CanvasTexture(cv);
-  _abgStarTex.minFilter=THREE.LinearFilter;_abgStarTex.magFilter=THREE.LinearFilter;
-  return _abgStarTex;
+  _cmdStarTex=new THREE.CanvasTexture(cv);
+  _cmdStarTex.minFilter=THREE.LinearFilter;_cmdStarTex.magFilter=THREE.LinearFilter;
+  return _cmdStarTex;
 }
-function _abgStarTick(){                                   // 每帧(_comicFxTick 登记)
-  var i,m,on=false;
-  if(typeof heliABG!=='undefined'&&heliABG.on&&typeof heliABGValidate==='function')on=heliABGValidate();
-  if(!on||typeof camera==='undefined'||!camera||typeof scene==='undefined'||!scene){
-    for(i=0;i<_abgStarMeshes.length;i++)_abgStarMeshes[i].visible=false;
+function _cmdStarTick(){                               // 每帧(_comicFxTick 登记)
+  var i,m,list=null;
+  if(typeof heliABG!=='undefined'&&heliABG.on&&typeof heliABGValidate==='function'&&heliABGValidate())list=heliABG.wings;
+  if(!list&&typeof sqCmd!=='undefined'&&sqCmd.active&&sqCmd.group)list=sqCmd.group.members;
+  if(!list||typeof camera==='undefined'||!camera||typeof scene==='undefined'||!scene){
+    for(i=0;i<_cmdStarMeshes.length;i++)_cmdStarMeshes[i].visible=false;
     return;
   }
-  if(!_abgStarGeo)_abgStarGeo=new THREE.PlaneGeometry(1,1);
-  var wings=heliABG.wings,n=wings.length;
-  var sn=typeof scoped!=='undefined'&&scoped;              // 炮镜=整屏原生尺寸(与小队标识同口径)
+  if(!_cmdStarGeo)_cmdStarGeo=new THREE.PlaneGeometry(1,1);
+  var sn=typeof scoped!=='undefined'&&scoped;
+  var n=list.length;
   for(i=0;i<n;i++){
-    var t=wings[i];
-    if(i>=_abgStarMeshes.length){
-      m=new THREE.Mesh(_abgStarGeo,new THREE.MeshBasicMaterial({
-        map:_abgStarTexture(),transparent:true,depthTest:false,depthWrite:false}));
+    var t=list[i];
+    if(!t||!t.alive||!t.group){if(_cmdStarMeshes[i])_cmdStarMeshes[i].visible=false;continue;}
+    if(i>=_cmdStarMeshes.length){
+      m=new THREE.Mesh(_cmdStarGeo,new THREE.MeshBasicMaterial({
+        map:_cmdStarTexture(),transparent:true,depthTest:false,depthWrite:false}));
       m.renderOrder=30;m.frustumCulled=false;
-      scene.add(m);_abgStarMeshes.push(m);
+      scene.add(m);_cmdStarMeshes.push(m);
     }
-    m=_abgStarMeshes[i];
+    m=_cmdStarMeshes[i];
     var q=t.group.position;
     var dx=camera.position.x-q.x,dz=camera.position.z-q.z;
     var sc=2.6*scopeDistK(sn,dx*dx+dz*dz,55,1,4.2);        // 通用口径:炮镜原生/第三人称温和距离放大
-    m.position.set(q.x,q.y+5.5,q.z);
-    m.rotation.set(0,Math.atan2(dx,dz),0);                 // 绕竖轴面向玩家(小队标识同款)
+    var heli=(t.kind==='ah64'||t.kind==='wz10');
+    m.position.set(q.x,q.y+(heli?5.5:4.6),q.z);            // 僚机 5.5(现行不动)/地面组员 4.6
+    m.rotation.set(0,Math.atan2(dx,dz),0);                 // 绕竖轴面向玩家
     m.scale.set(sc,sc,1);
     m.material.color.setHex(t.team==='ally'?0xffd21f:0xffffff);
     m.visible=true;
   }
-  for(;i<_abgStarMeshes.length;i++)_abgStarMeshes[i].visible=false;
+  for(;i<_cmdStarMeshes.length;i++)_cmdStarMeshes[i].visible=false;
 }
 
 /* 漫画渲染为唯一渲染模式:加载即初始化(失败时 comicRender 内部直渲兜底,不阻塞游戏) */
@@ -2400,6 +2858,7 @@ var _WAR_LS = 'prefWarGrade';
    必须显式清空,否则这些「幽灵特效」会原样带到下一局。
    ============================================================ */
 function comicBattleClear() {
+  _cbSat = false;                                            // ★任务27⑥:拆场复位饱和态(下场首卡不冤枉降级)
   /* 残骸长驻黑烟柱(注册表引用旧残骸对象,位置逐帧读 live —— 不清则永久冒烟) */
   try { if (typeof wreckSmokeClear === 'function') wreckSmokeClear(); } catch (e1) {}
   /* 燃烧车 + 燃尽尾烟(条目引用旧坦克,alive/fire 状态由拆场方置死兜底) */
@@ -2456,6 +2915,12 @@ function comicBattleClear() {
     if (typeof _cgdLive !== 'undefined') _cgdLive = 0;
     if (_cgdMesh) { _cgdMesh.count = 0; _cgdMesh.visible = false; }
   } catch (e6) {}
+  /* P3 履带刨土池 */
+  try {
+    if (typeof _ctdPool !== 'undefined' && _ctdPool) for (var td = 0; td < _ctdPool.length; td++) _ctdPool[td].on = false;
+    if (typeof _ctdLive !== 'undefined') _ctdLive = 0;
+    if (typeof _ctdMesh !== 'undefined' && _ctdMesh) { _ctdMesh.count = 0; _ctdMesh.visible = false; }
+  } catch (e6b) {}
   /* 炮口火光/炮口烟/甲板照明池 */
   try {
     if (typeof _cmzPool !== 'undefined' && _cmzPool) for (var m = 0; m < _cmzPool.length; m++) _cmzPool[m].on = false;
@@ -2475,5 +2940,42 @@ function comicBattleClear() {
     if (_chiMesh) { _chiMesh.count = 0; _chiMesh.visible = false; }
     if (_chsMesh) { _chsMesh.count = 0; _chsMesh.visible = false; }
   } catch (e8) {}
+  /* ★任务27⑧:爆点卡/殉爆卡/发射烟池拆场清零。三池平时按墙钟衰减(_comicFxTick 随 rAF 常跑),
+     但后台标签页 rAF 冻结/极低帧率/快速重开时,旧局未播完的爆炸卡会带进新局——新局第一帧
+     恢复推进=「开局凭空开出几朵爆炸」。拆场语义下无条件清零(卡为纯视觉,无 gameplay 引用)。 */
+  try {
+    if (_cbPool) for (var cb = 0; cb < CB_POOL; cb++) {
+      var ce = _cbPool[cb];
+      ce.on = false; ce.t = 0;
+      if (ce.group) ce.group.visible = false;
+    }
+    _cbLive = 0;
+    if (_vbPool) for (var vb = 0; vb < VB_POOL; vb++) {
+      var ve = _vbPool[vb];
+      ve.on = false; ve.t = 0;
+      if (ve.group) ve.group.visible = false;
+    }
+  } catch (e9) {}
+  try {
+    if (typeof _crlPool !== 'undefined' && _crlPool) for (var cl = 0; cl < _crlPool.length; cl++) _crlPool[cl].on = false;
+    if (typeof _crlLive !== 'undefined') _crlLive = 0;
+    if (typeof _crlRing !== 'undefined') _crlRing = 0;
+    if (typeof _crlSmokeMesh !== 'undefined' && _crlSmokeMesh) { _crlSmokeMesh.count = 0; _crlSmokeMesh.visible = false; }
+  } catch (e10) {}
 }
+/* ===== ★任务27③:启动期预热(main.js 加载阶段调用一次)=====
+   全部漫画特效池旧行为=「首次事件才惰性构建」:第一次爆炸建蘑菇云池(8 槽×6 材质+多张程序贴图)、
+   第一次炮击爆点建 28 槽火球池(+5 张 512² 贴图)、枪口焰/扬尘/命中火花/硝烟/弹道线各自同理——
+   构建=canvas 贴图绘制+几何+材质创建,且其着色器要到构建后首个渲染帧才同步编译(program link
+   每个数十 ms),表现为「一播放爆炸特效就卡一下,单次爆炸也卡」。预热把全部构建搬进加载期
+   (幂等:各 ensure 自带已建短路),着色器预编译由 main.js 的 renderer.compile 统一完成。 */
+function comicPrewarm() {
+  var fns = [_cmzEnsure, _chiEnsure, _chsEnsure, _csmEnsure, _hzEnsure, _crtEnsure, _cgdEnsure,
+             _ctdEnsure, _crlEnsure, _rklEnsure, _comicBurnSmokeEnsure, _comicBurnEnsure,
+             _cbEnsurePool, _vbEnsurePool];
+  for (var i = 0; i < fns.length; i++) {
+    try { if (typeof fns[i] === 'function') fns[i](); } catch (e) { /* 单项失败跳过(如无头环境无 canvas),不阻断启动 */ }
+  }
+}
+window.comicPrewarm = comicPrewarm;
 window.comicBattleClear = comicBattleClear;

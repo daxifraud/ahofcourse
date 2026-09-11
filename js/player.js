@@ -7,9 +7,9 @@
 /* ============================================================
    玩家操控
    ============================================================ */
-/* 玩家瞄准俯仰边界:火箭炮第三人称必须开放完整发射架仰角;炮镜使用独立 artyPitch 通道,
-   camAimP 仍只保留低俯角视场。此前通用 0.05rad 上限误套第三人称,炮架最多只能抬约 2.9°。 */
-function playerAimPitchClamp(t, pitch, scopeActive) {
+/* 玩家瞄准俯仰边界:火箭炮第三人称开放完整发射架仰角(1.05rad);
+   火箭炮炮镜为俯视火控视野,不再使用视角俯仰通道。 */
+function playerAimPitchClamp(t, pitch) {
   if (isHeliVehicle(t)) {
     var wp = t._heliWeapon || 3;
     if (wp === 3) {
@@ -23,7 +23,12 @@ function playerAimPitchClamp(t, pitch, scopeActive) {
       return clamp(pitch, -80 * Math.PI / 180, 0.0);
     }
   }
-  var hi = t && t.kind === 'arty' ? (scopeActive ? 0.05 : 1.05) : 0.3;
+  if (isAAVehicle(t)) {
+    // 防空载具射界(任务25 用户设定):PGZ-95 机炮 -5°~+90°(可对天顶射击);复仇者保持 -10°~+70°
+    if (t.team === 'ally') return clamp(pitch, -5 * Math.PI / 180, 90 * Math.PI / 180);
+    return clamp(pitch, -0.1745, 1.2217);
+  }
+  var hi = t && t.kind === 'arty' ? 1.05 : 0.3;
   return clamp(pitch, -0.14, hi);
 }
 /* 将逻辑炮架角写入 Three 层级。火箭炮炮镜的 yaw 由 playerUpdate 世界反馈伺服直接积分,
@@ -43,7 +48,7 @@ function playerArtyApplySalvoLock(t, syncWorld) {
   if (!t || t.kind !== 'arty' || t.salvoLeft <= 0) return false;
   if (t._salvoLockYaw == null) t._salvoLockYaw = t.turretYaw || 0;
   if (t._salvoLockPitch == null) t._salvoLockPitch = t.gunPitch || 0;
-  if (t._salvoLockV == null) t._salvoLockV = t.rocketV || CONF.arty.rocketSpeed;
+  if (t._salvoLockV == null) t._salvoLockV = t.rocketV || artyConfOf(t).rocketSpeed;
   t.turretYaw = t._salvoLockYaw;
   t.gunPitch = t._salvoLockPitch;
   t.rocketV = t._salvoLockV;
@@ -55,7 +60,7 @@ function playerArtyStartSalvo(t) {
   if (!t || t.kind !== 'arty' || t.salvoLeft > 0) return false;
   t._salvoLockYaw = t.turretYaw || 0;
   t._salvoLockPitch = t.gunPitch || 0;
-  t._salvoLockV = t.rocketV || CONF.arty.rocketSpeed;
+  t._salvoLockV = t.rocketV || artyConfOf(t).rocketSpeed;
   if (t._artyAim && isFinite(t._artyAim.x)) {
     t._salvoAimX = t._artyAim.x;
     t._salvoAimZ = t._artyAim.z;
@@ -66,9 +71,10 @@ function playerArtyStartSalvo(t) {
     t._salvoAimX = ppA.x + Math.sin(bAz) * dR;
     t._salvoAimZ = ppA.z + Math.cos(bAz) * dR;
   }
-  t.salvoLeft = CONF.arty.salvo;
+  t.salvoLeft = artyConfOf(t).salvo;   // 红 PHL-11=40 发 / 蓝 M142=6 发
   t.salvoT = 0.05;
   t._servoHoldT = 0;
+  t._topFireWish = false; t._artyCreepFwd = 0;   // 射击任务已发起:解除点选与蠕行(覆盖环随齐射装定点)
   playerArtyApplySalvoLock(t, true);
   sfxFire(0.45, 0, true);
   return true;
@@ -128,7 +134,9 @@ var _agCounts = [];                // 复用对象池 {track,count,same}(按 _ag
 
 /* 检测直升机火控雷达是否通电完成就绪 (发动机工作后通电15秒) */
 function isHeliRadarReady(t) {
-  if (!t || !t.alive || !isHeliVehicle(t)) return false;
+  if (!t || !t.alive) return false;
+  if (isAAVehicle(t)) return t.team === 'ally' && (t._heliRadarWarmup != null && t._heliRadarWarmup >= HELI_RADAR_WARMUP_TIME);   // 任务23:PGZ-95 雷达需启动(部署后通电预热 15s,时长=直升机雷达);复仇者无车载雷达(搜索=导弹导引头自理)
+  if (!isHeliVehicle(t)) return false;
   return t._heliEngineState === 'running' && (t._heliRadarWarmup != null && t._heliRadarWarmup >= HELI_RADAR_WARMUP_TIME);
 }
 
@@ -293,7 +301,7 @@ function heliRadarRightClickDesignate(p) {
 }
 
 function startHeliRadarScan(p) {
-  if (!p || !p.alive || !isHeliVehicle(p)) return;
+  if (!p || !p.alive || !(isHeliVehicle(p) || (typeof isAAVehicle === 'function' && isAAVehicle(p) && p.team === 'ally'))) return;   // 任务23:PGZ-95 车载雷达与直升机同套扫描状态机
   if (!isHeliRadarReady(p)) return;
   p._heliRadarActive = true;
   if (!p._heliRadarTracks) p._heliRadarTracks = [];
@@ -318,8 +326,28 @@ function stopHeliRadarScan(p) {
 }
 
 /* 直升机雷达更新循环 (每架直升机独立维护其私有雷达状态) */
+/* ===== 雷达视线遮挡测量——单一真源 (穿地形根治, 2026-09-11) =====
+   历史根因: _occ 结论只存在于航迹对象的缓存字段上, 且刷新被五重门串联节流
+   (mslAny 弹药态 → 0.066s 节流 → 8m 位移门 → 玩家/AI 授权 → 全局预算);
+   新建航迹又恒以 _occ:false 起步(fail-open), 被遮蔽航迹每 1.5s 删除→重建一次,
+   每个重建窗口都是"无遮挡"默认值 → 任何一环改名/换语义(如多联装重构把弹药计数
+   从 _heliMissileLeft 挪走)或 AI 时间片没排到, 地形穿透就复发。
+   修复: ①创建航迹前先实测 LOS, 被遮蔽目标根本不建航迹(消灭 fail-open 窗口);
+        ②维护期测量与弹药态解耦(MFD 显示/锁定晋升/数据链都消费 _occ, 正确性优先);
+        ③测量原点=雷达天线位置(_radarEyeH: 直升机 1.2m / PGZ-95 桅顶 4.12m);
+        ④同文件函数直连调用, 不再 typeof 静默降级。 ===== */
+function radarOccMeasure(p, cand, tPos2) {
+  var pPos = p.group.position;
+  var eyeH = (p._radarEyeH != null) ? p._radarEyeH : 1.2;
+  var occ = false;
+  var hits = worldRaycast(pPos.x, pPos.y + eyeH, pPos.z, tPos2.x, tPos2.y + 1.2, tPos2.z, true);
+  if (hits && hits.length > 0 && pPos.distanceTo(hits[0].point) < cand.dist - 2.0) occ = true;
+  if (!occ) occ = isRadarLineOccludedByTerrain(pPos.x, pPos.y + eyeH, pPos.z, tPos2.x, tPos2.y + 1.2, tPos2.z, cand.dist);
+  return occ;
+}
+
 function updateHeliRadar(p, dt) {
-  if (!p || !p.alive || !isHeliVehicle(p) || !p._heliRadarActive || !isHeliRadarReady(p) || typeof camera === 'undefined' || !camera) {
+  if (!p || !p.alive || (!isHeliVehicle(p) && !isAAVehicle(p)) || !p._heliRadarActive || !isHeliRadarReady(p) || typeof camera === 'undefined' || !camera) {
     if (p && p.isPlayer && typeof sfxRadarScanStop === 'function') sfxRadarScanStop();
     if (p && p._heliRadarTracks && p._heliRadarTracks.length) p._heliRadarTracks.length = 0;
     if (p) {
@@ -337,12 +365,21 @@ function updateHeliRadar(p, dt) {
   var roster = aiTeamRoster[enemyTeam] || [];
 
   // 1. 机身正前方固定圆锥视场 (严密固联机身坐标系,不随相机与准星移动变形)
-  _vRadarNoseDir.set(0, 0, 1).applyQuaternion(p.group.quaternion).normalize();
+  //    PGZ-95:锥轴=炮塔朝向(玩家用光标瞄准控制搜索方向,无需转车体);复仇者无雷达不进本函数
+  if (isAAVehicle(p)) {
+    _vRadarNoseDir.set(0, 0, 1);
+    if (p.turret) _vRadarNoseDir.applyQuaternion(p.turret.getWorldQuaternion(new THREE.Quaternion()));
+    else _vRadarNoseDir.applyQuaternion(p.group.quaternion);
+    _vRadarNoseDir.normalize();
+  } else {
+    _vRadarNoseDir.set(0, 0, 1).applyQuaternion(p.group.quaternion).normalize();
+  }
 
   var newlyLocked = false;
   var curAimDir = _vRadarAim;
   if (p.isPlayer) {
     camera.getWorldDirection(curAimDir);
+    if (isAAVehicle(p)) _vRadarNoseDir.copy(curAimDir);   // 玩家防空:搜索锥轴=光标瞄准方向(用户设定:移动光标而非车体)
   } else {
     curAimDir.copy(_vRadarNoseDir);
   }
@@ -398,8 +435,8 @@ function updateHeliRadar(p, dt) {
       trk.dotWithCone = cand.dotNose;
       trk.dotWithCursor = cand.dotCursor;
 
-      // 视线遮挡检测 (无导弹时跳过——纯跟踪态不需要锁定质量)
-      if (mslAny) {
+      // 视线遮挡检测 (与弹药态解耦: _occ 同时是 MFD 显示/锁定晋升/数据链的正确性依据)
+      {
         var tPos2 = trk.tank.group.position;
         var throttleOK = gameT - (trk._occT || -99) > 0.066;
         // 方案1 位移门控:相对上次实测 LOS,自机与目标两端位移都 < 8m(HELI_LOS_DISP2=64)则几何等价 → 复用缓存
@@ -425,14 +462,8 @@ function updateHeliRadar(p, dt) {
             trk._losTX = tPos2.x; trk._losTY = tPos2.y; trk._losTZ = tPos2.z;
             _heliLosBudget--;                                                 // 计入全局预算(玩家亦计,自然让出余量给 AI)
             if (!p.isPlayer) { _aiGranted++; _aiLastG = ti; }
-            var occ = false;
-            var hits = worldRaycast(pPos.x, pPos.y + 1.2, pPos.z, tPos2.x, tPos2.y + 1.2, tPos2.z, true);
-            if (hits && hits.length > 0 && pPos.distanceTo(hits[0].point) < cand.dist - 2.0) occ = true;
-            if (!occ && typeof isRadarLineOccludedByTerrain === 'function') {
-              occ = isRadarLineOccludedByTerrain(pPos.x, pPos.y + 1.2, pPos.z, tPos2.x, tPos2.y + 1.2, tPos2.z, cand.dist);
-            }
-            trk._occ = occ;
-            if (!occ) {
+            trk._occ = radarOccMeasure(p, cand, tPos2);   // 单一真源(创建/维护同一实现)
+            if (!trk._occ) {
               var dTerr = calcTerrain3DProximity(tPos2.x, tPos2.y, tPos2.z);
               trk.tLockRequired = calcRadarLockTime(cand.dist, dTerr);
             }
@@ -493,6 +524,9 @@ function updateHeliRadar(p, dt) {
       var toAdd = Math.min(slotsFree, _radarUntracked.length);
       for (var ai = 0; ai < toAdd; ai++) {
         var addCand = _radarUntracked[ai];
+        /* ★创建前实测 LOS: 被地形/静态物遮蔽的目标不建航迹——消灭"删除→重建 fail-open"循环
+           (穿地形复发的直接出口; 旧版新航迹恒 _occ:false 且要等下一拍节流/授权才补测) */
+        if (radarOccMeasure(p, addCand, addCand.tgt.group.position)) continue;
         var dTerr2 = calcTerrain3DProximity(addCand.tgt.group.position.x, addCand.tgt.group.position.y, addCand.tgt.group.position.z);
         tracks.push({
           tank: addCand.tgt,
@@ -617,7 +651,7 @@ function renderHeliRadarMFD(p) {
   var mfdEl = document.getElementById('heliradarmfd');
   if (!mfdCvs || !mfdEl) return;
 
-  var isHeli = p && p.alive && isHeliVehicle(p) && gameState === 'playing';
+  var isHeli = p && p.alive && (isHeliVehicle(p) || (isAAVehicle(p) && p.team === 'ally')) && gameState === 'playing';   // PGZ-95 车载搜索雷达 MFD 与直升机火控雷达同套呈现(复仇者无雷达)
   if (!isHeli) {
     if (mfdEl._on !== false) { mfdEl._on = false; mfdEl.classList.add('hidden'); }
     return;
@@ -635,7 +669,7 @@ function renderHeliRadarMFD(p) {
 
   var isCutoff = p._heliEngineState === 'cutoff';
   var isStarting = p._heliEngineState === 'starting';
-  var isWarming = p._heliEngineState === 'running' && ((p._heliRadarWarmup || 0) < HELI_RADAR_WARMUP_TIME);
+  var isWarming = (p._heliEngineState === 'running' || (typeof isAAVehicle === 'function' && isAAVehicle(p) && p.team === 'ally' && !p._heliRadarActive)) && ((p._heliRadarWarmup || 0) < HELI_RADAR_WARMUP_TIME);   // 任务23:PGZ 雷达启动期同显预热倒计时
 
   var cx = w * 0.5;
   var cy = h - 20;
@@ -1065,6 +1099,14 @@ function updateHeliWeapons(p, dt) {
   // 维护剩余可用导弹数量(两侧在筒之和)
   p._heliMissileLeft = (p._heliMslRounds[0] || 0) + (p._heliMslRounds[1] || 0);
 
+  // 任务23:PGZ-95 车载雷达启动序列——每次部署需启动一次,时长=直升机雷达预热(HELI_RADAR_WARMUP_TIME 15s);
+  // 就绪即开(startHeliRadarScan),开机后无关断路径(地面载具无发动机熄火态);击毁/重新部署由 createTank 重新冷启动。
+  if (typeof isAAVehicle === 'function' && isAAVehicle(p) && p.team === 'ally' && p.alive && !p._heliRadarActive) {
+    if (p._heliRadarWarmup == null) p._heliRadarWarmup = 0;
+    if (p._heliRadarWarmup < HELI_RADAR_WARMUP_TIME) p._heliRadarWarmup = Math.min(HELI_RADAR_WARMUP_TIME, p._heliRadarWarmup + dt);
+    if (p._heliRadarWarmup >= HELI_RADAR_WARMUP_TIME) startHeliRadarScan(p);
+  }
+
   // 雷达锁定循环:AI 直升机雷达常亮——航迹表持续维护,供数据链共享/制导火力分配消费;
   // 仅在雷达开启态运行,发动机熄火关雷达后自然停跑。
   // ★AI 降频:玩家逐帧跑(锁定/瞄准手感零延迟);AI 用 per-heli 累加器降到 ~0.15s 一拍,
@@ -1281,6 +1323,65 @@ function triggerHeliFire(p) {
   }
 }
 
+/* 防空载具触发消费(与直升机 triggerHeliFire 同款多武器分支,显示/选择方式参考直升机代码):
+   wp3=防空导弹(左右发射架交替,多联装独立 40s 装填);wp1=双联机炮(仅 PGZ-95,走标准 tryFire 装填管线)。 */
+function triggerAAFire(p) {
+  var wp = p._heliWeapon || 3;
+  if (wp === 1) {
+    if (p.team !== 'ally') return;   // 复仇者无机炮
+    if (!p.alive || p.reload > 0 || gameState !== 'playing') return;
+    if (p.mods.gun.hp <= 0) { if (typeof aimHint === 'function') aimHint('不可发射'); return; }
+    fireAAGun(p);                    // 双联齐射(±1.02 耳轴各1发),每把性能=直升机机炮;装填 0.125s/次(任务25 射速×2;fireAAGun 内置)
+    return;
+  }
+  if (wp === 3) {
+    if (p.mods.ammo && p.mods.ammo.hp <= 0) {
+      if (p.isPlayer && typeof aimHint === 'function') aimHint('导弹发射架受损，无法发射');
+      return;
+    }
+    // 就绪=该侧不在装填且在筒弹药>0(与直升机多联装同款:单发消耗,打空才开该侧 40s 装填)
+    if (p._heliMslRounds == null) { var _mx = heliMslTubesOf(p); p._heliMslRounds = [_mx, _mx]; p._heliMslTube = [0, 0]; }
+    var leftReady = (p._heliMissileReloadTL == null || p._heliMissileReloadTL <= 0) && p._heliMslRounds[0] > 0;
+    var rightReady = (p._heliMissileReloadTR == null || p._heliMissileReloadTR <= 0) && p._heliMslRounds[1] > 0;
+    if (!leftReady && !rightReady) {
+      var rlT = p._heliMissileReloadTL || 0, rrT = p._heliMissileReloadTR || 0;
+      var defRTime = heliMslReloadTimeOf(p);
+      var minT = Math.min(rlT > 0 ? rlT : defRTime, rrT > 0 ? rrT : defRTime);
+      if (p.isPlayer && typeof aimHint === 'function') aimHint('导弹装填中 (' + minT.toFixed(1) + 's)');
+      return;
+    }
+    /* 任务24: AI 齐射纪律——每车在飞导弹上限(防 3 秒打光全弹的实体风暴);玩家不受限 */
+    if (!p.isPlayer) {
+      var _aaInFlight = 0;
+      for (var _fi = 0; _fi < airborneMissiles.length; _fi++) if (airborneMissiles[_fi].owner === p) _aaInFlight++;
+      if (_aaInFlight >= AA_AI_MSL_INFLIGHT) return;
+    }
+    if (!p._heliMissileCooldown || p._heliMissileCooldown <= 0) {
+      p._heliMissileCooldown = p.isPlayer ? 0.20 : AA_AI_MSL_INTERVAL;   // 玩家=0.2s 防抖(手感不变);AI=齐射纪律间隔
+      var fireSide = 0;
+      if (leftReady && rightReady) {
+        fireSide = (p._heliMissileNextSide != null) ? p._heliMissileNextSide : 0;
+        p._heliMissileNextSide = 1 - fireSide;
+      } else if (leftReady) { fireSide = 0; p._heliMissileNextSide = 1; }
+      else { fireSide = 1; p._heliMissileNextSide = 0; }
+      // 火控:PGZ-95 吃雷达锁定航迹(火力分配与直升机同源);复仇者无雷达 → target=null,导引头离架自搜索
+      var mSpec = HELI_MSL_SPEC[heliMslTypeOf(p)];
+      var target = null;
+      if (p.team === 'ally' && typeof allocateGuidedFireTarget === 'function') target = allocateGuidedFireTarget(p, mSpec);
+      fireAAMissile(p, fireSide, target);
+      var tubeFired = p._heliMslTube[fireSide] | 0;
+      p._heliMslTube[fireSide] = tubeFired + 1;
+      p._heliMslRounds[fireSide] = Math.max(0, p._heliMslRounds[fireSide] - 1);
+      if (p._heliMslRounds[fireSide] <= 0) {
+        var rTime = heliMslReloadTimeOf(p);
+        if (fireSide === 0) p._heliMissileReloadTL = rTime; else p._heliMissileReloadTR = rTime;
+        if (p.isPlayer && typeof aimHint === 'function') aimHint((fireSide === 0 ? '左' : '右') + '发射架打空，开始装填 (' + rTime.toFixed(0) + 's)');
+      }
+      p._heliMissileLeft = p._heliMslRounds[0] + p._heliMslRounds[1];
+    }
+  }
+}
+
 /* 玩家载具不可移动态(触发器消费:摇杆按下/WASD 按下沿查一次,非逐帧):
    发动机毁=停机 / 油箱毁=断油 / 双履带断=瘫痪 */
 function playerImmobile() {
@@ -1341,8 +1442,33 @@ function playerUpdate(dt) {
     fwdIn = touchJoyY > 0 ? touchJoyY : touchJoyY * 0.6;
     turnIn = -touchJoyX;
   }
+  /* 火箭炮俯视火控视野:WSAD/摇杆 = 平移镜头,不再驾驶载具(车辆原地驻定=发射平台)——
+     平移速度 ∝ 相机高度(RTS 同手感),偏移钳在战场边界;镜头中心=车体+偏移(cameraUpdate 取用)。
+     屏幕方位:上=北(−Z)、右=东(+X),故 W→−Z、D→+X;摇杆推上=北、推右=东。 */
+  if (player.kind === 'arty' && scopeT > 0.5) {
+    var panX = touchJoyOn ? touchJoyX : ((keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0));
+    var panZ = touchJoyOn ? -touchJoyY : ((keys.KeyS ? 1 : 0) - (keys.KeyW ? 1 : 0));
+    var panL = Math.sqrt(panX * panX + panZ * panZ);
+    if (panL > 1) { panX /= panL; panZ /= panL; }   // 斜向不加速
+    var panRate = Math.min(artyTopCamHeight() * 1.10, 760);   // 平移速度∝高度(用户设定×2:0.55→1.10),封顶 760m/s(2000m 高空防一瞬扫过全图)
+    /* 偏移只做防数值跑飞的宽钳(±2×bounds);真正生效的边界=cameraUpdate 对镜头中心的逐轴钳制——
+       旧版把偏移钳在 ±bounds(=半图宽),车不在图心时远侧永远平移不到(「平移 3km 卡死」根因)。 */
+    var offLim = CONF.bounds * 2;
+    player._topCamX = clamp((player._topCamX || 0) + panX * panRate * dt, -offLim, offLim);
+    player._topCamZ = clamp((player._topCamZ || 0) + panZ * panRate * dt, -offLim, offLim);
+    fwdIn = 0; turnIn = 0;                          // 俯视视野:移动键不驾驶载具
+  }
+  /* 火箭炮俯视火控蠕行:点选装定后,若预测首发弹着偏离装定点,以低速(≤2.5m/s)接管油门微调车位——
+     与驾驶完全同一条「输入→油门→加减速→applyMotion」物理链路(坡度/附着/碰撞全真实),零坐标改写;
+     玩家触碰任一镜头平移键 = 蠕行立即让位;齐射中 salvoLock 已切断油门。 */
+  if (player.kind === 'arty' && player._artyCreepFwd && !keys.KeyW && !keys.KeyS && !keys.KeyA && !keys.KeyD && !touchJoyOn) {
+    fwdIn = clamp(player._artyCreepFwd, -1, 1);
+  }
 
-  var sm = speedMult(player), tm = turnMult(player);
+  // 防空载具:多武器计时与雷达锁定循环(与直升机 updateHeliWeapons 同套;PGZ-95 雷达常亮,复仇者雷达空转不扫描)
+  if (isAAVehicle(player)) updateHeliWeapons(player, dt);
+
+  var sm = speedMult(player), tm = turnMult(player) * slopeTurnMul(player);
   // 火箭炮齐射中车辆锁死(与 AI 同规则:射击时不能移动)
   var salvoLock = player.kind === 'arty' && player.salvoLeft > 0;
   if (salvoLock) { fwdIn = 0; turnIn = 0; }
@@ -1350,35 +1476,36 @@ function playerUpdate(dt) {
   // 加/减速 ∝ 发动机效率(旧 Math.max(sm,0.35) 地板="打不坏的动力",违真实);
   // decel 留 30% 机械刹车地板:发动机/油箱全毁当帧若 decel=0,载具将带余速匀速滑行永不停车(applyMotion 无摩擦项)
   var eEffP = engineEff(player);
-  player.speed = approachSpeed(player.speed, target, salvoLock ? 0 : player.accel0 * eEffP, player.decel0 * Math.max(eEffP, 0.3), dt);
+  player._throttle = salvoLock ? 0 : fwdIn;
+  player._throttleLock = salvoLock ? 1 : 0;
+  if (typeof SIM_K === 'undefined' || SIM_K <= 0) player.speed = approachSpeed(player.speed, target, salvoLock ? 0 : player.accel0 * eEffP, player.decel0 * Math.max(eEffP, 0.3), dt);
   /* 车体瞄准(炮塔损毁,旗标由 combat.js 触发器置位——损毁事件/接管瞬间,此处零状态检测):
      鼠标左右(camAimY 世界方位)驱动车体伺服,车头目标=瞄准方位−固定炮塔偏角(炮管指向鼠标;
      与 ai.js 炮塔卡死车体瞄准同机理同钳制 turn0×turnMult×dt);A/D 键输入优先(倒车调头不被抢)。 */
   if (player._hullAim && !turnIn && !salvoLock) {
     var hDiff = normAng(camAimY - (player.turretYaw || 0) - player.yaw);
-    player.yaw += clamp(hDiff, -player.turn0 * tm * dt, player.turn0 * tm * dt);
-  } else player.yaw += turnIn * player.turn0 * tm * dt;
+    var _hyD = clamp(hDiff, -player.turn0 * tm * dt, player.turn0 * tm * dt);
+    player.yaw += _hyD;
+    player._turnCmd = dt > 0 ? _hyD / dt : 0;   // 履带指令带速:横向指令(车体瞄准伺服帧)
+  } else { player.yaw += turnIn * player.turn0 * tm * dt; player._turnCmd = turnIn * player.turn0 * tm; }   // 履带指令带速:横向指令
 
   // 89式本版已进入常规旋塔伺服;驾驶转向只改车体,炮塔由瞄准循环独立360°跟随。
   applyMotion(player, dt);
 
   if (mouseDown && player.isPlayer) {
     if (player.kind === 'arty') {
-      // 火箭炮:停稳 + 装填完毕 + 发射架伺服到位 → 手动发起 16 发齐射(随后 16s 长装填,齐射中锁死移动)
-      if (player.reload <= 0 && player.salvoLeft <= 0 && player.mods.gun.hp > 0 && Math.abs(player.speed) < 0.8) {
-        // 开镜时沿用 AI 的门控纪律:俯仰/方位没伺服到位不放行(否则前几发会远远偏离指示点);
-        // 扳机挂起 0.7s:到位瞬间自动齐射,手感不迟滞。
-        var settledP = scopeT > 0.5 ? !!(player._artyAim && (player._artyAim.settled || player._artyAim.loose)) : true;   // 放宽放行阈值
-        if (settledP) {
+      /* 火箭炮第三人称:停稳 + 装填完毕 → 按住即齐射(齐射中锁死移动);
+         俯视火控视野的开火由「点选闩锁 + 挂起窗」在下文 scope 块接管,此处不走按住开火。 */
+      if (scopeT <= 0.5) {
+        if (player.reload <= 0 && player.salvoLeft <= 0 && player.mods.gun.hp > 0 && Math.abs(player.speed) < 0.8) {
           playerArtyStartSalvo(player);
-        } else {
-          // 边沿装定——按住期间不每帧重置,让挂起计时走完(0.7s 宽限+0.8s 强制);null/0/过期才重装
-          if (player._servoHoldT == null || player._servoHoldT === 0 || player._servoHoldT <= -0.8) player._servoHoldT = 0.7;
+        } else if (player.mods.gun.hp <= 0) {
+          if (typeof aimHint === 'function') aimHint('不可发射');   // 定向管损毁:光标上方红字(事件触发)
         }
-      } else if (player.mods.gun.hp <= 0) {
-        if (typeof aimHint === 'function') aimHint('不可发射');   // 定向管损毁:光标上方红字(事件触发)
+        /* 移动中点火静默不响应(齐射须停稳;击杀播报仅载具死亡行,不设文字提示) */
       }
-      /* 移动中点火静默不响应(齐射须停稳;击杀播报仅载具死亡行,不设文字提示) */
+    } else if (isAAVehicle(player)) {
+      triggerAAFire(player);   // 防空多武器:1=导弹(多联装交替/独立装填) 2=双联机炮(仅PGZ-95)
     } else {
       tryFire(player);
     }
@@ -1391,74 +1518,96 @@ function playerUpdate(dt) {
       playerArtyApplySalvoLock(player, false);
       player._servoHoldT = 0;
     } else if (scopeT > 0.5) {
-      // —— 开镜:准星即落点。闭环瞄准:
-      //   用户操作的是"世界方位 artyAz + 装定距离 artyRange";
-      //   俯仰由弹道解给出 θT,方位/俯仰都按实测炮管世界方向做反馈伺服——
-      //   坡地车身纵倾/横滚、齐射后坐滚退全部被自动吸收,弹道说的就是炮管正在指的。
-      if (player._artyAz == null) player._artyAz = player.yaw + player.turretYaw;
+      // —— 俯视火控视野(Shift 开镜):俯瞰战场,自由光标装定地面点,点哪打哪 ——
+      //   发射架伺服:目标方位/仰角(rocketSolve 弹道解)按 1.0/0.9 rad/s 限速实时追踪;
+      //   点击闩锁射击任务 → 蠕行微调(真实油门物理)把预测首发弹着压到装定点 → 到位自动齐射。
       var ppA = player.group.position;
-      // 装定距离=视线∩目标/地形反解(纵向视角直驱,不再由鼠标直接改距离)——
-      //   laserRange=目标网格 raycast+地形步进(≤10km, 已按地形命中截断走廊);斜距×cos俯角=水平装定距离;无交(指天/超界)保持旧值
-      var cpS = Math.cos(artyPitch), spS = Math.sin(artyPitch);
-      _gaDir.set(Math.sin(player._artyAz) * cpS, spS, Math.cos(player._artyAz) * cpS);
-      if (gameT - (player._artyLT || -9) > 0.033) { player._artyLT = gameT; player._artyLd = laserRange(camera.position, _gaDir); }   // ★审查B2: 30Hz 采样(与坦克炮闩分支同口径; 原版 50Hz 全速; 下游 τ=0.05s 低通对 33ms 采样零感知)
-      var dHitS = player._artyLd;
-      if (isFinite(dHitS)) {
-        var newR = clamp(dHitS * cpS, 30, CONF.arty.maxRange);
-        // 装定距离轻低通(τ=0.05s)——纵向颤抖根治第二环:压制「装定→相机高度→视线→装定」
-        //   反馈环在移动中的追赶瞬态与残余量化噪声(量化主因已由 laserRange 0.75m 细化治掉);
-        //   >400m 大跳变(重生/接管/猛抬视角)直通不滤,保住响应性
-        var curR = player.artyRange;
-        if (curR == null || Math.abs(newR - curR) > 400) player.artyRange = newR;
-        else player.artyRange = curR + (newR - curR) * (1 - Math.exp(-dt / 0.05));
+      // 点击=炮击那里:按下沿闩锁光标地面点(桌面左键与触屏 #tfire 同走 mouseDown)
+      if (mouseDown && !player._topFireWish) {
+        if (player.salvoLeft > 0) {
+          /* 齐射进行中不接新任务(防误排队) */
+        } else if (player.mods.gun.hp <= 0) {
+          if (typeof aimHint === 'function') aimHint('不可发射');   // 定向管损毁
+        } else if (player._topHover && isFinite(player._topHover.x)) {
+          var dxH = player._topHover.x - ppA.x, dzH = player._topHover.z - ppA.z;
+          if (dxH * dxH + dzH * dzH < 35 * 35) {
+            if (typeof aimHint === 'function') aimHint('装定点过近,最小射程 35 米');   // 防误点自车贴脸齐射
+          } else {
+          player._topTgt = { x: player._topHover.x, y: player._topHover.y, z: player._topHover.z };
+          player._topFireWish = true;
+          player._topCreepDist = 0;
+          // 边沿装定——闩锁时装一次挂起计时,按住期间不每帧重置(0.7s 宽限 + 0.8s 强制,原纪律不变)
+          if (player._servoHoldT == null || player._servoHoldT === 0 || player._servoHoldT <= -0.8) player._servoHoldT = 0.7;
+          if (player.reload > 0) { if (typeof aimHint === 'function') aimHint('装填中,已标定射击点'); }
+          }
+        }
       }
-      var dR = clamp(player.artyRange || 300, 30, CONF.arty.maxRange);
-      var lx = ppA.x + Math.sin(player._artyAz) * dR;
-      var lz = ppA.z + Math.cos(player._artyAz) * dR;
-      var ly = terrainH(lx, lz);
-      var solP = rocketSolve(dR, (ppA.y + 2.4) - ly);              // 带高差的精确变速解(与 AI 同一函数)
-      // 初速闭环校准(openingTick 的弹道仿真用实测落点微调):吸收炮口前伸/姿态残差
-      var aKey = Math.round(dR / 6) * 2048 + (Math.round(player._artyAz * 18) & 1023);
-      if (player._artyKey !== aKey) { player._artyKey = aKey; player._artyKv = 1; }
-      player._artySol = solP;
-      player.rocketV = clamp(solP.v * (player._artyKv || 1), 34, solP.vmax);
-      // 世界反馈伺服(开镜瞄具转速 1.0 rad/s,不受发射架机械转速限制)
-      player.gunPivot.getWorldDirection(_gaDir);
-      var bAz = Math.atan2(_gaDir.x, _gaDir.z);
-      var bEl = Math.asin(clamp(_gaDir.y, -1, 1));
-      var azErr = normAng(player._artyAz - bAz);
-      var elErr = solP.theta - bEl;
-      player.turretYaw += clamp(azErr, -1.0 * dt, 1.0 * dt);
-      player.gunPitch = clamp(player.gunPitch + clamp(elErr, -0.9 * dt, 0.9 * dt), -0.1, 1.05);
-      playerArtySyncMount(player, true);                    // 同帧写实体+世界矩阵,炮镜横向输入立即驱动真实发射架
-      player._artyAim = { x: lx, y: ly, z: lz, d: dR,
-        tof: 2 * player.rocketV * Math.sin(solP.theta) / CONF.gravity,
-        thetaT: solP.theta, reach: solP.reach,
-        settled: Math.abs(azErr) < 0.02 && Math.abs(elErr) < 0.03 && Math.abs(player.turretYawDelta || 0) < 0.02,
-        loose: Math.abs(azErr) < 0.06 && Math.abs(elErr) < 0.08 };   // 放行用宽阈(红点/提示仍用 settled)
+      var tgtT = (player._topFireWish && player._topTgt) ? player._topTgt : player._topHover;
+      player._artyCreepFwd = 0;                       // 每帧归零:仅蠕行条件成立才写(防残余油门)
+      if (tgtT && isFinite(tgtT.x)) {
+        var dxT = tgtT.x - ppA.x, dzT = tgtT.z - ppA.z;
+        var dR = Math.sqrt(dxT * dxT + dzT * dzT);
+        var ly = terrainH(tgtT.x, tgtT.z);
+        var solP = rocketSolve(dR, (ppA.y + 2.4) - ly);   // 带高差的精确变速解(与 AI/实弹同一函数)
+        // 初速闭环校准系数(updateScopeInfo 的弹道仿真用实测落点微调):吸收炮口前伸/姿态残差
+        var aKey = Math.round(dR / 6) * 2048 + (Math.round(Math.atan2(dxT, dzT) * 18) & 1023);
+        if (player._artyKey !== aKey) { player._artyKey = aKey; player._artyKv = 1; }
+        player._artySol = solP;
+        player.rocketV = clamp(solP.v * (player._artyKv || 1), 34, solP.vmax);
+        player.artyRange = dR;
+        player._artyAz = Math.atan2(dxT, dzT);            // 目标世界方位(调试探针)
+        var tyT = normAng(player._artyAz - player.yaw);   // 发射架本地目标方位
+        var azErr = normAng(tyT - (player.turretYaw || 0));
+        var elErr = solP.theta - (player.gunPitch || 0);
+        player.turretYaw += clamp(azErr, -1.0 * dt, 1.0 * dt);
+        player.gunPitch = clamp((player.gunPitch || 0) + clamp(elErr, -0.9 * dt, 0.9 * dt), -0.1, 1.05);
+        playerArtySyncMount(player, true);                // 同帧写实体+世界矩阵(光标移动,发射架实时跟随)
+        player._artyAim = { x: tgtT.x, y: ly, z: tgtT.z, d: dR,
+          tof: 2 * player.rocketV * Math.sin(solP.theta) / CONF.gravity,
+          thetaT: solP.theta, reach: solP.reach,
+          settled: Math.abs(azErr) < 0.02 && Math.abs(elErr) < 0.03,
+          loose: Math.abs(azErr) < 0.06 && Math.abs(elErr) < 0.08 };   // 放行用宽阈
+        if (player._topFireWish && !solP.reach) { if (typeof aimHint === 'function') aimHint('超出射程'); }
+        /* —— 蠕行微调(仅点击装定后):预测首发弹着(10Hz 弹道仿真 scopeInfo.point)与装定点的
+           纵向误差折算低速油门(≤2.5m/s ≈ 极速 1/3),累计行程 ≤40m(小范围约束);
+           伺服未收敛(settled 未达)时不蠕行——仿真弹着此时不代表装定解,先等发射架锁到位。 */
+        if (player._topFireWish && player.salvoLeft <= 0 && player._artyAim.settled && scopeInfo.point &&
+            player._topCreepDist < 40 && Math.abs(player.speed) < 3.2 &&
+            player.reload <= 0 && player.mods.gun.hp > 0) {
+          var cxErr = scopeInfo.point.x - tgtT.x, czErr = scopeInfo.point.z - tgtT.z;
+          var errLen = Math.sqrt(cxErr * cxErr + czErr * czErr);
+          var fxU = Math.sin(player.yaw), fzU = Math.cos(player.yaw);
+          var errAlong = cxErr * fxU + czErr * fzU;       // >0 = 预测弹着越过装定点(车头方向)
+          if (errLen > 6 && Math.abs(errAlong) > 4) {
+            var vC = clamp(-errAlong * 0.8, -2.5, 2.5);
+            player._artyCreepFwd = vC / Math.max(0.5, player.speed0 * speedMult(player));
+            player._topCreepDist += Math.abs(vC) * dt;
+          }
+        }
+      } else {
+        player._artyAim = null;
+      }
       // 扳机挂起:瞄准到位瞬间自动发起齐射(与 AI"SALVO/COUNTER"门控完全同一条纪律)
       if (player._servoHoldT > 0) {
-        // 挂起窗 0.7s:到位(settled/loose)即射;走完未射 → 置 -0.001 进强制窗(防按住每帧重装)
+        // 挂起窗 0.7s:到位(settled/loose)+停稳即射;走完未射 → 置 -0.001 进强制窗
         player._servoHoldT -= dt;
         if (player.reload <= 0 && player.salvoLeft <= 0 && player.mods.gun.hp > 0 && Math.abs(player.speed) < 0.8 &&
             player._artyAim && (player._artyAim.settled || player._artyAim.loose)) {
           playerArtyStartSalvo(player);
         } else if (player._servoHoldT <= 0) player._servoHoldT = -0.001;
       } else if (player._servoHoldT < 0 && player._servoHoldT > -0.8) {
-        // 强制窗 0.8s:车况满足即无条件放行(杜绝"炮镜打不出");窗尽未射回 0 重新挂起
+        // 强制窗 0.8s:车况满足即放行;窗尽未射——任务仍挂着(装填中/蠕行未停)则重挂等待,否则归零
         player._servoHoldT -= dt;
         if (player.reload <= 0 && player.salvoLeft <= 0 && player.mods.gun.hp > 0 && Math.abs(player.speed) < 0.8) {
           playerArtyStartSalvo(player);
-        } else if (player._servoHoldT <= -0.8) player._servoHoldT = 0;
+        } else if (player._servoHoldT <= -0.8) player._servoHoldT = player._topFireWish ? 0.7 : 0;
       }
     } else {
       // 第三人称:准星=炮管朝向;按实测炮管世界仰角 + 精确高差解算初速,
       // 弹着正好落在炮管视线与地形/目标的交点(坡地车身姿态已含在实测方向里)
       player._artyAz = null;
       player._artyAim = null;
-      // 非开镜每帧按当前装定距离同步视角俯仰——开镜切入无跳变(俯角=atan(相机高差/水平距))
-      var dRS = clamp(player.artyRange || 300, 30, CONF.arty.maxRange);
-      artyPitch = -Math.atan2(14 + 0.028 * dRS, dRS + 12);
+      player._topFireWish = false; player._topTgt = null; player._artyCreepFwd = 0;   // 退镜:撤销点选射击任务与蠕行油门
       player._artyT = (player._artyT || 0) - dt;
       if (player._artyT <= 0) {
         player._artyT = 0.15;
@@ -1466,18 +1615,18 @@ function playerUpdate(dt) {
         var mP = artyBoreOrigin(player, dP2);                            // 第三人称瞄准原点=真实出膛原点(中轴线)
         var dd2 = laserRange(mP, dP2);
         var bElT = Math.asin(clamp(dP2.y, -1, 1));
-        // 第三人称标定上限扩展至 maxRange(10000),初速上限支持 370m/s
-        if (!isFinite(dd2) || dd2 > CONF.arty.maxRange || bElT < 0.035) { player.rocketV = CONF.arty.rocketSpeed; }
+        // 第三人称标定上限扩展至 maxRange(40000),初速上限支持 660m/s
+        if (!isFinite(dd2) || dd2 > artyConfOf(player).maxRange || bElT < 0.035) { player.rocketV = artyConfOf(player).rocketSpeed; }
         else {
           var hx2 = mP.x + dP2.x * dd2, hz2 = mP.z + dP2.z * dd2, hy2 = mP.y + dP2.y * dd2;
           var vT = rocketVExact(Math.sqrt((hx2 - mP.x)*(hx2 - mP.x)+(hz2 - mP.z)*(hz2 - mP.z)), mP.y - hy2, bElT);
-          player.rocketV = clamp(isFinite(vT) ? vT : CONF.arty.rocketSpeed, 34, 370);
+          player.rocketV = clamp(isFinite(vT) ? vT : artyConfOf(player).rocketSpeed, 34, 660);
         }
       }
     }
   }
 
-  // 玩家火箭炮:齐射推进(与 AI 同节奏——锁车停稳后按间隔放完 16 发,随后 16s 长装填;
+  // 玩家火箭炮:齐射推进(与 AI 同节奏——锁车停稳后按间隔放完全部火箭(PHL-11 40 发/M142 6 发),随后长装填(40s/12s);
   // salvoLeft 必须在此清零,否则打不出弹且锁死移动)
   if (player.kind === 'arty' && player.salvoLeft > 0) {
     playerArtyApplySalvoLock(player, false);
@@ -1488,13 +1637,13 @@ function playerUpdate(dt) {
       player.salvoT -= dt;
     }
     if (player.salvoLeft > 0 && player.salvoT <= 0 && Math.abs(player.speed) < 0.8) {
-      player.salvoT = CONF.arty.salvoGap;
+      player.salvoT = artyConfOf(player).salvoGap;
       player.salvoLeft--;
       /* 发射前强制同步锁定姿态的世界矩阵;所有发次只允许 fireShell 内部初速向量散布,炮架绝不逐发重瞄。 */
       playerArtySyncMount(player, true);
       // 第 1 发零扰动(disp=false)——红点=首发实际落点(铁律);
       // 第 2 发起与 AI 同款真物理散布:初速向量方位±2°/纵向±2.9° + 初速 ±1.2% 扰动,发射架全程不动
-      fireShell(player, player.salvoLeft < CONF.arty.salvo - 1);
+      fireShell(player, player.salvoLeft < artyConfOf(player).salvo - 1);
       if (player.salvoLeft <= 0) {
         player.reload = player.reloadTime;
         playerArtyEndSalvoLock(player);
@@ -1511,24 +1660,52 @@ function applyMotion(t, dt) {
   if (!isFinite(t.speed) || !isFinite(t.yaw)) { t.speed = 0; return; }
   var fx = Math.sin(t.yaw), fz = Math.cos(t.yaw);
   var p = t.group.position;
+  if (typeof SIM_K !== 'undefined' && SIM_K <= 0) {
+    // —— 街机分支:逐位旧代码(SIM_K=0 回归用,含 M6 vel 口径)——
+    var SUB_DT = 0.016, n = Math.max(1, Math.ceil(dt / SUB_DT)), stepDt = dt / n;
+    for (var s = 0; s < n; s++) {
+      var move = t.speed * stepDt;
+      if (Math.abs(move) > 1e-5) {
+        var grad = terrainH(p.x + fx, p.z + fz) - terrainH(p.x, p.z);
+        var slopeF = clamp(1 - grad * Math.sign(move) * 0.7, 0.50, 1.05);
+        var dx = fx * move * slopeF, dz = fz * move * slopeF;
+        if (isFinite(dx) && isFinite(dz)) { p.x += dx; p.z += dz; }
+      }
+    }
+    p.x = clamp(p.x, -CONF.bounds, CONF.bounds);
+    p.z = clamp(p.z, -CONF.bounds, CONF.bounds);
+    if (t === player) {
+      var atEdge = (Math.abs(p.x) >= CONF.bounds - 0.05 || Math.abs(p.z) >= CONF.bounds - 0.05);
+      onPlayerBoundaryContact(atEdge);
+    }
+    t.velX = fx * t.speed; t.velZ = fz * t.speed;
+    return;
+  }
+  // —— 物理分支:油门已由调用方写入 t._throttle,此处统一裁决 ——
+  var yawPrev = (t._yawPrev == null) ? t.yaw : t._yawPrev;
+  t._yawRate = dt > 1e-6 ? (t.yaw - yawPrev) / dt : 0;
+  t._yawPrev = t.yaw;
+  slopeArbitrate(t, dt);
+  var rx = fz, rz = -fx;   // 车体右轴(侧滑分量沿此轴)
+  var sv = t._slideV || 0;
   // 子步进运动:拆分为 60Hz(16ms)小步,使帧率波动不影响每帧总移动量
-  var SUB_DT = 0.016, n = Math.max(1, Math.ceil(dt / SUB_DT)), stepDt = dt / n;
-  for (var s = 0; s < n; s++) {
-    var move = t.speed * stepDt;
-    if (Math.abs(move) > 1e-5) {
-      var grad = terrainH(p.x + fx, p.z + fz) - terrainH(p.x, p.z);
-      var slopeF = clamp(1 - grad * Math.sign(move) * 0.7, 0.50, 1.05);
-      var dx = fx * move * slopeF, dz = fz * move * slopeF;
-      if (isFinite(dx) && isFinite(dz)) { p.x += dx; p.z += dz; }
+  var SUB_DT2 = 0.016, n2 = Math.max(1, Math.ceil(dt / SUB_DT2)), stepDt2 = dt / n2;
+  var ox = p.x, oz = p.z;
+  for (var s2 = 0; s2 < n2; s2++) {
+    var mv = t.speed * stepDt2, sd = sv * stepDt2;
+    if (Math.abs(mv) > 1e-6 || Math.abs(sd) > 1e-6) {
+      var nx2 = p.x + fx * mv + rx * sd, nz2 = p.z + fz * mv + rz * sd;
+      if (isFinite(nx2) && isFinite(nz2)) { p.x = nx2; p.z = nz2; }
     }
   }
   p.x = clamp(p.x, -CONF.bounds, CONF.bounds);
   p.z = clamp(p.z, -CONF.bounds, CONF.bounds);
   if (t === player) {
-    var atEdge = (Math.abs(p.x) >= CONF.bounds - 0.05 || Math.abs(p.z) >= CONF.bounds - 0.05);
-    onPlayerBoundaryContact(atEdge);
+    var atEdge2 = (Math.abs(p.x) >= CONF.bounds - 0.05 || Math.abs(p.z) >= CONF.bounds - 0.05);
+    onPlayerBoundaryContact(atEdge2);
   }
-  t.velX = fx * t.speed; t.velZ = fz * t.speed;
+  var idt = dt > 1e-6 ? 1 / dt : 0;
+  t.velX = (p.x - ox) * idt; t.velZ = (p.z - oz) * idt;   // M6 修复:大脑速度=实际位移/时间(含坡度/侧滑)
 }
 
 /* 复用 scratch(热路径,避免每帧 GC;模块私有) */
@@ -1962,18 +2139,20 @@ function updateHeli(t, dt, fwdCmd, latCmd, turnCmd, isAI) {
   }
   if (t.tailRotorGroup) t.tailRotorGroup.rotation.x = t._heliTailRotorAngle;
 
-  // 下洗流扬尘:有效高度 50m,间隔/散布/大团阈值按 50/22 拉伸(近密远稀)
-  if (curAlt > 0.05 && curAlt < 50 && t._heliRotorRPM > 10.0) {
+  // 下洗流扬尘 FX3:有效高度 50m;尘量=距离拉伸(50/22,近密远稀)×转速百分比(只用转速不用总距,100%钳顶)
+  var _dwRpm = t._heliRotorRPM || 0;
+  if (curAlt > 0.05 && curAlt < 50 && t._heliEngineState !== 'cutoff' && _dwRpm > 0.5) {
     t._downwashT = (t._downwashT || 0) - dt;
     if (t._downwashT <= 0) {
       var _hdS = 50 / 22;
-      var dwInterval = curAlt < 6.0 * _hdS ? 0.045 : (curAlt < 12.0 * _hdS ? 0.08 : 0.16);
-      t._downwashT = dwInterval / Math.max(0.3, heliRotorFrac(t, prm));
-      var rA = Math.random() * Math.PI * 2, rD = 1.0 + Math.random() * (3.5 + curAlt * 0.45 / _hdS);
+      var _dwFrac = Math.min(1, _dwRpm / prm.rotorOmega0);   // 转速百分比 0~1(超速钳1;与总距无关)
+      var dwInterval = curAlt < 6.0 * _hdS ? 0.015 : (curAlt < 12.0 * _hdS ? 0.027 : 0.053);
+      t._downwashT = dwInterval * (1.15 - 0.85 * _dwFrac) / Math.max(0.3, _dwFrac);
+      var rA = Math.random() * Math.PI * 2, rD = (1.0 + Math.random() * (3.5 + curAlt * 0.45 / _hdS)) * (0.6 + 0.4 * _dwFrac);
       var dX = p.x + Math.cos(rA) * rD, dZ = p.z + Math.sin(rA) * rD;
       var dY = terrainH(dX, dZ);
       if (typeof comicGroundDust === 'function') {
-        comicGroundDust(dX, dY, dZ, curAlt < 4.5 * _hdS && Math.random() < 0.35);
+        comicGroundDust(dX, dY, dZ, curAlt < 4.5 * _hdS && Math.random() < 0.35 * _dwFrac);
       }
     }
   }
@@ -2037,6 +2216,7 @@ function alignTank(t, dt) {
       var hr = terrainH(sx + fzv * 1.3, sz - fxv * 1.3);
       var hl = terrainH(sx - fzv * 1.3, sz + fxv * 1.3);
       var hc = terrainH(sx, sz);
+      var sF = (hf - hb) / 5.2, sR = (hr - hl) / 2.6;   // 纵/横弦坡度(dh/dm);姿态与轮位去趋势同源
       /* 【贴地高度:履带线包络取 max】(2026-09-09)
          旧式 max((hf+hb)/2, hc) 只采【车体中线】3 点(前/中/后 ±2.6m),弦长 5.2m 远小于
          弹坑尺度(2km 图爆半径 22m 的弹坑口径达 28m):
@@ -2048,10 +2228,10 @@ function alignTank(t, dt) {
          应映射轮-地接触边界的凸区域,而非车体中线)。
          ★实测:弹坑区平均下陷 255.7→4.9mm(-98%),边缘坡环 307.5→0.0mm;
            而平地与自然起伏的高度变化恒为 0.0mm(不会把车架高),仅在真正需托举处生效。
-         ★姿态(下方 sF/sR/_n)沿用中线弦,不动 —— 实测俯仰误差仅 ±1°,本就正确。 */
+         ★姿态(sF/sR/_n)沿用中线弦,不动 —— 实测俯仰误差仅 ±1°,本就正确。 */
       var _gk = suspKeyOf(t.team, t.kind);
       if (_gk) {
-        /* ★车体高度取【各负重轮位置地面高的均值】,而不是包络最高点。
+        /* ★车体高度取【各负重轮去趋势地面高的均值】,而不是包络最高点。
            这一条极其关键:车体 y 是悬挂物理的【输入基准】—— suspUpdate 用
            pen = 地面 − 轮底 判断每个轮是被压缩还是悬空。
            若这里取 max(包络最高点),车体被抬到最高轮的高度,其余所有轮
@@ -2064,34 +2244,33 @@ function alignTank(t, dt) {
         var _gsp = SUSP_SPEC[_gk];
         var _gw = _gsp.trkX, _gn = _gsp.n;
         var _grx = fzv, _grz = -fxv;                     // 车体右向量(水平正交单位系)
-        var _gsum = 0, _gi, _gj, _gwz, _gsw;
+        /* 【托底钳制:必须在俯仰系/去趋势后求值】悬挂总行程有限(t59 仅 363mm),
+           而弹坑在一辆车范围内的落差可达 1~2m。行程用尽后,真车会「托底」
+           (bellying out)——车体被地面直接顶起来,而非继续下陷。
+           旧式用轮位【世界高度】直接比较车体局部行程:平面陡坡的上坡轮天然更高,
+           会被误判成深坑而把整车顶起(纵坡 30° 实测顶升约 0.66m)。
+           这里先用与姿态同源的 sF/sR 减去含中心高的局部平面:平面坡的残差全为零,
+           钳制恒不啮合;真凹坑/坑缘的相对起伏保留,行程外保护仍在。
+           单次轮位采样同时累加均值与钳制,采样量减半。 */
+        var _gwbMax = _gsp.pivY - SUSP_ARM_L * Math.cos(Math.PI / 2) - _gsp.rc;   // 压到底轮底(车体局部)
+        var _planeC = (hf + hb) * 0.5;               // 与姿态弦同源的采样中心平面高
+        var _gsum = 0, _gfloor = -1e9, _gi, _gj, _gwz, _gsw, _gh, _gh2;
         for (_gj = 0; _gj < 2; _gj++) {
           _gsw = _gj ? _gw : -_gw;
           for (_gi = 0; _gi < _gn; _gi++) {
             _gwz = _gsp.wz[_gi];
-            _gsum += terrainH(sx + fxv * _gwz + _grx * _gsw, sz + fzv * _gwz + _grz * _gsw);
+            _gh = terrainH(sx + fxv * _gwz + _grx * _gsw, sz + fzv * _gwz + _grz * _gsw) - (_planeC + sF * _gwz + sR * _gsw);
+            _gsum += _gh;
+            _gh2 = _gh - _gwbMax - _gsp.lift;
+            if (_gh2 > _gfloor) _gfloor = _gh2;      // 该轮要求的车体最低高度(平面系残差)
           }
         }
         var _gavg = _gsum / (_gn * 2);
-        /* 【托底钳制】悬挂总行程有限(t59 仅 363mm),而弹坑在一辆车范围内的落差可达 1~2m。
-           行程用尽后,真车会「托底」(bellying out)—— 车体被地面直接顶起来,而非继续下陷。
-           故对均值再取一次下限:任一轮位地面高于「该轮压到底时的轮底」时,把车体抬到刚好托住。
-           这既保住悬挂活跃度(常态由均值主导),又消除行程外的穿模(极端处由钳制兜底)。 */
-        var _gwbMax = _gsp.pivY - SUSP_ARM_L * Math.cos(Math.PI / 2) - _gsp.rc;   // 压到底轮底(车体局部)
-        var _gfloor = -1e9, _gh2;
-        for (_gj = 0; _gj < 2; _gj++) {
-          _gsw = _gj ? _gw : -_gw;
-          for (_gi = 0; _gi < _gn; _gi++) {
-            _gwz = _gsp.wz[_gi];
-            _gh2 = terrainH(sx + fxv * _gwz + _grx * _gsw, sz + fzv * _gwz + _grz * _gsw) - _gwbMax - _gsp.lift;
-            if (_gh2 > _gfloor) _gfloor = _gh2;      // 该轮要求的车体最低高度
-          }
-        }
-        t._ty = _gavg > _gfloor ? _gavg : _gfloor;
+        t._ty = _planeC + (_gavg > _gfloor ? _gavg : _gfloor);
       } else {
         t._ty = Math.max((hf + hb) * 0.5, hc);           // 非履带车(arty/heli)沿用旧口径
       }
-      var sF = (hf - hb) / 5.2, sR = (hr - hl) / 2.6;   // 纵/横弦坡度(dh/dm)
+      // sF/sR 已在上方采样后求值,与履带高度去趋势同源。
       _n.set(-sF * fxv - sR * fzv, 1, -sF * fzv + sR * fxv).normalize();   // 法线=up-sF·f-sR·r(f/r 水平正交单位系)
       _f.set(fxv, 0, fzv);
       _r.crossVectors(_n, _f).normalize();
@@ -2334,8 +2513,8 @@ var PV_MOD_COLORS = {
   trans:  0x06b6d4, // 传动系统 / 旋翼减速器: 电光青 (Electric Cyan)
   crew:   0x10b981, // 乘员室 / 座舱火控: 翡翠绿 (Tactical Green)
   gun:    0x38bdf8, // 武器火控 / 主炮身管: 钛青银 (Titanium Silver)
-  trackL: 0x84cc16, // 左行动机构 / 履带: 战术青绿 (Tactical Lime)
-  trackR: 0x84cc16, // 右行动机构 / 履带: 战术青绿
+  trackL: 0x84cc16, // 行动机构(-X 侧=物理右侧,盒名沿用): 战术青绿 (Tactical Lime)
+  trackR: 0x84cc16, // 行动机构(+X 侧=物理左侧,盒名沿用): 战术青绿
   turret: 0x3b82f6  // 炮塔回转机构: 钴蓝 (Cobalt Blue)
 };
 
@@ -2687,7 +2866,9 @@ function playerHudDamage(key) {                           // 事件钩子:模块
     e.mat.opacity = e.op0 + e.opGain * frac;
   }
   _phud.dirty = true;                                     // 材质变更→下帧重渲一次
-  var lb = _phudLabEls()[key];                            // 模块状态文字同源联动:opacity=损伤比(健康 0=不可见)
+  var lbKey = key;   // 地面载具 trackL/trackR 盒名与物理左右装反(trackL 在 -X=物理右侧):人话层标签按物理侧取,与 3D 模块真位置对齐;直升机 trackL 复用为旋翼单标签,不换
+  if (player && !isHeliVehicle(player) && (key === 'trackL' || key === 'trackR')) lbKey = (key === 'trackL') ? 'trackR' : 'trackL';
+  var lb = _phudLabEls()[lbKey];                            // 模块状态文字同源联动:opacity=损伤比(健康 0=不可见)
   if (lb) lb.style.opacity = q > 0 ? String(frac) : '0';
 }
 

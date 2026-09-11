@@ -119,6 +119,7 @@ function cloudsUpdate(dt) {
 function engineExhaustSourceLocal(t,out,dx,dz) {
   if(!t) return out.set(dx||0, 1.78, -2.55);
   if(isTD89Vehicle(t)) return td89EngineGrillePoint(dx||0,dz||0,0.065,out);
+  if(t.kind === 'aa' && t.team === 'ally') return out.set(0.56+(dx||0), 1.505, 2.752+(dz||0));   // 任务25:PGZ-95 前置发动机——排烟源=首上右侧格栅(格栅板心 x+0.56/y1.4469/z2.7369[含车体抬升0.3125]+沿斜面法向 0.968/0.253 外凸0.06;动力舱判定盒 x+0.30=右侧重合;修复前误用通用尾部 (0,1.78,-2.55))
   if(t.kind === 'wz10') return out.set(dx||0, 2.83, -0.65 + (dz||0));
   if(t.kind === 'ah64') return out.set(dx||0, 2.86, -0.55 + (dz||0));
   return out.set(dx||0,1.78,-2.55);
@@ -437,5 +438,16 @@ function fxBattleClear() {
     if (typeof _wspLive !== 'undefined') _wspLive = 0;
     if (_wspMesh) { _wspMesh.count = 0; _wspMesh.visible = false; }
   } catch (e2) {}
+  /* ★任务27⑧:战场热源表 + 全局闪光。两者衰减都在 step 门内(_updateBattlefieldHeatSources 随
+     stepShells;flash.intensity 随 main.step)——退局即冻结,残值带进新局:红外导引头开局追
+     上一局幽灵热源、开局无来源屏幕闪光。拆场清零。 */
+  try { _battlefieldHeatSources.length = 0; } catch (e3) {}
+  try { if (flash) flash.intensity = 0; } catch (e4) {}
 }
+/* ★任务27③:启动期预热——残骸飞溅火星卡池(512² 程序贴图+ShaderMaterial+64 槽 InstancedMesh)
+   原为首次击毁爆炸才惰性构建(首爆卡顿来源之一),搬到加载期;着色器预编译见 main.js renderer.compile。 */
+function fxPrewarm() {
+  try { if (typeof _wspEnsure === 'function') _wspEnsure(); } catch (e) { /* 无头环境无 document 跳过 */ }
+}
+window.fxPrewarm = fxPrewarm;
 window.fxBattleClear = fxBattleClear;

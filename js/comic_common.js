@@ -30,7 +30,7 @@ var _comicExplosionP={fireK:0,fireAlpha:0,smokeAge:0,smokeOn:false};
 
 function comicExplosionTimeline(t,cfg){var P=_comicExplosionP;P.fireK=clamp(t/Math.max(.001,cfg.fireGrow),0,1);P.fireAlpha=t<=cfg.fireHold?1:Math.max(0,1-(t-cfg.fireHold)/Math.max(.001,cfg.fireFade));P.smokeAge=Math.max(0,t-cfg.smokeDelay);P.smokeOn=t>=cfg.smokeDelay&&P.smokeAge<cfg.smokeLife;return P;}
 
-/* ===== 炮镜原生尺寸口径(全项目唯一实现;消费者:爆点两池/持续燃烧/小队标识+爆点入场硬裁剪) ----
+/* ===== 炮镜原生尺寸口径(全项目唯一实现;消费者:爆点两池/持续燃烧/战术标识+爆点入场硬裁剪) ----
    炮镜内=1(整屏光学变倍统一作用于场景,任何贴图特效绝不叠加距离补偿);
    第三人称=距离图标化补偿 clamp(√d²/ref,min,max)(屏幕投影近似恒定,远景可读)。
    收 d² 而非 d:sqrt 只在非镜分支发生,炮镜状态下全部消费点零开方。 ===== */

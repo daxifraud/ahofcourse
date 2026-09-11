@@ -70,7 +70,12 @@ var _floorCache = {};
    ============================================================ */
 var SPREAD_RADIUS_MUL = 2 / 3;      // 全平台主炮散布半径乘数:缩短 1/3
 var SPREAD_TIGHT_MUL = 4 / 9;       // 59/M60/M1 主炮散布连续两次再收紧 1/3(89式保持原档)→ 累计 (2/3)²
+var AUTOCANNON_SPREAD_MUL = 0.25;   // 机炮散布半径乘数(用户定 2026-09-11 两轮减半:0.5→0.25,累计=原回落档 1/4;直-10/AH-64 机炮与 PGZ-95 双联25mm(aa 路由至 wz10/ah64 档)同时生效)
 var MODEL_SPREAD = {                // 型号散布公式参数库:disp = clamp(eb·(k+kd·d), lo, hi) · mul;arty=固定瞄准散布
+  /* 机炮档(直-10/AH-64/PGZ-95):此前 wz10/ah64 未入表 → 回落 tank 档;现显式收录并 ×AUTOCANNON_SPREAD_MUL=减半。
+     坦克主炮/火箭炮各档不受影响。所有散布判定(开火/瞄准门/交火底线/HUD 散布环)统一走 spreadOf,一处改动全局生效。任务23 再减半→累计 1/4。 */
+  wz10: { k: 0.02,   kd: 0.0006,     lo: 0,        hi: 1,       mul: 0.5  * SPREAD_RADIUS_MUL * SPREAD_TIGHT_MUL * AUTOCANNON_SPREAD_MUL },
+  ah64: { k: 0.02,   kd: 0.0006,     lo: 0,        hi: 1,       mul: 0.5  * SPREAD_RADIUS_MUL * SPREAD_TIGHT_MUL * AUTOCANNON_SPREAD_MUL },
   tank: { k: 0.02,   kd: 0.0006,     lo: 0,        hi: 1,       mul: 0.5  * SPREAD_RADIUS_MUL * SPREAD_TIGHT_MUL },
   m1a1: { k: 0.02,   kd: 0.0006,     lo: 0,        hi: 1,       mul: 0.25 * SPREAD_RADIUS_MUL * SPREAD_TIGHT_MUL },
   td89: { k: 0.004,  kd: 0.000025,   lo: 0.00075,  hi: 0.00175, mul: 0.5  * SPREAD_RADIUS_MUL },   // 89式保持原收紧档
@@ -291,7 +296,7 @@ function maybeEvadeRocket(t, dt) {
     var rr = rand(36, 52), B = CONF.bounds - 8;                    // 逃出溅射半径(22m)2 倍以上
     var ex = clamp(p.x + Math.sin(ang) * rr, -B, B),
         ez = clamp(p.z + Math.cos(ang) * rr, -B, B);
-    if (!validDest(ex, ez)) {
+    if (!validDest(ex, ez, t)) {
       ex = clamp(p.x + Math.sin(ang) * rr * 0.5, -B, B);
       ez = clamp(p.z + Math.cos(ang) * rr * 0.5, -B, B);
     }
@@ -523,6 +528,7 @@ function isNoticedCached(t, o, dist) {
 function aiBaseDispersion(t, dist) {   // 玩家/AI 统一散布(调弹道数据库;分车型参数见 MODEL_SPREAD)
   if (t.kind === 'arty') return spreadOf('arty', 0, 0);              // 火箭炮瞄准散布(齐射物理散布 ARTY_SALVO_*=弹体属性亦不动)
   var eb = t.errBase != null ? t.errBase : (t.ai && t.ai.errBase != null ? t.ai.errBase : 1);   // 车组散布系数:玩家与 AI 同样在出生时 rand(0.08,0.14)
+  if (t.kind === 'aa') return spreadOf(t.team === 'ally' ? 'wz10' : 'ah64', eb, dist);   // 防空机炮=直升机机炮性能(散布同吃直升机档)
   return spreadOf(dynModelKey(t), eb, dist);                         // 59/M60→tank 档;89→td89;M1A1→m1a1
 }
 function aimGateAI(t, adist) {
@@ -694,7 +700,7 @@ function allyCrowding(t, x, z) {
   return n;
 }
 // 目的地合法性:界内、不压障碍物/残骸
-function validDest(x, z) {
+function validDest(x, z, tOpt, skipRegion) {
   var B = CONF.bounds - 8;
   if (x < -B || x > B || z < -B || z > B) return false;
   // 障碍网格邻域查询(静态注册/事件驱动;范围=最大障碍半径+判定半径,候选集与全表逐位一致)
@@ -714,7 +720,41 @@ function validDest(x, z) {
       if (Math.sqrt((x - w.group.position.x)*(x - w.group.position.x)+(z - w.group.position.z)*(z - w.group.position.z)) < w.radius + 3) return false;
     }
   }
+  // P1 坡度门:目的地坡度超本车极限 85% ⇒ 不可选(无车调用方保持旧行为)
+  // P2 连通域预查:起终已证异域 ⇒ 不可选(任一端 -1 则 fail-open，留给 spiral/AI；flank 探索传 skipRegion=1 绕过)
+  if (!skipRegion && tOpt && tOpt.group && tOpt.group.position && typeof SIM_K !== 'undefined' && SIM_K > 0 &&
+      typeof navRegionOf === 'function' && typeof navGroupOf === 'function') {
+    var rgG = navGroupOf(tOpt);
+    if (rgG !== null) {
+      var rA = navRegionOf(tOpt.group.position.x, tOpt.group.position.z, rgG);
+      var rB = navRegionOf(x, z, rgG);
+      if (rA > 0 && rB > 0 && rA !== rB) return false;
+    }
+  }
+  if (tOpt && tOpt.mob && typeof SIM_K !== 'undefined' && SIM_K > 0) {
+    slopeVecAt(x, z, _vdSlope);
+    if (_vdSlope.tan > mobDerived(tOpt.mob)._tanMax * 0.85) return false;
+  }
   return true;
+}
+var _vdSlope = { gx: 0, gz: 0, tan: 0 };   // validDest 坡度门 scratch
+var _segSlope = { gx: 0, gz: 0, tan: 0 };   // navSegReach 航段抽查 scratch
+/* 航段可达性(P1/P2 共用):起点→终点 8 等分实时坡度抽查,返回 0~1 可达比例(1=全通)。
+   limTan>0 用指定极限(寻路组极限),否则用本车极限。 */
+function navSegReach(t, fx, fz, tx, tz, limTan) {
+  var lim = limTan > 0 ? limTan : mobDerived(mobOf(t))._tanMax;
+  if (typeof navSegBlocked === 'function') return navSegBlocked(fx, fz, tx, tz, lim);   // P0：真验证器（supercover+4m），与 A*/复查同口径；无 ai_nav 环境走旧 25m 兜底
+  var dxS = tx - fx, dzS = tz - fz;
+  var nS = Math.ceil(Math.sqrt(dxS * dxS + dzS * dzS) / 25);   // 采样密度≈25m(8样本/400m 腿漏检窄山脊→V2 永不触发;soak 定案)
+  if (nS < 8) nS = 8; else if (nS > 64) nS = 64;
+  var lastOk = 0;
+  for (var i = 1; i <= nS; i++) {
+    var f = i / nS;
+    slopeVecAt(fx + (tx - fx) * f, fz + (tz - fz) * f, _segSlope);
+    if (_segSlope.tan > lim) return lastOk;
+    lastOk = f;
+  }
+  return 1;
 }
 // 两点间视线是否被 地形反斜/障碍物/残骸 遮挡(losBlockedAt = 真掩体判定;地形采样与开火闸同口径自适应步数)
 /* 静态射线阻挡判定核心(开火视线 hasLineOfSight / 掩体判定 同源): 地形先行短路 + staticOnly 射线 + 障碍/残骸 */
@@ -751,12 +791,12 @@ function homeSignOf(t) {
 // —— 模式化目的地决策 ——
 /* 环带目的地生成(charge/advance 共用):以 (cx,cz) 为环带中心,沿"中心→本车"方向 ±jitter 抖动,
    半径 r 处取点(validDest 校验;边界失败减半重试)。返回 {x,z} 或 null。 */
-function ringDest(p, cx, cz, r, jitter) {
+function ringDest(p, cx, cz, r, jitter, tOpt) {
   var a = Math.atan2(p.x - cx, p.z - cz) + rand(-jitter, jitter);
   var nx = cx + Math.sin(a) * r, nz = cz + Math.cos(a) * r;
-  if (validDest(nx, nz)) return { x: nx, z: nz };
+  if (validDest(nx, nz, tOpt)) return { x: nx, z: nz };
   nx = cx + Math.sin(a) * r * 0.5; nz = cz + Math.cos(a) * r * 0.5;   // 减半重试(边界压缩)
-  if (validDest(nx, nz)) return { x: nx, z: nz };
+  if (validDest(nx, nz, tOpt)) return { x: nx, z: nz };
   return null;
 }
 /* 前方判定(冲锋中 cover 专用):点 (x,z) 是否在本车→目标的"前扇区"(点积>0,±90° 内) */
@@ -787,7 +827,7 @@ function pickAIDest(t, tgt, dist) {
       for (var sg = 0; sg < 6; sg++) {                     // 带内:行动环多点尝试(残骸/障碍密布战场,单点常撞车)
         var sAng = rand(0, Math.PI * 2), sR = rand(anc.rN, anc.rF);
         var sx2 = clamp(anc.x + Math.cos(sAng) * sR, -B, B), sz2 = clamp(anc.z + Math.sin(sAng) * sR, -B, B);
-        if (validDest(sx2, sz2)) {
+        if (validDest(sx2, sz2, t)) {
           A.mode = 'guard'; A.destX = sx2; A.destZ = sz2;
           A.destT = rand(0.6, 1.4);
           return;
@@ -810,7 +850,7 @@ function pickAIDest(t, tgt, dist) {
       for (var gt = 0; gt < 6; gt++) {                 // 多点尝试:残骸/障碍密布战场,单点常撞车
         var gdx = clamp(pcx + rand(-14, 14), -B, B);
         var gdz = clamp(pcz + hs2 * rand(18, 30), -B, B);
-        if (validDest(gdx, gdz)) {
+        if (validDest(gdx, gdz, t)) {
           A.mode = 'guard';
           A.destX = gdx; A.destZ = gdz;
           A.destT = rand(2, 3.5);
@@ -829,7 +869,7 @@ function pickAIDest(t, tgt, dist) {
   if (t._cmdG && t._cmdG.role === 'flank' && A.wpI < 3 && !crit && dist > engageD) {   // 迂回角色=指挥官分组
     var wp = flankWP(t, A.wpI, tgt);
     var wpd = Math.sqrt((wp.x - p.x)*(wp.x - p.x)+(wp.z - p.z)*(wp.z - p.z));
-    if (wpd < 18 || !validDest(wp.x, wp.z)) A.wpI++;            // 抵达/不可达 → 跳下一段
+    if (wpd < 18 || !validDest(wp.x, wp.z, t)) A.wpI++;            // 抵达/不可达 → 跳下一段
     else {
       A.mode = 'flankrun';
       A.destX = wp.x; A.destZ = wp.z;
@@ -872,7 +912,7 @@ function pickAIDest(t, tgt, dist) {
     var chD = frT * rand(0.8, 0.95);          // 冲锋目标=底线 80~95% 处(不随距离收缩;到达即转入交战段)
     if (A._losStarve) chD = Math.min(chD, dist * rand(0.5, 0.7));   // 断粮前推:环带必须收进当前距离内侧,每次重规划拉近 30~50% 直至射线打通
     chD = Math.min(chD, aiVisRange(t) * 0.85);   // 冲锋环带并入感知:不冲向自己看不见的驻停距离(全型号同式,视距为型号数据参数)
-    var destCh = ringDest(p, lxCh != null ? lxCh : gp.x, gp.z, chD, 0.35);
+    var destCh = ringDest(p, lxCh != null ? lxCh : gp.x, gp.z, chD, 0.35, t);
     if (destCh) { A.destX = destCh.x; A.destZ = destCh.z; return; }
   }
   if (mode === 'advance') {        // 推进:直取目标环带,略错开轴线(保持火力线;优势压得更近)
@@ -896,7 +936,7 @@ function pickAIDest(t, tgt, dist) {
       if (fCell) { A.destX = fCell.x; A.destZ = fCell.z; return; }
     }
     advR = Math.min(advR, dist * 0.85);                             // 防过冲:仅当环带>当前距离时收窄
-    var destAdv = ringDest(p, lxAdv != null ? lxAdv : advCx, advCz, advR, 0.4);
+    var destAdv = ringDest(p, lxAdv != null ? lxAdv : advCx, advCz, advR, 0.4, t);
     if (destAdv) {
       var gPo = t._cmdG;                                 // 阵地格偏置:front 组且非迂回,阵地格在 250m 内=40% 牵引(保住环带距离语义)
       if (!flankOn && gPo && gPo.role === 'front' && gPo._postX != null &&
@@ -912,7 +952,7 @@ function pickAIDest(t, tgt, dist) {
       var aR = Math.atan2(p.x - gp.x, p.z - gp.z) + rand(-0.55, 0.55);
       var rrR = rand(26, 42);
       nx = gp.x + Math.sin(aR) * rrR; nz = gp.z + Math.cos(aR) * rrR;
-      if (validDest(nx, nz)) { A.destX = nx; A.destZ = nz; return; }
+      if (validDest(nx, nz, t)) { A.destX = nx; A.destZ = nz; return; }
     }
   }
   if (mode === 'cover') {            // 找掩体:威胁视线的反盲点位(障碍/残骸后)
@@ -926,7 +966,7 @@ function pickAIDest(t, tgt, dist) {
       var aw = Math.atan2(s.x - gp.x, s.z - gp.z);
       var cx = clamp(s.x + Math.sin(aw) * (s.r + 3.5), -B, B),
           cz = clamp(s.z + Math.cos(aw) * (s.r + 3.5), -B, B);
-      if (!validDest(cx, cz)) continue;
+      if (!validDest(cx, cz, t)) continue;
       var sc = 80 - ds + rand(0, 12);
       if (sc <= bestScore) continue;               // 严格剪枝:得分不可能超越当前最优,跳过 LOS 射线
       if (!losBlockedAt(gp.x, gp.y + 1.8, gp.z, cx, terrainH(cx, cz) + 1.2, cz)) continue;
@@ -942,7 +982,7 @@ function pickAIDest(t, tgt, dist) {
       var aw2 = Math.atan2(wx2 - gp.x, wz2 - gp.z);
       var rx2 = clamp(wx2 + Math.sin(aw2) * (wc.ext + 3.2), -B, B),
           rz2 = clamp(wz2 + Math.cos(aw2) * (wc.ext + 3.2), -B, B);
-      if (!validDest(rx2, rz2)) continue;
+      if (!validDest(rx2, rz2, t)) continue;
       var sc2 = 75 - dw + rand(0, 12);
       if (sc2 <= bestScore) continue;              // 严格剪枝:得分不可能超越当前最优,跳过 LOS 射线
       if (!losBlockedAt(gp.x, gp.y + 1.8, gp.z, rx2, terrainH(rx2, rz2) + 1.2, rz2)) continue;
@@ -952,11 +992,11 @@ function pickAIDest(t, tgt, dist) {
       if (chFwd) {                                   // 冲锋无前方掩体:不停车不后退,继续朝目标推进 30m
         var fwdA = Math.atan2(gp.x - p.x, gp.z - p.z);
         nx = clamp(p.x + Math.sin(fwdA) * 30, -B, B); nz = clamp(p.z + Math.cos(fwdA) * 30, -B, B);
-        if (validDest(nx, nz)) best = { x: nx, z: nz };
+        if (validDest(nx, nz, t)) best = { x: nx, z: nz };
       } else {                                       // 反斜面兜底:远离威胁退 20m
         var back = Math.atan2(p.x - gp.x, p.z - gp.z);
         nx = clamp(p.x + Math.sin(back) * 20, -B, B); nz = clamp(p.z + Math.cos(back) * 20, -B, B);
-        if (validDest(nx, nz)) best = { x: nx, z: nz };
+        if (validDest(nx, nz, t)) best = { x: nx, z: nz };
       }
     }
     if (best) { A.destX = best.x; A.destZ = best.z; return; }
@@ -967,7 +1007,7 @@ function pickAIDest(t, tgt, dist) {
     nx = clamp(p.x + Math.sin(a2) * r2, -B, B);
     nz = clamp(p.z + Math.cos(a2) * r2, -B, B);
     if (allyCrowding(t, nx, nz) > 1 && !A.relax) continue;      // 看门狗解锁时豁免拥挤
-    if (validDest(nx, nz)) { A.destX = nx; A.destZ = nz; return; }
+    if (validDest(nx, nz, t)) { A.destX = nx; A.destZ = nz; return; }
   }
   // 终极兜底(反偷懒基石):绝不留下陈旧目的地 —— 无视拥挤朝威胁直线推 30~50m,
   // 只避开界外;途中障碍交由 avoidSteer 现场绕行,残骸直接顶开
@@ -1029,12 +1069,12 @@ function rocketVExact(R, H, theta) {
 // 玩家/AI 共用的弹道解:50° 高抛"火雨"优先(带高差精确变速);
 // 过近(最小初速都嫌快)或物理不可达时自动切 ~10° 低伸自卫弹道。
 // reach=false 表示连最大初速都够不到装定点(红点会显示真实落点,落点比装定近)
-function rocketSolve(R, H) {   // vmax 370 余量(高抛 50.4° @10000m 需≈316m/s;含高差 uphill 余量)
+function rocketSolve(R, H) {   // vmax 660 余量(高抛 50.4° @40000m 需≈632m/s;含高差 uphill 余量)
   var v = rocketVExact(R, H, ARTY_THETA);
-  if (isFinite(v) && v >= 34 && v <= 370) return { theta: ARTY_THETA, v: v, vmax: 370, reach: true };
+  if (isFinite(v) && v >= 34 && v <= 660) return { theta: ARTY_THETA, v: v, vmax: 660, reach: true };
   var v2 = rocketVExact(R, H, 0.18);                               // 低伸弹道(~10°)
-  if (isFinite(v2) && v2 <= 370) return { theta: 0.18, v: clamp(v2, 34, 370), vmax: 370, reach: true };
-  return { theta: ARTY_THETA, v: 370, vmax: 370, reach: false };   // 超程:硬按最大初速打
+  if (isFinite(v2) && v2 <= 660) return { theta: 0.18, v: clamp(v2, 34, 660), vmax: 660, reach: true };
+  return { theta: ARTY_THETA, v: 660, vmax: 660, reach: false };   // 超程:硬按最大初速打
 }
 var NE_CACHE_T = 0.2;                              // 最近敌缓存窗(火箭炮移动慢,最近敌变化缓;缓存对象阵亡即时失效重算,与 aiGrid 0.25s 重建同量级)
 function nearestEnemyOf(t) {
@@ -1086,6 +1126,20 @@ function pickArtyCluster(t) {
   _artyClusterCacheT[enemyTeam] = gameT;
   return best;
 }
+/* ★任务27⑧:跨局 AI 缓存清扫(flow.js clearBattleEntities 调用)。gameT 在菜单/读盘期冻结(step 门控),
+   gameT-TTL 缓存因此能跨局存活(实测新局开局缓存年龄 2.1s < 2.5s TTL → 命中):
+   · _artyClusterCache:新局火箭炮第 1 帧即按「上一局终战敌群质心」齐射——若上局终战在地图中部,
+     新局 t≈0.4s 发射、3~6s 后弹着 = 出生点视野外无人区成片爆炸(用户所见「开局来源不明火箭弹爆炸」);
+   · _weakCache/_fCluster:旧战线质心/突破口坐标带入新局迂回解算;
+   · _pkTop*:pickTarget 单趟暂存持旧车引用(卫生性置空)。 */
+function aiBattleClear() {
+  _artyClusterCache.ally = null; _artyClusterCache.enemy = null;
+  _artyClusterCacheT.ally = -99; _artyClusterCacheT.enemy = -99;
+  _weakCache.ally = null; _weakCache.enemy = null;
+  _weakCacheT.ally = -99; _weakCacheT.enemy = -99;
+  _fCluster = {}; _fClusterT = -99;
+  for (var i = 0; i < 3; i++) { _pkTop[i] = null; _pkTopD[i] = Infinity; _pkTopF[i] = null; _pkTopFD[i] = Infinity; }
+}
 function nearestFriendOf(t, x, z) {                        // 最近友军位置(落点推移用)
   var best = null, bd = 1e18;
   var roster = aiTeamRoster[t.team];                     // 友军紧凑表(随 aiGrid 0.25s 重建;免 team 判定,规模减半)
@@ -1098,16 +1152,334 @@ function nearestFriendOf(t, x, z) {                        // 最近友军位置
   }
   return best;
 }
+/* ===== 防空载具独立 AI (TASK 18) =====
+   用户设定:不在指挥官 AI 的指挥范围内;任务22 改为 HUNT/GROUND 双模式:有直升机情报→主动拦截猎杀(aaIntelUpdate 情报层),
+   无直升机→红方落入通用地面算法(软目标射击纪律)/蓝方伴随友军集群(aaEscortUpdate);火控仍为世界反馈伺服/思考节拍开火门,
+   优先攻击视野内的直升机;无可打直升机时导弹不发射(弹种 domain='air' 纯对空)。
+   红 PGZ-95:车载雷达航迹表(updateHeliWeapons 驱动)+ 双联机炮近距压制;蓝 复仇者:无雷达,纯视野扫描 + 发射后不管。 */
+function aaPickTarget(t) {
+  var tp = t.group.position;
+  var spec = HELI_MSL_SPEC[heliMslTypeOf(t)];
+  var range = spec.range;                                // 搜索/交战半径=导弹规格射程(红 ty90 6km/蓝 aim92 8km)
+  var best = null, bestScore = -1e9;
+  var ax = 0, az = 1;                                    // 发射架当前轴向(优先接轴目标,减少大角度回转时间)
+  if (t.gunPivot && t.gunPivot.getWorldDirection) { t.gunPivot.getWorldDirection(_gaDir); ax = _gaDir.x; az = _gaDir.z; }
+  for (var i = 0; i < aliveList.length; i++) {
+    var o = aliveList[i];
+    if (!o || !o.alive || o.team === t.team || !isHeliVehicle(o) || !o.group) continue;
+    var op = o.group.position;
+    var dx = op.x - tp.x, dy = op.y - (tp.y + 1.8), dz = op.z - tp.z;
+    var d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (d > range || d < 80) continue;                   // 导引头最小捕获距离 80m(近界内导引头来不及截获)
+    if (!losClearCached(t, o, d)) continue;              // 视野内地形遮挡剔除
+    var align = (dx / d) * ax + (dz / d) * az;           // 与发射架轴向对齐度 [-1,1]
+    var score = align * 400 - d;                         // 对齐优先,近者次之
+    if (score > bestScore) { bestScore = score; best = o; }
+  }
+  return best;
+}
+/* ===== 任务22: 防空车主动猎杀 —— 阵营直升机情报层 + HUNT/GROUND 双模式移动 =====
+   用户四项决策:①猎杀半径=全图自由;②复仇者 GROUND=伴随最近友军集群;
+   ③探测忠实不对称:红 PGZ 车载雷达(公开资料 CLC-1 ~11km 搜索,实现=地形遮蔽判定,三车数据链共享航迹),
+     蓝复仇者无雷达=每车 3km 光学 LOS + 敌直升机武器开火闪光暴露补盲(4s 有效,机炮/火箭/导弹三个发射口全挂钩);
+   ④PGZ GROUND 机炮只打软目标(aa/arty/直升机 或贴脸≤150m),对主战坦克省弹不暴露。
+   模式滞回:有航迹→HUNT(即时);航迹全过期且(敌直全灭 或 12s 无新情报)→GROUND。 */
+var AA_INTEL_SCAN_T = 0.6;      // 情报刷新节拍(与 aaPickTarget 目标扫描同拍)
+var AA_RADAR_R = 11000;         // PGZ 雷达搜索半径(地形遮蔽判定;数据链=全阵营共享)
+var AA_OPTICAL_R = 3000;        // 复仇者光学搜索半径(需 LOS)
+var AA_FLASH_T = 4.0;           // 直升机开火闪光有效期(位置级情报,无速度信息)
+var AA_INTEL_FRESH_T = 3.0;     // 航迹新鲜期:期内才做速度外推(直升机机动剧烈,陈迹不外推)
+var AA_INTEL_STALE_T = 6.0;     // 航迹有效期:超期→写墓地(最后已知位置)后删除
+var AA_MODE_GROUND_T = 12.0;    // HUNT→GROUND 滞回:无任何情报的时长
+var aaIntel = {
+  ally:  { tracks: [], mode: 'ground', lastSeen: -99, scanT: -99, graveX: 0, graveZ: 0, graveT: -99 },
+  enemy: { tracks: [], mode: 'ground', lastSeen: -99, scanT: -99, graveX: 0, graveZ: 0, graveT: -99 }
+};
+var _aaFlash = { ally: [], enemy: [] };   // 记在"防守方"数组:敌直升机开火→记入其对立阵营
+function aaNoteFlash(h) {                 // 直升机三个武器发射口挂钩(fireShell/fireHeliRocket/fireHeliMissile)
+  if (!h || !h.alive || !h.group || typeof isHeliVehicle !== 'function' || !isHeliVehicle(h)) return;
+  var list = _aaFlash[h.team === 'ally' ? 'enemy' : 'ally'], p = h.group.position;
+  list.push({ x: p.x, y: p.y, z: p.z, t: gameT });
+  if (list.length > 8) list.shift();
+}
+function aaIntelReset() {                 // 换局清零(spawnTeams 调用):陈旧航迹不跨局
+  for (var k in aaIntel) { var IN = aaIntel[k]; IN.tracks.length = 0; IN.mode = 'ground'; IN.lastSeen = -99; IN.scanT = -99; IN.graveT = -99; }
+  _aaFlash.ally.length = 0; _aaFlash.enemy.length = 0;
+}
+function aaIntelUpsert(IN, o, x, y, z, vx, vz) {
+  for (var i = 0; i < IN.tracks.length; i++) {
+    if (IN.tracks[i].o === o) { var tr = IN.tracks[i]; tr.x = x; tr.y = y; tr.z = z; tr.vx = vx; tr.vz = vz; tr.t = gameT; return; }
+  }
+  if (IN.tracks.length < 12) IN.tracks.push({ o: o, x: x, y: y, z: z, vx: vx, vz: vz, t: gameT });
+}
+function aaIntelUpdate(team) {
+  var IN = aaIntel[team];
+  if (!IN || gameT - IN.scanT < AA_INTEL_SCAN_T) return;
+  IN.scanT = gameT;
+  var i, j, o, p;
+  var sensors = null;                                   // 传感器=本阵营全部存活防空车(情报即阵营共享=数据链)
+  for (i = 0; i < aliveList.length; i++) {
+    o = aliveList[i];
+    if (!o || !o.alive || o.team !== team || o.kind !== 'aa') continue;
+    if (team === 'ally' && !o._heliRadarActive) continue;   // 任务23:PGZ 雷达未开机(部署后 15s 启动序列中)= 不贡献情报
+    (sensors || (sensors = [])).push(o);
+  }
+  if (!sensors) IN.tracks.length = 0;                   // 防空全灭:情报网下线(滞回照常走 → GROUND)
+  else for (i = 0; i < aliveList.length; i++) {
+    o = aliveList[i];
+    if (!o || !o.alive || o.team === team || !isHeliVehicle(o)) continue;
+    p = o.group.position;
+    var got = false;
+    for (j = 0; j < sensors.length; j++) {
+      var sp = sensors[j].group.position;
+      var dx = p.x - sp.x, dy = p.y - (sp.y + 2.2), dz = p.z - sp.z;
+      var d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (team === 'ally') {                            // 红:PGZ 雷达 11km,地形遮蔽判定(机载高度上遮蔽罕见)
+        if (d <= AA_RADAR_R && !terrainBlocksLine(sp.x, sp.y + 2.2, sp.z, p.x, p.y, p.z, d)) { got = true; break; }
+      } else if (d <= AA_OPTICAL_R && losClearCached(sensors[j], o, d)) { got = true; break; }   // 蓝:光学 3km+LOS
+    }
+    if (got) aaIntelUpsert(IN, o, p.x, p.y, p.z, o._heliVx || 0, o._heliVz || 0);
+  }
+  if (team === 'enemy') {                               // 蓝队闪光补盲:位置级情报(不覆盖实航迹的速度信息)
+    var fl = _aaFlash.enemy;
+    for (i = fl.length - 1; i >= 0; i--) {
+      if (gameT - fl[i].t > AA_FLASH_T) { fl.splice(i, 1); continue; }
+      var f = fl[i], covered = false;
+      for (j = 0; j < IN.tracks.length; j++) {
+        var tt = IN.tracks[j];
+        var fx = tt.x - f.x, fz = tt.z - f.z;
+        if (fx * fx + fz * fz < 1440000) { covered = true; break; }
+      }
+      if (!covered && f.t > IN.graveT) { IN.graveX = f.x; IN.graveZ = f.z; IN.graveT = f.t; IN.mode = 'hunt'; if (f.t > IN.lastSeen) IN.lastSeen = f.t; }
+    }
+  }
+  for (i = IN.tracks.length - 1; i >= 0; i--) {         // 航迹老化:超期/死亡→写墓地后删除
+    var tr2 = IN.tracks[i];
+    if (!tr2.o || !tr2.o.alive || gameT - tr2.t > AA_INTEL_STALE_T) {
+      if (tr2.t > IN.graveT) { IN.graveX = tr2.x; IN.graveZ = tr2.z; IN.graveT = tr2.t; }
+      IN.tracks.splice(i, 1);
+    }
+  }
+  if (IN.tracks.length) { IN.lastSeen = gameT; IN.mode = 'hunt'; }   // 有航迹=HUNT 即时
+  else if (IN.mode === 'hunt') {
+    var heliAlive = false;
+    for (i = 0; i < aliveList.length; i++) { o = aliveList[i]; if (o && o.alive && o.team !== team && isHeliVehicle(o)) { heliAlive = true; break; } }
+    if (!heliAlive || gameT - IN.lastSeen >= AA_MODE_GROUND_T) IN.mode = 'ground';
+  }
+}
+function aaIntelBest(IN, tp) {                          // 优先航迹:新鲜且近者先
+  var best = null, bk = 1e18;
+  for (var i = 0; i < IN.tracks.length; i++) {
+    var tr = IN.tracks[i];
+    var dx = tr.x - tp.x, dz = tr.z - tp.z;
+    var k = (gameT - tr.t) * 500 + Math.sqrt(dx * dx + dz * dz);
+    if (k < bk) { bk = k; best = tr; }
+  }
+  return best;
+}
+function aaHuntDest(t, IN, spec, B, dt) {   // HUNT 移动决策(1s 节拍):CLOSE 压近拦截/AMBUSH 抢占攻击位/REPOSITION 侧向拉视线/SEARCH 墓地漫游
+  var A = t.ai, tp = t.group.position;
+  A.huntT = (A.huntT || 0) - dt;
+  if (A.huntT > 0) return true;
+  A.huntT = 1.0;
+  var best = aaIntelBest(IN, tp);
+  if (best) {
+    var age = gameT - best.t;
+    var leadT = age < AA_INTEL_FRESH_T ? Math.min(age, 2.0) : 0;    // 新鲜航迹才外推
+    var px = best.x + (best.vx || 0) * leadT, pz = best.z + (best.vz || 0) * leadT;
+    var dx = px - tp.x, dz = pz - tp.z, d = Math.sqrt(dx * dx + dz * dz) || 1;
+    if (d > spec.range * 0.8) {
+      var victim = nearestFriendOf(t, px, pz);                      // 直升机正袭扰友军集群(≤3km)→抢占直-受害者连线中段(侧射位)
+      if (victim && (victim.x - px) * (victim.x - px) + (victim.z - pz) * (victim.z - pz) < 9000000) {
+        A.mode = 'ambush';
+        A.destX = clamp((px + victim.x) * 0.5, -B, B); A.destZ = clamp((pz + victim.z) * 0.5, -B, B);
+      } else {
+        A.mode = 'close';                                           // 射程外→压近至拦截点(全图自由,决策①)
+        A.destX = clamp(px, -B, B); A.destZ = clamp(pz, -B, B);
+      }
+      return true;
+    }
+    if (best.o && best.o.alive && !losClearCached(t, best.o, d)) {
+      if (gameT >= (A.jinkT || 0)) { A.jinkSide = -(A.jinkSide || 1); A.jinkT = gameT + 3.5; }
+      var ux = dx / d, uz = dz / d;
+      A.mode = 'reposition';                                        // 射程内但视线被挡→侧向绕行拉射窗(交替向防振荡)
+      A.destX = clamp(tp.x - uz * A.jinkSide * 110 + ux * 25, -B, B);
+      A.destZ = clamp(tp.z + ux * A.jinkSide * 110 + uz * 25, -B, B);
+      return true;
+    }
+    A.mode = 'engage'; A.destX = tp.x; A.destZ = tp.z;              // 射程内+LOS 通:驻停等火控接靶(同拍)
+    return true;
+  }
+  if (IN.graveT > 0 && gameT - IN.graveT < AA_MODE_GROUND_T) {      // SEARCH:墓地(最后已知位置/闪光点)
+    A.mode = 'search';
+    var gx = IN.graveX - tp.x, gz = IN.graveZ - tp.z;
+    if (gx * gx + gz * gz > 900) { A.destX = clamp(IN.graveX, -B, B); A.destZ = clamp(IN.graveZ, -B, B); return true; }
+    if (A.destT <= 0) {                                             // 已到墓地:150m 半径环漫游
+      A.destT = rand(2.5, 4.0);
+      var wa = rand(0, Math.PI * 2);
+      A.destX = clamp(IN.graveX + Math.cos(wa) * 150, -B, B);
+      A.destZ = clamp(IN.graveZ + Math.sin(wa) * 150, -B, B);
+    }
+    return true;
+  }
+  return false;                                                     // 零情报→调用方回锚点 hold
+}
+function aaEscortDest(t, B) {                   // 决策②:复仇者 GROUND 伴随最近友军地面集群(3s 节拍;110m 间距防叠堆,缓慢环绕)
+  var A = t.ai, tp = t.group.position;
+  if (A.destT > 0) return;
+  A.destT = 3.0;
+  var roster = aiTeamRoster[t.team] || [], i, o, p;
+  var nf = null, nd = 1e18;
+  for (i = 0; i < roster.length; i++) {
+    o = roster[i];
+    if (!o || !o.alive || o === t || isHeliVehicle(o)) continue;
+    p = o.group.position;
+    var dx = p.x - tp.x, dz = p.z - tp.z, d2 = dx * dx + dz * dz;
+    if (d2 < nd) { nd = d2; nf = p; }
+  }
+  if (!nf) { A.mode = 'hold'; A.destX = A.anchorX; A.destZ = clamp(A.homeZ, -B, B); return; }   // 友军全灭:回锚点
+  var cx = nf.x, cz = nf.z, n = 1;                                // 集群质心=最近友军 150m 邻域均值
+  for (i = 0; i < roster.length; i++) {
+    o = roster[i];
+    if (!o || !o.alive || o === t || isHeliVehicle(o)) continue;
+    p = o.group.position;
+    var ex = p.x - nf.x, ez = p.z - nf.z;
+    if (ex * ex + ez * ez < 22500) { cx += p.x; cz += p.z; n++; }
+  }
+  cx /= n; cz /= n;
+  if (A.ringA == null) A.ringA = rand(0, Math.PI * 2);
+  A.ringA += 0.12;
+  var hx = tp.x - cx, hz = tp.z - cz, hd = Math.sqrt(hx * hx + hz * hz) || 1;
+  A.mode = 'escort';
+  if (hd > 260) { A.destX = clamp(cx + hx / hd * 140, -B, B); A.destZ = clamp(cz + hz / hd * 140, -B, B); }        // 掉队→追及
+  else { A.destX = clamp(cx + Math.cos(A.ringA) * 110, -B, B); A.destZ = clamp(cz + Math.sin(A.ringA) * 110, -B, B); }  // 到位→保持间距环绕
+}
+function aaRadarSweep(t, dt, wide) {            // PGZ 搜索扫掠(雷达锥轴=炮塔向,与 updateHeliRadar 同口径):无目视目标时正弦慢扫
+  if (t.team !== 'ally') return;
+  var A = t.ai;
+  if (!wide && A.traceO && gameT - (A.traceT || 0) < 1.0) return; // GROUND 空闲扫掠:交战中不抢炮塔
+  A._swP = (A._swP || 0) + dt * (wide ? 0.45 : 0.3);
+  t.turretYaw = t.yaw + Math.sin(A._swP) * (wide ? 2.2 : 1.6);
+  if (t.turret) t.turret.rotation.y = t.turretYaw;
+}
+function aaSoftGateOK(t, tgt, dist) {           // 决策④:PGZ GROUND 25mm 只打软目标(对主战坦克主甲多为跳弹,省弹不暴露)
+  if (!t || t.kind !== 'aa' || !tgt) return true;
+  var k = tgt.kind;
+  if (k === 'aa' || k === 'arty' || isHeliVehicle(tgt)) return true;
+  return dist <= 150;                           // 贴脸威胁自卫豁免
+}
+function aaDriveTo(t, dt) {                     // aaUpdate/护航共用移动执行(与 artyUpdate 完全同链路:寻路操舵→车体伺服→油门→物理积分)
+  var A = t.ai, tp = t.group.position;
+  var ddx = A.destX - tp.x, ddz = A.destZ - tp.z, destDist = Math.sqrt(ddx * ddx + ddz * ddz);
+  var arrived = destDist < 10;
+  var sdxA = ddx, sdzA = ddz;
+  if (!arrived && typeof navSteer === 'function') { var _nwA = navSteer(t, A.destX, A.destZ, tp); if (_nwA) { sdxA = _nwA.x - tp.x; sdzA = _nwA.z - tp.z; } }
+  var drvA = steerCached(t, sdxA, sdzA);
+  var wantYaw = Math.atan2(drvA.x, drvA.z);
+  var diff = normAng(wantYaw - t.yaw);
+  var tm = turnMult(t) * slopeTurnMul(t), sm = speedMult(t);
+  var dClamp = clamp(diff, -t.turn0 * tm * dt, t.turn0 * tm * dt);
+  t.yaw += dClamp; t._turnCmd = dt > 0 ? dClamp / dt : 0;
+  var ma = Math.abs(normAng(wantYaw - t.yaw));
+  var evd = A.evadeT > 0;
+  var th = arrived ? 0 : (ma < 1.45 ? clamp(1 - ma / 1.7, evd ? 0.6 : 0.25, 1) : (ma > 1.75 ? (evd ? -0.8 : -0.5) : (evd ? 0.5 : 0.2)));
+  t._throttle = th; t._throttleLock = 0;
+  if (typeof SIM_K === 'undefined' || SIM_K <= 0) t.speed = approachSpeed(t.speed, th * t.speed0 * sm, t.accel0 * engineEff(t), t.decel0 * Math.max(engineEff(t), 0.3), dt);
+  applyMotion(t, dt);
+}
+function aaUpdate(t, dt) {
+  var A = t.ai, tp = t.group.position;
+  var B = CONF.bounds - 14;
+  var spec = HELI_MSL_SPEC[heliMslTypeOf(t)];
+  A.destT -= dt;
+  aaIntelUpdate(t.team);            // 阵营直升机情报层(内部 0.6s 节流;harness 直调 aaUpdate 时不依赖派发层)
+
+  // 武器/雷达计时(与玩家同套 updateHeliWeapons:PGZ-95 雷达航迹表+两侧导弹装填钟;复仇者无雷达空转)
+  updateHeliWeapons(t, dt);
+
+  // —— 目标扫描:优先攻击视野内的直升机(0.6s 重扫;目标阵亡立即重扫) ——
+  A.aaTgtT = (A.aaTgtT || 0) - dt;
+  if (A.aaTgtT <= 0 || !A.aaTgt || !A.aaTgt.alive) { A.aaTgtT = 0.6; A.aaTgt = aaPickTarget(t); }
+  var tgt = A.aaTgt;
+
+  // —— 移动决策(任务22 双模式):HUNT=情报驱动主动拦截猎杀;蓝方 GROUND=伴随友军集群(红方 GROUND 在派发层落入通用算法) ——
+  var IN = aaIntel[t.team];
+  var ne = nearestEnemyOf(t), dE = ne.d;
+  if (IN.mode === 'ground' && t.team === 'enemy') {
+    aaEscortDest(t, B);                                          // 决策②:复仇者无对地武器,纯移动伴随
+  } else if (tgt) {
+    A.mode = 'engage';                                           // 射程内+LOS 通:驻停交战(伺服火控全权接管,与任务18 相同)
+    A.destX = tp.x; A.destZ = tp.z;
+  } else if (ne.o && dE < 150) {
+    A.mode = 'flee';                                             // 无空目标且地面敌贴脸:脱离(保持任务18 纪律)
+    var away = Math.atan2(tp.x - ne.o.group.position.x, tp.z - ne.o.group.position.z);
+    A.destX = clamp(tp.x + Math.sin(away) * 80, -B, B);
+    A.destZ = clamp(tp.z + Math.cos(away) * 80, -B, B);
+  } else if (!aaHuntDest(t, IN, spec, B, dt)) {
+    A.mode = 'hold';                                             // HUNT 零情报(滞回尾巴):回锚点待机,雷达扫掠搜目标
+    if (A.destT <= 0) { A.destT = 3.0; A.destX = A.anchorX; A.destZ = clamp(A.homeZ, -B, B); }
+  }
+  // 火箭弹逃生优先于阵地纪律(逃生点由 maybeEvadeRocket 装定,main.js 全局驱动)
+  if (A.evadeT > 0) { A.mode = 'flee'; A.destX = A.evadeX; A.destZ = A.evadeZ; }
+
+  aaDriveTo(t, dt);                                              // 移动执行(共用链路)
+
+  if (!tgt) {                                                    // 无空中目标:发射架回正行军仰角 + PGZ 雷达扫掠搜目标(锥轴=炮塔)
+    t.gunPitch += (0.35 - t.gunPitch) * Math.min(1, dt);
+    aaRadarSweep(t, dt, true);
+    if (t.turret) t.turret.rotation.y = t.turretYaw;
+    if (t.gunPivot) t.gunPivot.rotation.x = -t.gunPitch;
+    return;
+  }
+
+  // —— 提前量:按导弹飞行时间的匀速前置(直升机三轴惯性速度 _heliVx/Vy/Vz;神枪手系数 A.lead 与全体 AI 同源) ——
+  var tpos = tgt.group.position;
+  var dx = tpos.x - tp.x, dy = tpos.y - (tp.y + 1.8), dz = tpos.z - tp.z;
+  var d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  var tFly = d / spec.vMax;
+  var leadK = A.lead != null ? A.lead : 1;
+  var ax = tpos.x + (tgt._heliVx || 0) * tFly * leadK;
+  var ay = tpos.y + (tgt._heliVy || 0) * tFly * leadK;
+  var az = tpos.z + (tgt._heliVz || 0) * tFly * leadK;
+  var dxd = ax - tp.x, dyd = ay - (tp.y + 1.8), dzd = az - tp.z;
+  var dHor = Math.sqrt(dxd * dxd + dzd * dzd) || 1;
+  var wantAz = Math.atan2(dxd, dzd);
+  var wantEl = Math.atan2(dyd, dHor);
+  // 世界反馈伺服(与 artyUpdate 同式:按实测发射架方向收敛,车体朝向/坡地姿态不带偏轴线)
+  t.gunPivot.getWorldDirection(_gaDir);
+  var bAz = Math.atan2(_gaDir.x, _gaDir.z);
+  var bEl = Math.asin(clamp(_gaDir.y, -1, 1));
+  var tdiff = normAng(wantAz - bAz);
+  var pdiff = normAng(wantEl - bEl);
+  var tr = t.turretRate0 * turretMult(t);
+  t.turretYaw += clamp(tdiff, -tr * dt, tr * dt);
+  var _aaPLo = t.team === 'ally' ? -5 * Math.PI / 180 : -0.1745, _aaPHi = t.team === 'ally' ? 90 * Math.PI / 180 : 1.2217;   // 任务25:PGZ-95 机炮射界 -5°~+90°(可对天顶)/复仇者 -10°~+70°
+  t.gunPitch = clamp(t.gunPitch + clamp(pdiff, -1.0 * dt, 1.0 * dt), _aaPLo, _aaPHi);
+  if (t.turret) t.turret.rotation.y = t.turretYaw;
+  if (t.gunPivot) t.gunPivot.rotation.x = -t.gunPitch;
+
+  var aimOK = Math.abs(tdiff) < 0.08 && Math.abs(pdiff) < 0.08;
+  // —— 机炮开火(任务25:脱离思考节拍,每步检查;射速只受装填门 0.125s 限制=玩家同源×2 射速) ——
+  // PGZ-95 双联机炮:近距(<1400m)跟踪压制(每把性能=直升机机炮;fireShell 标准装填/散布管线)
+  if (aimOK && t.team === 'ally' && d < 1400 && t.reload <= 0 && t.mods.gun && t.mods.gun.hp > 0) fireAAGun(t);
+  // —— 导弹开火触发(思考节拍节流+任务24 齐射纪律;弹药/装填门全部收在 triggerAAFire 内,与玩家完全同源) ——
+  if (A.thinkT > 0) return;
+  A.thinkT = rand(0.25, 0.45);
+  if (!aimOK || d > spec.range) return;
+  if (t.mods.ammo && t.mods.ammo.hp > 0) triggerAAFire(t);          // 导弹(左右发射架交替;PGZ 吃雷达锁定,复仇者弹自搜索)
+}
+
 function artyUpdate(t, dt) {
   var A = t.ai, tp = t.group.position;
   var B = CONF.bounds - 14;
   var homeSign = homeSignOf(t);   // arty.homeZ 带半场符号(生成/部署时落位),未设时按出生线兜底
-  var AC = CONF.arty;
+  var AC = artyConfOf(t);   // 阵营规格路由:红 PHL-11(40发/60伤) 蓝 M142(6发/120伤),射程均 40km
   A.destT -= dt;
 
   // —— 齐射进行中:车辆锁定不动,停稳后按间隔射出 ——
   if (t.salvoLeft > 0) {
-    t.speed = approachSpeed(t.speed, 0, 0, t.decel0, dt);
+    t._throttle = 0; t._throttleLock = 1; t._turnCmd = 0;   // 齐射驻锄(物理分支:无驱动+不溜坡)
+    if (typeof SIM_K === 'undefined' || SIM_K <= 0) t.speed = approachSpeed(t.speed, 0, 0, t.decel0, dt);
     applyMotion(t, dt);
     t.salvoT -= dt;
     if (t.salvoT <= 0 && Math.abs(t.speed) < 0.8 && t.mods.gun.hp > 0) {
@@ -1141,7 +1513,7 @@ function artyUpdate(t, dt) {
       var away = Math.atan2(tp.x - ne.o.group.position.x, tp.z - ne.o.group.position.z);
       var fx = clamp(tp.x + Math.sin(away) * 80, -B, B);
       var fz = clamp(tp.z + Math.cos(away) * 80 + homeSign * 40, -B, B);
-      if (validDest(fx, fz)) { A.destX = fx; A.destZ = fz; }
+      if (validDest(fx, fz, t)) { A.destX = fx; A.destZ = fz; }
     } else {
       A.mode = 'counter';                            // 自卫反击:就地刹车,发射架指向最近威胁
       A.cluster = { x: ne.o.group.position.x, z: ne.o.group.position.z,
@@ -1156,7 +1528,7 @@ function artyUpdate(t, dt) {
       var ux = (cl.x - tp.x) / dCl, uz = (cl.z - tp.z) / dCl;
       var px2 = clamp(tp.x + ux * (dCl - (AC.maxRange - 40)), -B, B);
       var pz2 = clamp(tp.z + uz * (dCl - (AC.maxRange - 40)), -B, B);
-      if (validDest(px2, pz2)) { A.destX = px2; A.destZ = pz2; A.reposT = gameT + 3.5; }
+      if (validDest(px2, pz2, t)) { A.destX = px2; A.destZ = pz2; A.reposT = gameT + 3.5; }
     }
   } else if (cl && dCl < AC.minRange + 15) {
     // 敌群顶到最小射程内(但尚未贴身)→ 沿轴线后撤出缓冲区
@@ -1165,7 +1537,7 @@ function artyUpdate(t, dt) {
       var bx = (tp.x - cl.x) / dCl, bz = (tp.z - cl.z) / dCl;
       var bx2 = clamp(tp.x + bx * (AC.minRange + 40 - dCl), -B, B);
       var bz2 = clamp(tp.z + bz * (AC.minRange + 40 - dCl), -B, B);
-      if (validDest(bx2, bz2)) { A.destX = bx2; A.destZ = bz2; A.reposT = gameT + 3.5; }
+      if (validDest(bx2, bz2, t)) { A.destX = bx2; A.destZ = bz2; A.reposT = gameT + 3.5; }
     }
   } else {
     A.mode = 'fire';                                   // 安全 + 敌群已在射程边界以内 → 驻锄优先射击
@@ -1176,17 +1548,20 @@ function artyUpdate(t, dt) {
 
   var ddx = A.destX - tp.x, ddz = A.destZ - tp.z, destDist = Math.sqrt((ddx)*(ddx)+(ddz)*(ddz));
   var arrived = destDist < 10;
+  var sdxA = ddx, sdzA = ddz;   // P2 寻路航点(逃生/到站自动直行)
+  if (!arrived && typeof navSteer === 'function') { var _nwA = navSteer(t, A.destX, A.destZ, tp); if (_nwA) { sdxA = _nwA.x - tp.x; sdzA = _nwA.z - tp.z; } }
 
   // 移动(到界/停稳是开火前提;齐射期间上面已锁死)
-  var drvA = steerCached(t, ddx, ddz);                 // 2C:10Hz 缓存避障(输入突变>25% 立即重评);火箭炮转向慢,陈旧度零感知;下方 wantYaw/ma 两处消费间无重入,共享 _steerOut 安全
+  var drvA = steerCached(t, sdxA, sdzA);                 // 2C:10Hz 缓存避障(输入突变>25% 立即重评);火箭炮转向慢,陈旧度零感知;下方 wantYaw/ma 两处消费间无重入,共享 _steerOut 安全
   var wantYaw = Math.atan2(drvA.x, drvA.z);
   var diff = normAng(wantYaw - t.yaw);
-  var tm = turnMult(t), sm = speedMult(t);
-  t.yaw += clamp(diff, -t.turn0 * tm * dt, t.turn0 * tm * dt);
+  var tm = turnMult(t) * slopeTurnMul(t), sm = speedMult(t);
+  t.yaw += clamp(diff, -t.turn0 * tm * dt, t.turn0 * tm * dt); t._turnCmd = dt > 0 ? clamp(diff, -t.turn0 * tm * dt, t.turn0 * tm * dt) / dt : 0;
   var ma = Math.abs(normAng(Math.atan2(drvA.x, drvA.z) - t.yaw));
   var evd = A.evadeT > 0;                              // 火箭弹逃生:全油门
   var th = arrived ? 0 : (ma < 1.45 ? clamp(1 - ma / 1.7, evd ? 0.6 : 0.25, 1) : (ma > 1.75 ? (evd ? -0.8 : -0.5) : (evd ? 0.5 : 0.2)));
-  t.speed = approachSpeed(t.speed, th * t.speed0 * sm, t.accel0 * engineEff(t), t.decel0 * Math.max(engineEff(t), 0.3), dt);   // 加/减速 ∝ 发动机效率(30% 刹车地板)
+  t._throttle = th; t._throttleLock = 0;
+  if (typeof SIM_K === 'undefined' || SIM_K <= 0) t.speed = approachSpeed(t.speed, th * t.speed0 * sm, t.accel0 * engineEff(t), t.decel0 * Math.max(engineEff(t), 0.3), dt);   // 加/减速 ∝ 发动机效率(30% 刹车地板)
   applyMotion(t, dt);
 
   if (danger) {
@@ -1215,7 +1590,7 @@ function artyUpdate(t, dt) {
     if (!arrived || Math.abs(t.speed) > 1.0) { artyGate(t, 'braking'); return; }   // 刹车中
     if (friendProx(t, te.x, te.z, 22)) { artyGate(t, 'friend'); return; }     // 同一误伤保险
     if (Math.abs(tdiffE) < 0.03 && Math.abs(pdiffE) < 0.025) {                     // 瞄准到位 → 立即开火
-      t.salvoLeft = AC.salvo; t.salvoT = 0.05;   // 纯火箭炮齐射
+      t.salvoLeft = AC.salvo; t.salvoT = 0.05 + Math.random() * 1.2;   // 纯火箭炮齐射(★任务27⑥:近距反制小幅错峰,自卫响应仍快)
       t._salvoAimX = te.x; t._salvoAimZ = te.z;
       artyGate(t, 'COUNTER');
     } else {
@@ -1264,7 +1639,10 @@ function artyUpdate(t, dt) {
   if (friendProx(t, aimX, aimZ, 22)) { artyGate(t, 'friend'); return; }   // 双方同一保险(已推移仍冲突才放弃)
   // 瞄准到位 → 开火(火箭=齐射)
   if (Math.abs(tdiff) < 0.03 && Math.abs(pdiff) < 0.025) {
-    t.salvoLeft = AC.salvo; t.salvoT = 0.05;   // 纯火箭炮齐射
+    /* ★任务27⑥ 齐射去同步:同阵营 4 门共享同一聚类缓存(2.5s),开战即同拍齐射——
+       8 门×40/6 发同时泼向同一集群=爆点卡到达率 ~10/s 顶满 28 槽池(反复闪现)+填充率(卡)。
+       起点随机错峰 0~3s:瞬时到达率减半,总火力/散布/弹道/装填全不变(仅发射时刻平移)。 */
+    t.salvoLeft = AC.salvo; t.salvoT = 0.05 + Math.random() * 3.0;   // 纯火箭炮齐射(错峰)
     t._salvoAimX = aimX; t._salvoAimZ = aimZ;
     artyGate(t, 'SALVO');
   } else {
@@ -2176,10 +2554,18 @@ function aiHeliUpdate(t, dt) {
 }
 
 function aiUpdate(t, dt) {
+  if (typeof navPump === 'function') navPump(gameT);   // P2 寻路令牌桶(全局队列,各车分摊;无请求时立即返回)
   var A = t.ai;
   A.thinkT -= dt;
   if (isHeliVehicle(t)) { aiHeliUpdate(t, dt); return; }   // 直升机使用独立三维空战物理逻辑。
   if (t.kind === 'arty') { artyUpdate(t, dt); return; }   // 火箭炮使用独立火控逻辑。
+  if (t.kind === 'aa') {                                  // 防空载具双模式(任务22):HUNT=独立防空猎杀;GROUND 红=通用地面算法/蓝=护航伴随
+    aaIntelUpdate(t.team);
+    if (aaIntel[t.team].mode === 'hunt' || t.team === 'enemy') { aaUpdate(t, dt); return; }
+    updateHeliWeapons(t, dt);                             // 红方 GROUND:导弹装填钟+雷达航迹表(情报源)不能停
+    aaRadarSweep(t, dt, false);                           // 未交战时炮塔慢扫,保持直升机发现机会(雷达锥轴=炮塔向)
+    // → 落入下方通用地面算法(推进/掩体/开火纪律全继承;开火闸带 aaSoftGateOK 只打软目标)
+  }
   var didThink = false;
   var _tThk = (window._dbgPerfOn && window.__PERF) ? performance.now() : 0;   // aiCore 子段探针:think 节拍耗时
   if (A.thinkT <= 0) {
@@ -2224,19 +2610,23 @@ function aiUpdate(t, dt) {
       }
       var ddx0 = A.destX - tp.x, ddz0 = A.destZ - tp.z, dd0 = Math.sqrt((ddx0)*(ddx0)+(ddz0)*(ddz0));
       if (dd0 > 8) {
-        var drv0 = steerCached(t, ddx0, ddz0);
+        var sdx0 = ddx0, sdz0 = ddz0;   // P2 寻路航点
+        if (typeof navSteer === 'function') { var _nw0 = navSteer(t, A.destX, A.destZ, tp); if (_nw0) { sdx0 = _nw0.x - tp.x; sdz0 = _nw0.z - tp.z; } }
+        var drv0 = steerCached(t, sdx0, sdz0);
         var wy0 = Math.atan2(drv0.x, drv0.z);
-        var diff0 = clamp(normAng(wy0 - t.yaw), -t.turn0 * turnMult(t) * dt, t.turn0 * turnMult(t) * dt);
-        t.yaw += diff0; t.turretYaw -= diff0;
+        var diff0 = clamp(normAng(wy0 - t.yaw), -t.turn0 * turnMult(t) * slopeTurnMul(t) * dt, t.turn0 * turnMult(t) * slopeTurnMul(t) * dt);
+        t.yaw += diff0; t.turretYaw -= diff0; t._turnCmd = dt > 0 ? diff0 / dt : 0;
         var ma0 = Math.abs(normAng(wy0 - t.yaw));
         var th0 = ma0 < 1.45 ? clamp(1 - ma0 / 1.7, 0.25, 1) : (ma0 > 1.75 ? -0.55 : 0.22);
-        t.speed = approachSpeed(t.speed, th0 * t.speed0 * speedMult(t), t.accel0 * engineEff(t), t.decel0 * Math.max(engineEff(t), 0.3), dt);
-      } else t.speed = approachSpeed(t.speed, 0, t.accel0, t.decel0, dt);   // 环点到达:驻停(下拍再选点)
+        t._throttle = th0; t._throttleLock = 0;
+        if (typeof SIM_K === 'undefined' || SIM_K <= 0) t.speed = approachSpeed(t.speed, th0 * t.speed0 * speedMult(t), t.accel0 * engineEff(t), t.decel0 * Math.max(engineEff(t), 0.3), dt);
+      } else { t._throttle = 0; t._throttleLock = 0; t._turnCmd = 0; if (typeof SIM_K === 'undefined' || SIM_K <= 0) t.speed = approachSpeed(t.speed, 0, t.accel0, t.decel0, dt); }   // 环点到达:驻停(下拍再选点)
       applyMotion(t, dt);
       return;
     }
     A.mode = 'noenemy';
-    t.speed = approachSpeed(t.speed, 0, t.accel0, t.decel0, dt);
+    t._throttle = 0; t._throttleLock = 0; t._turnCmd = 0;
+    if (typeof SIM_K === 'undefined' || SIM_K <= 0) t.speed = approachSpeed(t.speed, 0, t.accel0, t.decel0, dt);
     applyMotion(t, dt);
     return;
   }
@@ -2260,6 +2650,7 @@ function aiUpdate(t, dt) {
     var frT2 = combatFloorOf(t, tgt);                      // 行军段=交火底线外(与模式决策同口径)
     var noGo = Math.abs(t.speed) < 0.45 && !t.fire &&
                t.mods.engine.hp > 0 && t.mods.fuel.hp > 0 && t.mods.trackL.hp > 0 && t.mods.trackR.hp > 0;   // 断油豁免看门狗
+    if (slopeStuck(t)) A.idleW = Math.max(A.idleW, 2.6);   // P1 坡卡死:不等 4s,本拍直接重选
     if (dist > frT2 && noGo) A.idleW += 0.45; else A.idleW = Math.max(0, A.idleW - 1);
       if (A.destT <= 0 || t.blockedT > 1.5 || A.idleW > 2.5) {
         A.relax = A.idleW > 2.5 ? 1 : 0;                 // 一次性解锁令牌:本次选点豁免"散开"拥挤检查
@@ -2273,6 +2664,33 @@ function aiUpdate(t, dt) {
         } else {
           A.destT = rand(5, 8);
           pickAIDest(t, tgt, dist);
+          // P1 航段抽查:起点→目的地 8 等分坡度,遇禁行段重选(≤3次)→取最远可达点
+          if (typeof SIM_K !== 'undefined' && SIM_K > 0) {
+            var _reach = navSegReach(t, tp.x, tp.z, A.destX, A.destZ, 0), _tries = 0;
+            while (_reach < 1 && _tries < 3) {
+              _tries++;
+              pickAIDest(t, tgt, dist);
+              _reach = navSegReach(t, tp.x, tp.z, A.destX, A.destZ, 0);
+            }
+            if (_reach < 1) {
+              var _rf = Math.max(0, _reach - 0.05);
+              A.destX = tp.x + (A.destX - tp.x) * _rf;
+              A.destZ = tp.z + (A.destZ - tp.z) * _rf;
+              A.destT = Math.min(A.destT, 3);
+              // P2.3:截断点记忆——同墙 30m 内连续 3 次→±60° 侧向绕行偏置(交替)，终结墙根"到站-重选"打转
+              var tdx = A.destX - (A._truncX == null ? 1e9 : A._truncX), tdz = A.destZ - (A._truncZ == null ? 1e9 : A._truncZ);
+              if (tdx * tdx + tdz * tdz < 900) A._truncN = (A._truncN || 0) + 1; else A._truncN = 1;
+              A._truncX = A.destX; A._truncZ = A.destZ;
+              if (A._truncN >= 3) {
+                A._truncSide = -(A._truncSide || 1);
+                var tBase = Math.atan2(A.destX - tp.x, A.destZ - tp.z) + A._truncSide * Math.PI / 3;
+                var tRng = Math.sqrt((A.destX - tp.x) * (A.destX - tp.x) + (A.destZ - tp.z) * (A.destZ - tp.z)) || 100;
+                var tFx = tp.x + Math.sin(tBase) * tRng, tFz = tp.z + Math.cos(tBase) * tRng;
+                if (validDest(tFx, tFz, t, true)) { A.destX = tFx; A.destZ = tFz; }
+                A._truncN = 0;
+              }
+            }
+          }
         }
         A.idleW = 0;
         A.relax = 0;
@@ -2284,6 +2702,12 @@ function aiUpdate(t, dt) {
   var ddx = A.destX - tp.x, ddz = A.destZ - tp.z;
   if (evading) { ddx = A.evadeX - tp.x; ddz = A.evadeZ - tp.z; }
   var destDist = Math.sqrt((ddx)*(ddx)+(ddz)*(ddz));
+  // P2 寻路:转向目标换为 pursuit 航点(到达判定仍用原始 dest;逃生/8m 内直行)
+  var sdx = ddx, sdz = ddz;
+  if (!evading && destDist >= 8 && typeof navSteer === 'function') {
+    var _nw = navSteer(t, A.destX, A.destZ, tp);
+    if (_nw) { sdx = _nw.x - tp.x; sdz = _nw.z - tp.z; }
+  }
   /* 指挥追锚(玩家指令绝对):接管成员距目的地 ≥8m=行军态——车头朝行进方向+油门全额
      (charge 同口径;暴露面敌纪律让路,带内驻停/环内漫游不受影响;躲弹逃生走 evade 分支)。 */
   var sqGo = !evading && A.mode === 'guard' && t._cmdG && t._cmdG._detached &&
@@ -2291,11 +2715,12 @@ function aiUpdate(t, dt) {
   // 抵达掩体/阵点/部署点后小幅蠕动,保持"露头-射击-缩回"节奏;
   // ★行军段(敌>型号射程)零驻留:到站即换下一段,不许原地打卡(反偷懒核心)
   if (destDist < 8) {
-    if (dist > frT2) A.destT = 0;
+    var isTrunc = A._truncX != null && (A.destX - A._truncX) * (A.destX - A._truncX) + (A.destZ - A._truncZ) * (A.destZ - A._truncZ) < 100;
+    if (dist > frT2) A.destT = isTrunc ? Math.min(A.destT, 1.5) : 0;   // P3.3:截断点到达给 1.5s 冷静期(防高频打转)
     else if (A.mode === 'cover' || A.mode === 'hold') A.destT = Math.min(A.destT, rand(1.5, 3.5));
   }
 
-  var drv = steerCached(t, ddx, ddz);                   // 行驶方向:前方有障碍则绕行(10Hz 缓存;每帧双全表扫描是热点)
+  var drv = steerCached(t, sdx, sdz);                   // 行驶方向:前方有障碍则绕行(10Hz 缓存;每帧双全表扫描是热点)
   // —— 车体朝向纪律:交战域内正面对敌;行军/突进/迂回/逃命让车头朝行进方向 ——
   // 输出段(hold/cover)让车头咬向目标;
   // 行军段(charge/advance)车头跟行进方向赶路,不为远程目标磨洋工(反偷懒行军速度优先);
@@ -2318,9 +2743,9 @@ function aiUpdate(t, dt) {
     : (inCombat ? Math.atan2(gp.x - tp.x, gp.z - tp.z) - (turDead ? t.turretYaw : 0)   // 炮塔卡死:车头补偿固定炮塔偏角,让炮管指向目标(车体瞄准)
       : (destDist < 8 ? t.yaw : Math.atan2(drv.x, drv.z))); // 已在目的地(dest≈自身)时保持当前车头朝向——原 atan2(0,0)=0° 病态会让车原地掉头车尾朝敌(89实测根因之一)
   var diff = normAng(wantYaw - t.yaw);
-  var tm = turnMult(t), sm = speedMult(t);
+  var tm = turnMult(t) * slopeTurnMul(t), sm = speedMult(t);
   var yawD = clamp(diff, -t.turn0 * tm * dt, t.turn0 * tm * dt);
-  t.yaw += yawD;
+  t.yaw += yawD; t._turnCmd = dt > 0 ? yawD / dt : 0;
   if (!turDead) t.turretYaw -= yawD;   // 车长手轮反向补偿(炮塔能转时:车体转多少炮塔回多少,炮管世界指向不丢);
                                        // 炮塔卡死:禁用补偿——车体转向直接带动固定炮管(车体瞄准)
                                        // (无补偿行:车体转速 0.45 > 炮塔 0.32,行进转向时瞄准永远追赶不上=装填好也哑火)
@@ -2333,7 +2758,8 @@ function aiUpdate(t, dt) {
   else if (ma > 1.75) th = evading ? -0.85 : -0.55;                        // 倒车保正面(逃命倒车更狠)
   else th = evading ? 0.5 : 0.22;                                          // 侧向:低速调整同时车体转正
   var targetSp = th * t.speed0 * sm;
-  t.speed = approachSpeed(t.speed, targetSp, t.accel0 * engineEff(t), t.decel0 * Math.max(engineEff(t), 0.3), dt);             // 同上(玩家=AI 同机理)
+  t._throttle = th; t._throttleLock = 0;   // 物理分支:speed 由 applyMotion→slopeArbitrate 裁决,此处只写油门
+  if (typeof SIM_K === 'undefined' || SIM_K <= 0) t.speed = approachSpeed(t.speed, targetSp, t.accel0 * engineEff(t), t.decel0 * Math.max(engineEff(t), 0.3), dt);             // 同上(玩家=AI 同机理)
   applyMotion(t, dt);
   if (_tMove) __PERF.aiMove += performance.now() - _tMove;
 
@@ -2384,15 +2810,16 @@ function aiUpdate(t, dt) {
   if (isHeliVehicle(t)) t.turretYaw = clamp(t.turretYaw, -Math.PI / 2, Math.PI / 2);   // 直升机机炮射界=前方180°
   var rpkTK = recPitchK(t);                                     // 后坐炮口上抬:目标装定叠 kick,伺服装回
   var isHeliAI = isHeliVehicle(t);
-  var pitchMinAI = isHeliAI ? -80 * Math.PI / 180 : -0.12;
-  var pitchCapAI = isHeliAI ? 0.0 : (isTD89Vehicle(t) ? 0.24 : 0.20);   // AI 炮仰角上限(坦克0.20/89歼0.24rad)
+  var _aiAA = (typeof isAAVehicle === 'function' && isAAVehicle(t) && t.team === 'ally');   // 任务25:PGZ-95 GROUND 模式机炮同吃 -5°~+90° 射界(贴脸自卫可对天)
+  var pitchMinAI = isHeliAI ? -80 * Math.PI / 180 : (_aiAA ? -5 * Math.PI / 180 : -0.12);
+  var pitchCapAI = isHeliAI ? 0.0 : (_aiAA ? 90 * Math.PI / 180 : (isTD89Vehicle(t) ? 0.24 : 0.20));   // AI 炮仰角上限(坦克0.20/89歼0.24rad/PGZ 90°)
   t.gunPitch = clamp(t.gunPitch + clamp(wantEl + rpkTK - bElF, -(isHeliAI ? 2.0 : 0.5) * nEff * dt, (isHeliAI ? 2.0 : 0.5) * nEff * dt), pitchMinAI, pitchCapAI + rpkTK);
   if (!isFinite(t.turretYaw)) t.turretYaw = 0;               // NaN 双保险(炮塔矩阵 NaN=炮塔不渲染="只有车体没炮塔")
   if (!isFinite(t.gunPitch)) t.gunPitch = isHeliAI ? 0.0 : 0.2;
 
   // —— 开火:装填完毕 + 目标已警觉 + 射界畅通 三者齐备绝不哑火(gunGate 逐因记账) ——
   // isNoticed 复用上方 seen(避免同参重复决策);友军线 0.2s 缓存(免每帧全表 sqrt+atan2)
-  if (t.reload <= 0 && t.mods.gun.hp > 0 && seen) {
+  if (t.reload <= 0 && t.mods.gun.hp > 0 && seen && aaSoftGateOK(t, tgt, adist)) {   // 任务22 决策④:防空车 GROUND 只打软目标/贴脸
     if (A.mode === 'charge') { /* 冲锋:移动中射击,豁免 range 门——任意距离开火压制(暴露推进换近战优势) */ }
     else if (adist >= combatFloorOf(t, tgt)) gunGate(t, 'range');   // 交战段:交火底线外散布圆盖不住目标正面,不打
     // 冲锋:瞄准门放宽至固定 17°(命中率让位于压制;冲锋车不驻留等瞄);交战段走散布同源门
@@ -2723,6 +3150,7 @@ function cmdRoster(key) {
     t = aliveList[i];
     if (t.isPlayer || t.kind === 'arty') continue;
     if (isHeliVehicle(t)) continue;   // 直升机不归指挥官指挥(三维空战自主决策)
+    if (typeof isAAVehicle === 'function' && isAAVehicle(t)) continue;   // 防空载具不归指挥官指挥(独立防空 AI,火箭炮同构,用户设定)
     if (t.team + '|' + dynModelKey(t) === key) out.push(t);
   }
   return out;
@@ -2745,7 +3173,7 @@ function cmdSplit(c) {
      必须先解引用,否则 t._cmdG 会指向已废弃组对象,污染后续所有 _cmdG 消费端) */
   for (i = 0; i < c.groups.length; i++) {
     var gmH = c.groups[i].members;
-    for (j = 0; j < gmH.length; j++) if (isHeliVehicle(gmH[j])) gmH[j]._cmdG = null;
+    for (j = 0; j < gmH.length; j++) if (isHeliVehicle(gmH[j]) || (typeof isAAVehicle === 'function' && isAAVehicle(gmH[j]))) gmH[j]._cmdG = null;
   }
   for (i = un.length - 1; i >= 0; i--) if (un[i]._cmdG && un[i]._cmdG._detached) un.splice(i, 1);   // 玩家接管中成员不参与重分组(防决策期夺组)
   for (i = 0; i < un.length; i++) un[i]._cmdG = null;
@@ -2770,7 +3198,7 @@ function cmdSplit(c) {
 function cmdAssign(t) {
   /* 直升机不入指挥官编组:生成/补员/退出指挥后重新编入三条路径统一在此拦截;
      已挂组者即时脱组(cmdLeave 同步注销空组),保证 t._cmdG 对直升机恒为 null。 */
-  if (t.isPlayer || t.kind === 'arty' || !t.ai || isHeliVehicle(t)) { if (t._cmdG) cmdLeave(t); return; }
+  if (t.isPlayer || t.kind === 'arty' || !t.ai || isHeliVehicle(t) || (typeof isAAVehicle === 'function' && isAAVehicle(t))) { if (t._cmdG) cmdLeave(t); return; }
   if (sqCmd.active && sqCmd.group && t.team === sqCmd.team && sqCmd.group.members.length < CMD_GROUP_SIZE) {
     sqCmd.group.members.push(t); t._cmdG = sqCmd.group; return;   // 指挥模式补员:直入玩家接管组(满编后走常规编组)
   }
@@ -2800,8 +3228,8 @@ function cmdLeave(t) {
 /* ===== 小队指挥系统(全事件驱动,零新增每帧轮询) ----
    玩家长按(Backspace/#tsqb 1s)接管距自己最近的己方指挥小组:
    · 组脱离指挥部(c.groups 移除)=不受指挥官决策/评分/重分组影响,指挥官损失账不计(dynNoteCore 守卫);
-   · 分数清零(dOut/dIn/shots/hits/rangeMul/_ring);
-   · 盾徽编号→五角星(红方黄/蓝方白),意图标→横杠(comic.js 按 _detached 切换);
+   · 分数清零(dOut/dIn/shots/hits/rangeMul);
+   · 被指挥者头顶五角星、无战术标(红方黄/蓝方白,见 comic.js _cmdStarTick);
    · 跟随玩家=复用护卫机制(role='guard'+protectGroup 包裹玩家,pickAIDest 护卫分支白吃);
    · 补员不断:cmdAssign 顶部钩子,战损补充直入接管组(满编 CMD_GROUP_SIZE 后回归常规编组);
    · 再长按退出:成员逐个 cmdAssign 重新编入(重新部署算法);玩家阵亡/小队全灭自动退出。 ===== */
@@ -2919,12 +3347,12 @@ function sqCmdEnter() {
   var ix = g._c.groups.indexOf(g);
   if (ix >= 0) g._c.groups.splice(ix, 1);               // 离开指挥部:决策/评分/重分组不再触及
   g.dOut.fill(0); g.dIn.fill(0);                        // 分数清零
-  g.shots = 0; g.hits = 0; g.rangeMul = 1; g._ring = 0;
+  g.shots = 0; g.hits = 0; g.rangeMul = 1;
   g.role = 'guard'; g.protectGroup = { members: [player] };   // 跟随玩家(复用护卫跟随,决策期节奏非帧级)
   g._detached = true;
   sqCmd.active = true; sqCmd.group = g; sqCmd.team = player.team;
   sqCmd.order = 'follow'; sqCmdFlagSync();            // 新指挥会话指令复位为跟随(无占领点)
-  if (typeof sqbSyncToCmd === 'function') sqbSyncToCmd();   // 进入指挥模式→小队标识同步开
+  if (typeof tacSyncToCmd === 'function') tacSyncToCmd();   // 进入指挥模式→战术标识同步开
   if (typeof window !== 'undefined' && window._touchUISync) window._touchUISync();   // 触控指令键(占领/跟随)即时出现
   if (typeof addLog === 'function') addLog('<b>小队指挥</b>', 'good');
 }
@@ -2933,7 +3361,7 @@ function sqCmdExit() {
   var g = sqCmd.group, mem = g.members.slice(), i;
   sqCmd.active = false; sqCmd.group = null; sqCmd.team = null;
   sqCmd.order = 'follow'; sqCmdFlagSync();            // 退出收旗(跟随态无旗帜)
-  if (typeof sqbForceOff === 'function') sqbForceOff();    // 退出指挥模式→强制关小队标识(死亡/手动/覆没同)
+  if (typeof tacForceOff === 'function') tacForceOff();    // 退出指挥模式→战术标识按T开关决定去留(死亡/手动/覆没同)
   if (typeof window !== 'undefined' && window._touchUISync) window._touchUISync();   // 触控指令键即时消失
   g._detached = false; g.protectGroup = null;
   for (i = 0; i < mem.length; i++) mem[i]._cmdG = null;   // 脱离接管组(组不在 c.groups,空组注销路径天然安全)
@@ -2943,7 +3371,7 @@ function sqCmdExit() {
 function sqCmdToggle() { if (sqCmd.active) sqCmdExit(); else sqCmdEnter(); }
 function sqCmdReset() {
   sqCmd.active = false; sqCmd.group = null; sqCmd.team = null; sqCmd.order = 'follow'; sqCmdFlagSync();
-  if (typeof sqbForceOff === 'function') sqbForceOff();    // 开局重置/换场强制关标识
+  if (typeof tacBattleReset === 'function') tacBattleReset();    // 开局重置/换场战术标识复位
 }
 function sqCmdNotifyDeath(t) {                           // 死亡事件钩子(combat.js 击毁路径调用):玩家亡/接管组全灭→自动退出
   if (!sqCmd.active) return;
@@ -3162,17 +3590,13 @@ function cmdDecide(c) {
     var tbP = tacBestNear(gpcX + pdx / pdl * adv2, gpcZ + pdz / pdl * adv2, foe.ex, foe.ez, team);
     g._postX = tbP.x; g._postZ = tbP.z;
   }
-  /* —— 小队标识战术意图/特勋环(comic.js 徽章系统消费;纯视觉字段,决策期一次写入,AI 行为零读取) ——
-     意图 g._intent:0进攻(front)/1撤退(front 且组均结构<40%,决策期快照)/2保持(guard 驻守)/3迂回(flank);
-     特勋环 g._ring:0无/1金=精锐(高命中率组,gScore 保守计分)/2灰=护卫/3黑=得分最差(低命中率进攻令 rangeMul<1);
-     互斥优先级:最差>护卫>精锐(guard 指派本就跳过 rangeMul<1 组)。 */
+  /* —— 战术标识意图(comic.js 战术标消费;纯视觉字段,决策期一次写入,AI 行为零读取) ——
+     意图 g._intent:0进攻(front)/1撤退(front 且组均结构<40%,决策期快照)/2保持(guard 驻守)/3迂回(flank)。 */
   for (i = 0; i < c.groups.length; i++) {
     g = c.groups[i];
     var stS = 0, stM = g.members.length, mi2;
     for (mi2 = 0; mi2 < stM; mi2++) stS += g.members[mi2].struct / Math.max(1, g.members[mi2].structMax);
     g._intent = g.role === 'flank' ? 3 : g.role === 'guard' ? 2 : (stM && stS / stM < 0.4) ? 1 : 0;
-    g._ring = g.rangeMul < 1 ? 3 : g.role === 'guard' ? 2
-      : (g.shots >= CMD_AIM_MIN_SHOTS && g.hits / g.shots >= CMD_AIM_HR) ? 1 : 0;
   }
   c.decisions++;
   c.nextT = gameT + CMD_INTERVAL;
@@ -3264,7 +3688,7 @@ function cmdTick() {
    叠加稳定器小摆(3.1Hz 衰减)= 准星"晃后复位"的来源;挂上抬在瞄准伺服目标,不碰弹道解算与开火当帧(kick(0)=0)。 ===== */
 function recPitchK(t) {
   if (!t || t.recT == null || t.recT < 0 || t.kind === 'arty') return 0;
-  var isHeli = isHeliVehicle(t);
+  var isHeli = isHeliVehicle(t) || t.kind === 'aa';   // AA 机炮上抬=直升机小摆档(复仇者不开炮,无副作用)
   var maxT = isHeli ? 0.15 : 2.0;
   var u = t.recT; if (u > maxT) return 0;
   if (isHeli) {

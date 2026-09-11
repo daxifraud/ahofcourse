@@ -9,6 +9,8 @@
 // 出生点空位搜索:大本营周围环形扫描,避开活车 / 残骸(残骸不消除,绝不能叠放)
 function findSpawnSpot(hx, hz) {
   var i;
+  var gate = (typeof spawnSlopeOK === 'function');   // D2 坡度门(方案 §7.3);ai_nav 未加载时退化为旧行为
+  var bx = hx, bz = hz, bs = 1e9, hasBest = false;
   for (var ring = 0; ring < 9; ring++) {
     for (var k = 0; k < 10; k++) {
       var a = k / 10 * TAU, rr = 2 + ring * 3.5;
@@ -21,9 +23,16 @@ function findSpawnSpot(hx, hz) {
         var w = tanks[i];
         if (Math.hypot(nx - w.group.position.x, nz - w.group.position.z) < w.radius + 3.4) ok = false;
       }
-      if (ok) return { x: nx, z: nz };
+      if (!ok) continue;
+      if (gate) {                            // D2:超标跳过,同时记录最小坡度候选做兜底
+        var sl = (typeof navSlopeAt === 'function') ? navSlopeAt(nx, nz) : 0;
+        if (sl < bs) { bs = sl; bx = nx; bz = nz; hasBest = true; }
+        if (!spawnSlopeOK(nx, nz)) continue;
+      }
+      return { x: nx, z: nz };
     }
   }
+  if (hasBest) return { x: bx, z: bz };      // 9 环全超标:取坡度最小者(恒优于旧"中心硬落")
   return { x: hx, z: hz };                          // 兜底:中心(会被碰撞系统推开)
 }
 // 在大本营重新部署一辆相同载具 —— 每次消耗 1 点兵力
@@ -92,6 +101,7 @@ function gameOver(win, cause) {
   if (el.continuebtn) el.continuebtn.classList.toggle('hidden', !win);   // 仅胜利显示"继续游戏"(失败/弹尽粮绝无此按钮)
   el.allies.textContent = countTeam('ally');
   el.enemies.textContent = countTeam('enemy');
+  if (typeof lwrMawsReset === 'function') lwrMawsReset();   // 告警层兜底清(修 LWR 胜利卡红)
 }
 
 /* 旗杆稳定线(远距细杆抗闪烁;机理与修法同载具天线稳定线,见 comic.js):
@@ -191,6 +201,7 @@ function buildHQ(team, x, z, yaw, type, wing) {
 /* 兵种 → 大本营类型映射: 火箭炮=炮兵大本营, ah64/wz10=直升机大本营, 其余(坦克/歼击车/99/自定义蓝图)归坦克大本营 */
 function hqTypeOfKind(kind) {
   if (kind === 'arty') return 'arty';
+  if (kind === 'aa') return 'tank';   // 防空载具随战车大本营纵深部署(要点防空,靠前)
   if (kind === 'ah64' || kind === 'wz10') return 'heli';
   return 'tank';
 }
@@ -207,18 +218,18 @@ function spawnTeams() {
   // 半场翻转(两个独立来源叠乘):__TEAM_FLIP(调试/公平随机)× startSide(菜单选边=蓝方时双方互换半场,玩家恒在南侧大本营)
   var flip = ((typeof window !== 'undefined' && window.__TEAM_FLIP) ? -1 : 1) * (startSide === 'enemy' ? -1 : 1);
   spawnFlip = flip;                                    // 登记:AI 回防/集结默认 homeZ 等读取
-  if (typeof sqbBattleReset === 'function') sqbBattleReset();   // 小队标识:洗牌型号代表色(对局仅此一次)+复位开关/图集
-  if (typeof iffBattleReset === 'function') iffBattleReset();   // 敌我标识:换场关箭头
+  if (typeof aaIntelReset === 'function') aaIntelReset();   // 任务22:换局清零直升机情报层(陈旧航迹/模式不跨局)
+  if (typeof tacBattleReset === 'function') tacBattleReset();   // 战术标识:换场关独立开关+收标记/描边
   if (typeof heliABGClear === 'function') heliABGClear();       // A射B导:换场清空僚机名单(旧载具即将销毁,不跨局残留)
-  if (typeof tacGridBuild === 'function') tacGridBuild();       // 战术射界网格:建场一次评分(~20ms),指挥官决策期消费
+  if (typeof tacGridBuild === 'function') tacGridBuild();
+  if (typeof navGridBuild === 'function') navGridBuild();   // 寻路坡度网格:建场一次(~10ms),A* 消费       // 战术射界网格:建场一次评分(~20ms),指挥官决策期消费
   var noPlayer = (typeof window !== 'undefined' && window.__TANK_DEBUG && window.__DBG_NO_PLAYER); // 无头纯净 AI 对局
   var aYaw = flip > 0 ? Math.PI : 0, eYaw = flip > 0 ? 0 : Math.PI;
-  // 三兵种纵深(坦克/炮兵/直升机): 距地图中心可配置距离;上限=长度一半,落位再贴进活动边界 15m
-  function baseZOf(dist) {
-    var d = clamp(Math.round(+dist || 0), 0, MAP.halfL || MAP.half);
-    return Math.min(d, boundsZ - 15) * flip;   // flip>0 时本方(ally)在 +z 半场,敌方取负镜像
-  }
-  var baseZ = { tank: baseZOf(startBaseDist.tank), arty: baseZOf(startBaseDist.arty), heli: baseZOf(startBaseDist.heli) };
+  // 三兵种纵深与 HQ 布局:吃 MAP.hqFlat 同源布局(applyMapConfig 前移计算,与地形夷平圆心逐位一致;
+  //   含 heli 坡墙上限 halfL-210,旧 baseZOf 在大图上把 heli 送上坡墙)。wonder.js 缺失时退化为零纵深(仅旧无头桩)。
+  var _hqL = MAP.hqFlat || (typeof hqLayoutCompute === 'function' ? hqLayoutCompute(hqParamsFromGlobals()) : null);
+  if (_hqL) MAP.hqFlat = _hqL;
+  var baseZ = _hqL ? _hqL.baseZ : { tank: 0, arty: 0, heli: 0 };
   /* 行纵深助手: 基地贴边时(纵深偏移越出活动边界)向战场内侧镜像, 防止多行被边界钳制塌缩到同一 z */
   function rowZOut(zBase, hs, off) {
     var z = zBase + hs * off;
@@ -241,8 +252,14 @@ function spawnTeams() {
   // 战线编队:2 排均布,列数随坦克数量自适应(槽不足自动扩展;±330*kW 铺满战场宽度)
   function lineSlots(zBase, nTank) {
     var hs = Math.sign(zBase) || 1, slots = [], cols = Math.max(1, Math.ceil(nTank / 2));
-    for (var r = 0; r < 2; r++) for (var c = 0; c < cols; c++)
-      slots.push([-330 * kW + (cols > 1 ? c * (660 * kW / (cols - 1)) : 0), zBase + hs * r * 20]);
+    var gate = (typeof spawnSlopeOK === 'function');
+    for (var r = 0; r < 2; r++) for (var c = 0; c < cols; c++) {
+      var sx = -330 * kW + (cols > 1 ? c * (660 * kW / (cols - 1)) : 0), sz = zBase + hs * r * 20;
+      if (gate) {                            // D2:槽位超标则向战场中心步进 20m 重试(≤5 次,至多让位 100m)
+        for (var att = 0; att < 5 && !spawnSlopeOK(sx, sz); att++) sz -= hs * 20;
+      }
+      slots.push([sx, sz]);
+    }
     return slots;
   }
   var grid = lineSlots(baseZ.tank, aR.tank + (aR['99'] || 0));   // 坦克大本营战线
@@ -290,6 +307,23 @@ function spawnTeams() {
       td.reload = 0;
     }
   });
+  // 防空载具(2026-09-11 修复:AI 防空车从不刷新——spawnTeams 缺 aa 编成块;用户指定部署在战车基地:
+  //   坦克编队行后一排(纵深 +70m),aiAnchor 锚定防守同火箭炮范式;名称走 createTank 分阵营缺省 红PGZ-95/蓝复仇者)
+  ['ally', 'enemy'].forEach(function (tm) {
+    var R = tm === 'ally' ? aR : eR;
+    var nAA = Math.max(0, R.aa || 0) - (startSide === tm && pKind === 'aa' ? 1 : 0);   // 编制含玩家占位(同直升机编成块口径)
+    if (nAA <= 0) return;
+    var zB3 = tm === 'ally' ? baseZ.tank : -baseZ.tank;
+    var hs3 = Math.sign(zB3) || 1, yaw3 = tm === 'ally' ? aYaw : eYaw;
+    for (var i4 = 0; i4 < nAA; i4++) {
+      var aax = clamp((nAA > 1 ? (i4 - (nAA - 1) / 2) * 90 * kW : 0) + rand(-6, 6), -boundsX + 16, boundsX - 16);
+      var aaz = clamp(rowZOut(zB3, hs3, 70) + rand(-4, 4), -boundsZ + 16, boundsZ - 16);
+      var aat = createTank({ kind: 'aa', team: tm, x: aax, z: aaz, yaw: yaw3 + rand(-0.1, 0.1) });
+      aat.reload = 0;
+      aat.ai.anchorX = aax; aat.ai.homeZ = aaz;      // 锚定防守:原地警戒不前压(火箭炮同款;击毁后 redeployVehicle 按注册表 aiAnchor 自动重建锚点)
+      aat.ai.destX = aax; aat.ai.destZ = aaz;
+    }
+  });
   // 火箭炮载具
   ['ally', 'enemy'].forEach(function (tm) {
     var R = tm === 'ally' ? aR : eR;
@@ -298,8 +332,7 @@ function spawnTeams() {
     for (var i2 = 0; i2 < R.arty; i2++) {
       var ax = clamp((i2 - (R.arty - 1) / 2) * 70 * kW + rand(-6, 6), -boundsX + 16, boundsX - 16);
       var az = clamp(rowZOut(zBase, hs, 47) + rand(-7, 7), -boundsZ + 16, boundsZ - 16);
-      var art = createTank({ kind: 'arty', team: tm, x: ax, z: az, yaw: tm === 'ally' ? aYaw : eYaw,
-        name: '火箭炮' });
+      var art = createTank({ kind: 'arty', team: tm, x: ax, z: az, yaw: tm === 'ally' ? aYaw : eYaw });   // 名称走 createTank 分阵营缺省: 红 PHL-11 / 蓝 M142
       art.reload = 0;
       art.ai.anchorX = ax; art.ai.homeZ = az;
       art.ai.destX = ax; art.ai.destZ = az;
@@ -333,16 +366,12 @@ function spawnTeams() {
   var spE = (typeof window !== 'undefined' && window.__START_POOL) || SU.enemy.pool;
   teamPool.ally = spA; teamPool.enemy = spE;
   respawnQueue.length = 0;
-  // 双方大本营: 左/中/右 翼位横向均布 (按 kW 缩放并受边界保护)
-  var maxSpread = Math.min(HQ_WING_SPREAD * kW, (boundsX - 40) / 1.1);
-  var hqWingDX = [-maxSpread, 0, maxSpread];
-  [['tank', baseZ.tank], ['arty', baseZ.arty], ['heli', baseZ.heli]].forEach(function (b) {
-    for (var w = 0; w < HQ_WINGS.length; w++) {
-      var wx = hqWingDX[w] * flip;
-      buildHQ('ally', wx, b[1], aYaw, b[0], w);
-      buildHQ('enemy', -wx, -b[1], eYaw, b[0], w);
-    }
-  });
+  // 双方大本营: 左/中/右 翼位横向均布(同源布局 _hqL.list,直接消费 x/z/yaw)
+  var _hqList = (_hqL && _hqL.list) || [];
+  for (var _hi = 0; _hi < _hqList.length; _hi++) {
+    var _hq = _hqList[_hi];
+    buildHQ(_hq.team, _hq.x, _hq.z, _hq.yaw, _hq.type, _hq.wing);
+  }
   rebuildTargets();
 }
 
@@ -439,6 +468,7 @@ function clearBattleEntities() {
   try { if (typeof respawnQueue !== 'undefined') respawnQueue.length = 0; } catch (eQ) {}
   /* 跨局残留状态全清:待生效弹坑 / 空中坠机残骸 / 弃车观察 / 火箭落点预报 / AI 指挥官账本 */
   try { if (typeof craterQueue !== 'undefined' && craterQueue) craterQueue.length = 0; } catch (eCQ) {}
+  try { if (typeof _cfPart !== 'undefined') _cfPart = null; } catch (eCP) {}   // ★任务27⑤:坑内断点游标随跨局残留一并清空
   try { if (typeof heliFallingWrecks !== 'undefined' && heliFallingWrecks) heliFallingWrecks.length = 0; } catch (eHF) {}
   try { if (typeof abandonWatch !== 'undefined' && abandonWatch) abandonWatch.length = 0; } catch (eAW) {}
   try { if (typeof rocketThreats !== 'undefined' && rocketThreats) rocketThreats.length = 0; } catch (eRT) {}
@@ -452,6 +482,9 @@ function clearBattleEntities() {
   try { if (typeof wreckSmokeClear === 'function') wreckSmokeClear(); } catch (eWS) {}
   try { if (typeof comicBattleClear === 'function') comicBattleClear(); } catch (eCB) {}
   try { if (typeof fxBattleClear === 'function') fxBattleClear(); } catch (eEC) {}
+  try { if (typeof wxBattleClear === 'function') wxBattleClear(); } catch (eWX) {}   // M1:战损模板清零(防车库/下局污染)
+  try { if (typeof aiBattleClear === 'function') aiBattleClear(); } catch (eAI) {}   // ★任务27⑧:AI 跨局 TTL 缓存清扫(敌群聚类/薄弱区/集群质心——gameT 菜单期冻结致缓存跨局存活,新局火箭炮按旧战场坐标齐射)
+  try { camShake = 0; camPK = 0; } catch (eCS) {}   // ★任务27⑧:相机震动/炮镜顶起残值(衰减在 cameraUpdate=退局冻结,不清则新局开局无来源晃动)
   try {
     if (typeof el !== 'undefined' && el) {
       if (el.hud) el.hud.classList.add('hidden');
@@ -465,13 +498,24 @@ function clearBattleEntities() {
 }
 window.clearBattleEntities = clearBattleEntities;
 
+/* M2 观瞄模式复位:热像/夜视写共享材质,退局与开局强制复位(防车库灰车+下局带热像开局)。 */
+function resetBattleViewModes() {
+  try { if (typeof thermalOn !== 'undefined' && thermalOn) { thermalOn = false; if (typeof thermalSync === 'function') thermalSync(); } } catch (eT) {}
+  try { if (typeof nvOn !== 'undefined' && nvOn) { nvOn = false; if (typeof nvSync === 'function') nvSync(); } } catch (eN) {}
+  try {
+    var _th = document.getElementById('tth'); if (_th) _th.classList.remove('lit');
+    var _nv = document.getElementById('tnv'); if (_nv) _nv.classList.remove('lit');
+  } catch (eL) {}
+}
+
 function startGame() {
   if (typeof stopMenuBgm === 'function') stopMenuBgm();
   if (typeof Hangar3D !== 'undefined' && Hangar3D.pause) Hangar3D.pause();
   initAudio();
   if (typeof validateVehicleRegistry === 'function') validateVehicleRegistry();   // 载具注册表启动自检(缺失项告警+已兜底,不中断)
   if (typeof sqCmdReset === 'function') sqCmdReset();               // 小队指挥状态重置(跨局防残留引用)
-  if (typeof initBallisticsDB === 'function') initBallisticsDB();   // 弹道数据库开局预计算一次(代表散布圈 + 交火底线缓存全组合预热)
+  if (typeof initBallisticsDB === 'function') initBallisticsDB();
+  try { if (typeof resetBattleViewModes === 'function') resetBattleViewModes(); } catch (eRVM) {}   // M2:开局观瞄复位   // 弹道数据库开局预计算一次(代表散布圈 + 交火底线缓存全组合预热)
   if (typeof window.clearBattleEntities === 'function') window.clearBattleEntities();
   setupMapWorld(startSeed, startRough, startMapLen, startMat, startMapWid); spawnTeams(); applyTimeOfDay(startHour);   // 每局重建世界,禁止沿用上一局 player
   gameState = 'playing';
@@ -503,6 +547,17 @@ function scopeToggle() {
     camAimY = player._camYaw;
   }
   scopeMode = !scopeMode;
+  if (scopeMode && player && player.kind === 'arty') {
+    /* 火箭炮炮镜=俯视火控视野:解除指针锁定,恢复系统光标(点哪打哪)。
+       必须先清 _pointerPauseArmed,否则丢锁事件会被误判为玩家 ESC 而弹出暂停。 */
+    window._pointerPauseArmed = false;
+    try { document.exitPointerLock && document.exitPointerLock(); } catch (e) {}
+    artTopNX = 0; artTopNY = 0;                        // 光标回屏幕中心
+    player._topHover = null;
+    player._topFireWish = false; player._topTgt = null;
+    player._artyCreepFwd = 0; player._topCreepDist = 0;
+    player._topCamX = 0; player._topCamZ = 0;          // 镜头回车体中心
+  }
   if (!scopeMode && player) {
     /* 退出时立即结束炮镜插值状态。继续让 scopeT 在约一秒内衰减,
        会使相机位置和 lookAt 目标同时依赖新瞄准方向,造成输入相关的
@@ -512,6 +567,9 @@ function scopeToggle() {
     scopeT = 0;
     scoped = false;
     scopeTick = 0;
+    if (player.kind === 'arty') {                      // 退镜:撤销点选射击任务与蠕行(锁定 watchdog 300ms 内自动回锁)
+      player._topFireWish = false; player._topTgt = null; player._artyCreepFwd = 0;
+    }
   }
   if (typeof comicMotionSmokeInvalidate === 'function') comicMotionSmokeInvalidate(); // 开/关镜触发烟尘可见表立即重建
 }
@@ -556,6 +614,7 @@ function aimPointerLockWatchdog(nowSec) {                                 // 由
   if (nowSec - _lockTryAt < 2.0) return;                                  // 自限流:至少隔 2s 才可能再发一次
   if (typeof gameState === 'undefined' || gameState !== 'playing') return;
   if (typeof player === 'undefined' || !player || !player.alive) return;
+  if (typeof artyTopActive === 'function' && artyTopActive()) return;   // 火箭炮俯视火控:自由光标模式不回锁
   if (typeof respawnUiOpen !== 'undefined' && respawnUiOpen) return;
   if (typeof possessUiOpen !== 'undefined' && possessUiOpen) return;
   if (typeof pointerLocked !== 'undefined' && pointerLocked) { _lockTry = 0; _lockHardDenied = false; return; }
@@ -578,23 +637,10 @@ function aimApplyDelta(dxC, dyC) {
     var fovCur = scopeFov(scopeZoom, scopeT);   // 与 cameraUpdate 同公式(平滑过渡)
     zoomF = Math.tan(fovCur * Math.PI / 360) / Math.tan(14 * Math.PI / 180);
   }
-  // 火箭炮开镜齐射中:瞄准与装定全部冻结(AI 齐射同样锁瞄),保证 16 发落在同一指示点
-  if (player.kind === 'arty' && scopeT > 0.5 && player.salvoLeft > 0) return;
-  if (player.kind === 'arty' && scopeT > 0.5) {
-    // 纵横全部直驱视角(与坦克/歼击车同准则)——装定通道下注视点恒钉死镜心,距离变化只产生
-    //   ~0.01° 级视角旋转+微缩放,场景视觉位移趋零,系数怎么调都"很慢";现直驱视角俯仰,场景随视角扫屏
-    camAimY -= dxC * 0.0025 * sf * zoomF;
-    // 再减速 20%(0.0015→0.0012)——俯仰存在几何放大(俯仰→装定距离→相机高度联动,
-    //   典型射程处屏上位移≈角增量×1.5~1.8,横向纯偏航无此放大),纵向系数按放大折算保持与水平感知同速
-    artyPitch = clamp(artyPitch - dyC * 0.0012 * sf * zoomF, -0.8, -0.001);
-    return;
-  }
   // 坦克/歼击车炮镜 = FPS 式视野:瞄具(镜框+十字丝)钉屏幕中心,视野直接吃输入增量(不反向);
   // 主循环里真炮口按载具实际炮塔速度追踪跟随这个瞄具方向。
   camAimY -= dxC * 0.0025 * sf * zoomF;                        // 视野随输入增量(原 FPS 手感,不反向)
-  /* 火箭炮第三人称开放完整 -0.14~1.05rad 发射架俯仰;只有真正进入炮镜后才用 0.05rad 视场上限。
-     旧表达式按 kind 无条件钳 0.05,使第三人称炮架最多抬约 2.9°。 */
-  camAimP = playerAimPitchClamp(player, camAimP - dyC * 0.002 * sf * zoomF, scopeT > 0.5);
+  camAimP = playerAimPitchClamp(player, camAimP - dyC * 0.002 * sf * zoomF);
 }
 /* ===== 指挥模式指令落点解算与入口(Z/X 键与触控占领/跟随键共用) ----
    占领点=屏心黄点视轴的地面/车体落点(laserRange 宽相位射线,事件级一次解算,零逐帧);
@@ -612,10 +658,10 @@ function initInput() {
 
   addEventListener('keydown', function (e) {
     keys[e.code] = true;
-    if (e.code === 'Backspace' && !e.repeat && !(e.target && e.target.tagName === 'INPUT')) {   // 指挥模式键(输入框退格不劫持):小队标识与指挥模式联动同步开关
+    if (e.code === 'Backspace' && !e.repeat && !(e.target && e.target.tagName === 'INPUT')) {   // 指挥模式键(输入框退格不劫持):战术标识/指挥星与指挥模式联动开关
       e.preventDefault();                                 // 阻止浏览器后退等默认行为
       if (gameState === 'playing' && player && player.alive) {
-        // 直升机座舱: Backspace = A射B导(借用最近友机导弹); 地面载具: 仍是小队指挥(sqbSyncToCmd 同步开关小队标识)
+        // 直升机座舱: Backspace = A射B导(借用最近友机导弹,僚机头顶星); 地面载具: 小队指挥(组员头顶星+战术标识同步开)
         if (isHeliVehicle(player) && typeof heliABGToggle === 'function') heliABGToggle();
         else if (typeof sqCmdToggle === 'function') sqCmdToggle();
       }
@@ -624,9 +670,9 @@ function initInput() {
       if (!e.repeat) {                                    // 仅“新按下”暂停:浏览器对按住键 ~30Hz 自动连发 keydown,
         aimChaseOn = false;                               // 若连发也算,鼠标一停追逐就被永久关闭(开镜细调/挪车必死)
         if (player && player.alive) player.turretYawDelta = 0;   // 并冲掉追逐尾量,炮塔立即停稳
-        if (gameState === 'playing' && player && player.alive && (e.code === 'KeyW' || e.code === 'KeyS') &&
+        if (gameState === 'playing' && player && player.alive && !artyTopActive() && (e.code === 'KeyW' || e.code === 'KeyS') &&
             typeof playerImmobile === 'function' && playerImmobile() &&
-            typeof aimHint === 'function') aimHint('不可移动');   // 键盘按下沿同款提示(桌面对齐)
+            typeof aimHint === 'function') aimHint('不可移动');   // 键盘按下沿同款提示(俯视火控=WSAD 平移镜头,不涉驾驶,不提示)
       }
     }
     if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat) scopeToggle();   // 按一次开镜,再按一次关镜(实现见 scopeToggle,触屏缩放共用)
@@ -636,24 +682,38 @@ function initInput() {
     if (e.code === 'KeyH' && !e.repeat && playerHasTH && player && player.alive) {  // 任意视角开/关热成像(与夜视互斥;设备门=99式/M1A1)
       thermalOn = !thermalOn; thermalSync();
     }
-    if (e.code === 'KeyT' && !e.repeat && !(e.target && e.target.tagName === 'INPUT')) {  // 敌我标识
-      if (gameState === 'playing') { e.preventDefault(); if (typeof iffToggle === 'function') iffToggle(); }
+    if (e.code === 'KeyT' && !e.repeat && !(e.target && e.target.tagName === 'INPUT')) {  // 战术标识(T 独立开关,只开标识+描边,不进指挥模式)
+      if (gameState === 'playing') { e.preventDefault(); if (typeof tacToggle === 'function') tacToggle(); }
     }
     if (e.code === 'KeyZ' && !e.repeat && typeof sqCmdOrderOccupyAtCursor === 'function') sqCmdOrderOccupyAtCursor();   // 指挥模式:占领 (Z键)
     if (e.code === 'KeyX' && !e.repeat && typeof sqCmdOrderSet === 'function' && sqCmd.active) sqCmdOrderSet('follow', 0, 0);   // 指挥模式:跟随 (X键)
+    // 防空载具 1 / 2 切换武器(1=防空导弹[默认,内部3], 2=双联机炮[仅PGZ-95,内部1]);多武器显示/选择与直升机同套代码
+    if (gameState === 'playing' && player && player.alive && typeof isAAVehicle === 'function' && isAAVehicle(player)) {
+      if ((e.code === 'Digit1' || e.code === 'Numpad1') && !e.repeat) {
+        player._heliWeapon = 3;
+        if (typeof camAimP !== 'undefined') camAimP = playerAimPitchClamp(player, camAimP);
+        if (typeof aimHint === 'function') aimHint('武器 [1]：防空导弹');
+      } else if ((e.code === 'Digit2' || e.code === 'Numpad2') && !e.repeat) {
+        if (player.team === 'ally') {   // 复仇者无机炮
+          player._heliWeapon = 1;
+          if (typeof camAimP !== 'undefined') camAimP = playerAimPitchClamp(player, camAimP);
+          if (typeof aimHint === 'function') aimHint('武器 [2]：双联机炮');
+        } else if (typeof aimHint === 'function') aimHint('复仇者无机炮');
+      }
+    }
     // 直升机 1 / 2 / 3 切换武器(1=导弹[默认], 2=火箭弹, 3=机炮);火控雷达自动常亮,无手动开关键
     if (gameState === 'playing' && player && player.alive && isHeliVehicle(player)) {
       if ((e.code === 'Digit1' || e.code === 'Numpad1') && !e.repeat) {   // 1号位=导弹(内部3)
         player._heliWeapon = 3;
-        if (typeof camAimP !== 'undefined') camAimP = playerAimPitchClamp(player, camAimP, scopeT > 0.5);
+        if (typeof camAimP !== 'undefined') camAimP = playerAimPitchClamp(player, camAimP);
         if (typeof aimHint === 'function') aimHint('武器 [1]：导弹');
       } else if ((e.code === 'Digit2' || e.code === 'Numpad2') && !e.repeat) {
         player._heliWeapon = 2;
-        if (typeof camAimP !== 'undefined') camAimP = playerAimPitchClamp(player, camAimP, scopeT > 0.5);
+        if (typeof camAimP !== 'undefined') camAimP = playerAimPitchClamp(player, camAimP);
         if (typeof aimHint === 'function') aimHint('武器 [2]：火箭弹');
       } else if ((e.code === 'Digit3' || e.code === 'Numpad3') && !e.repeat) {   // 3号位=机炮(内部1)
         player._heliWeapon = 1;
-        if (typeof camAimP !== 'undefined') camAimP = playerAimPitchClamp(player, camAimP, scopeT > 0.5);
+        if (typeof camAimP !== 'undefined') camAimP = playerAimPitchClamp(player, camAimP);
         if (typeof aimHint === 'function') aimHint('武器 [3]：机炮');
       }
     }
@@ -678,12 +738,12 @@ function initInput() {
     if (gameState === 'playing' && !respawnUiOpen && !possessUiOpen) {
       if (e.button === 0) {
         mouseDown = true;
-        if (!pointerLocked && lockAvailable) attemptLock();
+        if (!pointerLocked && lockAvailable && !artyTopActive()) attemptLock();   // 火箭炮俯视火控需要自由光标,不回锁
       } else if (e.button === 2) {
         // 右键:在直升机雷达开启时选定/取消选定锁定目标; 07: 99式按住=激光压制照射
         _rmbHeld = true;
         e.preventDefault();
-        if (player && player.alive && isHeliVehicle(player) && player._heliRadarActive) {
+        if (player && player.alive && (isHeliVehicle(player) || (typeof isAAVehicle === 'function' && isAAVehicle(player))) && player._heliRadarActive) {
           heliRadarRightClickDesignate(player);
         }
       }
@@ -735,6 +795,11 @@ function initInput() {
   // 指针锁定吃 movementX/Y 无限增量;兼容模式(沙箱拒锁)按 clientX 差分(屏幕边缘会顶死,属已知退化)。
   addEventListener('mousemove', function (e) {
     if (gameState !== 'playing' || !player || !player.alive) return;
+    if (artyTopActive()) {                             // 火箭炮俯视火控:自由光标装定,不吃视角增量
+      artTopNX = e.clientX / innerWidth * 2 - 1;
+      artTopNY = -(e.clientY / innerHeight * 2 - 1);
+      return;
+    }
     // ★指针锁定时 clientX 冻结,必须吃 movement 增量(否则一锁定=瞄死);未锁定时有 client 源按真实位置差分
     var _st = aimInputStep(e, pointerLocked && typeof e.movementX === 'number', aimPX, aimPY, innerWidth, innerHeight);
     var dxC = _st.dx, dyC = _st.dy;
@@ -801,7 +866,7 @@ function updateLockHint() {
    · 右半屏双指缩放=炮镜倍率:张开跨越 1.15× 自动开镜(scopeToggle 共用),
      捏合回 1× 自动关镜;镜内连续变焦 1~20×(与滚轮同 clamp);
    · 漫画风开火键(#tfire)=mouseDown 同位;炮镜键(#tscope)=scopeToggle;弃车键(#tquit)=KeyJ 同位;
-     返回菜单键(#tmenu)=呼出暂停菜单;指挥模式键(#tsqb)=单击开关盾徽+进出指挥模式,盾徽随阵营着色;
+     返回菜单键(#tmenu)=呼出暂停菜单;指挥模式键(#tsqb)=单击进出指挥模式(组员头顶星)+战术标识同步开关;
      全键漫画基类 .tbtn 统一(纸白+墨描边+硬投影),位置/大小可进自定义编辑器;
    · 仅粗指针设备挂载(桌面零监听器);菜单/按钮触摸不拦截(交还浏览器合成 click)。
    ============================================================ */
@@ -846,10 +911,11 @@ function updateLockHint() {
   var base = document.getElementById('tjoy'), knob = document.getElementById('tjoyknob');
   var fire = document.getElementById('tfire');
   var scpBtn = document.getElementById('tscope'), quitBtn = document.getElementById('tquit');
-  var menuB = document.getElementById('tmenu'), sqbB = document.getElementById('tsqb');
+  var menuB = document.getElementById('tmenu'), cmdB = document.getElementById('tsqb');
   var capB = document.getElementById('tcap'), folB = document.getElementById('tfol');   // 指挥指令键(占领/跟随,仅指挥模式显示)
   var nvB = document.getElementById('tnv'), sense = document.getElementById('tsense');
   var thB = document.getElementById('tth');
+  var heliU = document.getElementById('theliu'), heliD = document.getElementById('thelid');   // H1:直升机双十字键容器
   var JOY_R0 = 62;                               // 摇杆行程半径基准 px(=底盘半径,knob 顶到缘=满舵;×自定义缩放)
   /* ===== 自定义布局:{id:{fx,fy,s}}=视口分数中心坐标+缩放;无条目=CSS 默认位(零回归) ===== */
   var tlay = {};
@@ -866,9 +932,10 @@ function updateLockHint() {
   function inSense(x, y) { var dx = x - fixedCX(), dy = y - fixedCY(); return dx * dx + dy * dy <= senseR() * senseR(); }
   var CTL_W = { tfire: { w: 84, h: 84 }, tscope: { w: 64, h: 64 }, tquit: { w: 64, h: 64 },
                 tmenu: { w: 52, h: 52 }, tsqb: { w: 64, h: 64 }, tnv: { w: 64, h: 64 },
-                tth: { w: 64, h: 64 }, tcap: { w: 64, h: 64 }, tfol: { w: 64, h: 64 } };   // CSS 基准宽高(transform scale 不改布局盒,居中定位用;弃车/热成像与其余同 64,仅开火 84)
+                tth: { w: 64, h: 64 }, tcap: { w: 64, h: 64 }, tfol: { w: 64, h: 64 },
+                theliu: { w: 146, h: 146 }, thelid: { w: 146, h: 146 } };   // CSS 基准宽高(transform scale 不改布局盒,居中定位用;弃车/热成像与其余同 64,仅开火 84)
   function layApply() {                          // 布局落地(事件级:进出编辑/拖动/缩放/转屏时调)
-    var L = curLay(), m = { tfire: fire, tscope: scpBtn, tquit: quitBtn, tmenu: menuB, tsqb: sqbB, tnv: nvB, tth: thB, tcap: capB, tfol: folB }, id, el2, e3;
+    var L = curLay(), m = { tfire: fire, tscope: scpBtn, tquit: quitBtn, tmenu: menuB, tsqb: cmdB, tnv: nvB, tth: thB, tcap: capB, tfol: folB, theliu: heliU, thelid: heliD }, id, el2, e3;
     for (id in m) {
       el2 = m[id]; if (!el2) continue;
       e3 = L[id];
@@ -916,22 +983,27 @@ function updateLockHint() {
       if (on) thB.classList.toggle('lit', typeof thermalOn !== 'undefined' && !!thermalOn);   // 点亮态跟随热像开关记忆(任意视角)
     }
     if (sense && !custOn) sense.classList.add('hidden');   // 感应圈:运行期恒隐形(纯逻辑判定,仅编辑器可视)
-    if (sqbB) {
-      sqbB.classList.toggle('hidden', !on);
-      if (on && player) {                        // 盾徽随玩家阵营着色(红方红/蓝方蓝)+点亮态跟随指挥模式开关
+    if (cmdB) {
+      cmdB.classList.toggle('hidden', !on);
+      if (on && player) {                        // 指挥键图标随玩家阵营着色(红方红/蓝方蓝)+点亮态跟随指挥模式开关
         var sf2 = document.getElementById('tsqbfill');
         if (sf2) sf2.setAttribute('fill', player.team === 'ally' ? '#c81e12' : '#2f6fd0');
-        sqbB.classList.toggle('lit', typeof sqCmd !== 'undefined' && !!sqCmd.active);
+        cmdB.classList.toggle('lit', typeof sqCmd !== 'undefined' && !!sqCmd.active);
       }
     }
     /* 指挥指令键(占领/跟随):仅指挥模式显示(Z/X 同入口);点亮态=当前指令(进模式默认跟随) */
     var cmdOn = on && typeof sqCmd !== 'undefined' && !!sqCmd.active;
     if (capB) { capB.classList.toggle('hidden', !cmdOn); capB.classList.toggle('lit', cmdOn && sqCmd.order === 'occupy'); }
     if (folB) { folB.classList.toggle('hidden', !cmdOn); folB.classList.toggle('lit', cmdOn && sqCmd.order !== 'occupy'); }
+    var isH = on && isHeliMode();                                    // H4:直升机=双十字键,地面车=摇杆(互斥)
+    if (heliU) heliU.classList.toggle('hidden', !isH);
+    if (heliD) heliD.classList.toggle('hidden', !isH);
     if (base) {
-      base.classList.toggle('hidden', !on);                        // 摇杆=常驻
-      if (on && joyId == null) baseTo(fixedCX(), fixedCY(), 0, 0);
+      base.classList.toggle('hidden', !on || isH);                       // 摇杆=地面车常驻;直升机让位双十字键
+      if (on && !isH && joyId == null) baseTo(fixedCX(), fixedCY(), 0, 0);
     }
+    if (isH && joyId != null) joyDrop();                             // 切入直升机:摇杆输入清零防幽灵
+    if (!isH) heliReleaseAll();                                      // 离开直升机/离局:十字键全松防卡键
   }
   function fixedCX() { var L = curLay().tjoy; return L ? L.fx * innerWidth : 24 + JOY_R() + 8; }
   function fixedCY() { var L = curLay().tjoy; return L ? L.fy * innerHeight : innerHeight - 24 - JOY_R() - 8; }
@@ -947,7 +1019,48 @@ function updateLockHint() {
     if (tid === p2Id) { p2Id = null; return; }
     if (tid === aimId) { aimId = p2Id; aimLX = p2X; aimLY = p2Y; p2Id = null; }
   }
-  var TCTL_IDS = ['tfire', 'tscope', 'tquit', 'tmenu', 'tsqb', 'tnv', 'tth', 'tcap', 'tfol'];   // 触控层自有键 ID 表(uiTarget/ctrlOf 共用单一出处)
+  /* ===== 直升机双十字键(H3/H4):上=总距/偏航,下=姿态;与摇杆互斥(isHeliMode 门) ----
+     上-上/下:heliHandleWheel 点按=1% 微调,长按 180ms 连发=10% 快调;点火/熄火守卫由桌面函数内建(D3);
+     上-左/右:虚拟 KeyQ/KeyE(偏航);下四向:虚拟 KeyW/S/A/D(姿态);player.js 零改动。 ===== */
+  function isHeliMode() { return typeof isHeliVehicle === 'function' && typeof player !== 'undefined' && player && isHeliVehicle(player); }
+  var HELI_KEY = { ul: 'KeyQ', ur: 'KeyE', du: 'KeyW', dd: 'KeyS', dl: 'KeyA', dr: 'KeyD' };
+  var heliTouch = {};   // dir -> { tid, el }:已按下的十字键方向(多指并发)
+  var heliRep = {};     // uu/ud -> setInterval id(总距长按连发)
+  function heliStep(dir, coarse) {
+    if (typeof heliHandleWheel !== 'function') return;
+    heliHandleWheel(dir === 'uu' ? -100 : 100, !!coarse);
+  }
+  function heliSubEl(dir) {
+    var host = (dir === 'uu' || dir === 'ud' || dir === 'ul' || dir === 'ur') ? heliU : heliD;
+    if (!host || !host.querySelector) return null;
+    return host.querySelector('[data-hd="' + dir + '"]');
+  }
+  function heliPress(dir, tid) {
+    if (!dir || heliTouch[dir]) return;
+    var sub = heliSubEl(dir);
+    heliTouch[dir] = { tid: tid, el: sub };
+    if (sub) sub.classList.add('pressed');
+    if (dir === 'uu' || dir === 'ud') {
+      heliStep(dir, false);
+      (function (d) { heliRep[d] = setInterval(function () { heliStep(d, true); }, 180); })(dir);
+    } else {
+      keys[HELI_KEY[dir]] = true;
+      if ((dir === 'du' || dir === 'dd' || dir === 'dl' || dir === 'dr') &&   // 姿态键:不可移动提示(与摇杆按下沿同口径)
+          player && player.alive && typeof playerImmobile === 'function' && playerImmobile() &&
+          typeof aimHint === 'function') aimHint('不可移动');
+    }
+  }
+  function heliRelease(dir) {
+    var h = heliTouch[dir]; if (!h) return;
+    if (heliRep[dir]) { clearInterval(heliRep[dir]); heliRep[dir] = null; }
+    if (HELI_KEY[dir]) keys[HELI_KEY[dir]] = false;
+    if (h.el) h.el.classList.remove('pressed');
+    delete heliTouch[dir];
+  }
+  function heliReleaseByTid(tid) { for (var dir in heliTouch) if (heliTouch[dir].tid === tid) heliRelease(dir); }
+  function heliHasTid(tid) { for (var dir in heliTouch) if (heliTouch[dir].tid === tid) return true; return false; }
+  function heliReleaseAll() { for (var dir in heliTouch) heliRelease(dir); }
+  var TCTL_IDS = ['tfire', 'tscope', 'tquit', 'tmenu', 'tsqb', 'tnv', 'tth', 'tcap', 'tfol', 'theliu', 'thelid'];   // 触控层自有键 ID 表(uiTarget/ctrlOf 共用单一出处)
   function uiTarget(t) {                         // 菜单/按钮/滑杆触摸不拦截(浏览器合成 click 接管);触控层自有键除外
     var n = t; while (n && n !== document.body) {
       if (TCTL_IDS.indexOf(n.id) >= 0) return false;   // 触控层自有键走触摸处理(button 标签不得被菜单放行规则吞掉)
@@ -983,16 +1096,19 @@ function updateLockHint() {
         scopeToggle(); scpBtn.classList.toggle('lit', scopeMode);
       } else if (cid === 'tquit') {                            // 弃车键:长按 3s(KeyJ 同位,倒数/红环/松手复位全链复用)
         quitId = t.identifier; keys.KeyJ = true; quitBtn.classList.add('pressed');
-      } else if (cid === 'tsqb') {                             // 指挥模式键:小队标识与指挥模式同步开关(Backspace 同入口)
+      } else if (cid === 'tsqb') {                             // 指挥模式键:战术标识/指挥星与指挥模式同步开关(Backspace 同入口)
         if (gameState === 'playing' && player && player.alive) {
           if (isHeliVehicle(player) && typeof heliABGToggle === 'function') heliABGToggle();   // 直升机座舱= A射B导
           else if (typeof sqCmdToggle === 'function') sqCmdToggle();
         }
-        if (sqbB) sqbB.classList.toggle('lit', typeof sqCmd !== 'undefined' && !!sqCmd.active);
+        if (cmdB) cmdB.classList.toggle('lit', typeof sqCmd !== 'undefined' && !!sqCmd.active);
       } else if (cid === 'tcap') {                             // 占领键:指挥模式内把小队派往屏心落点(插旗);Z 同入口
         sqCmdOrderOccupyAtCursor();
       } else if (cid === 'tfol') {                             // 跟随键:撤销占领收旗回跟随(进模式默认);X 同入口
         if (typeof sqCmd !== 'undefined' && sqCmd.active) sqCmdOrderSet('follow', 0, 0);
+      } else if (cid === 'theliu' || cid === 'thelid') {           // H3:直升机十字键(容器命中,方向由子键 data-hd 判定)
+        var hd = t.target && t.target.closest ? t.target.closest('.theli-sub') : null;
+        if (hd) heliPress(hd.getAttribute('data-hd'), t.identifier);
       } else if (cid === 'tnv') {                              // 夜视仪键:任意视角开关(KeyN 同语义;设备门=座车装备缓存;阵亡/换装自动失效由 nvActive 兜底)
         if ((typeof playerHasNV === 'undefined' || playerHasNV) && player && player.alive && typeof nvSync === 'function') {
           nvOn = !nvOn; nvSync(); nvB.classList.toggle('lit', nvOn);
@@ -1003,16 +1119,20 @@ function updateLockHint() {
           thermalOn = !thermalOn; thermalSync(); thB.classList.toggle('lit', thermalOn);
           if (nvB) nvB.classList.toggle('lit', typeof nvOn !== 'undefined' && !!nvOn);             // 互斥后夜视灯随动
         }
-      } else if (joyId == null && inSense(t.clientX, t.clientY)) {
+      } else if (!isHeliMode() && joyId == null && inSense(t.clientX, t.clientY)) {
         /* 摇杆:感应圈内按下(圈外左半屏落瞄准分支) */
         joyId = t.identifier;
         joyCX = fixedCX();
         joyCY = fixedCY();
         base.classList.remove('hidden');
         joyVec(t.clientX, t.clientY);
-        if (player && player.alive && typeof playerImmobile === 'function' && playerImmobile() &&
-            typeof aimHint === 'function') aimHint('不可移动');   // 摇杆按下沿:不可移动提示(事件触发,节流在 aimHint 内)
+        if (player && player.alive && !artyTopActive() && typeof playerImmobile === 'function' && playerImmobile() &&
+            typeof aimHint === 'function') aimHint('不可移动');   // 摇杆按下沿提示(俯视火控=摇杆平移镜头,不涉驾驶,不提示)
       } else {                                                 // 其余区域(右半屏+感应圈外的左半屏):瞄准/双指缩放
+        if (artyTopActive()) {                                 // 火箭炮俯视火控:单指按下=装定光标跳到触点
+          artTopNX = t.clientX / innerWidth * 2 - 1;
+          artTopNY = -(t.clientY / innerHeight * 2 - 1);
+        }
         if (aimId == null) { aimId = t.identifier; aimLX = t.clientX; aimLY = t.clientY; }
         else if (p2Id == null) {
           p2Id = t.identifier; p2X = t.clientX; p2Y = t.clientY;
@@ -1048,7 +1168,12 @@ function updateLockHint() {
           if (!scopeMode && z > 1.15) { scopeToggle(); scopeZoom = z; if (scpBtn) scpBtn.classList.add('lit'); }         // 张开跨阈=开镜
           else if (scopeMode && z <= 1.02) { scopeZoom = 1; scopeToggle(); if (scpBtn) scpBtn.classList.remove('lit'); }   // 捏回 1×=关镜(开 1.15/关 1.02 迟滞防抖,同手势可开可关)
           else if (scopeMode) scopeZoom = z;
-        } else if (t.identifier === aimId && playing()) aimApplyDelta(adx, ady);   // 单指=瞄准(鼠标同一入口)
+        } else if (t.identifier === aimId && playing()) {
+          if (artyTopActive()) {                               // 火箭炮俯视火控:单指拖动=移动装定光标(绝对位置)
+            artTopNX = t.clientX / innerWidth * 2 - 1;
+            artTopNY = -(t.clientY / innerHeight * 2 - 1);
+          } else aimApplyDelta(adx, ady);                      // 单指=瞄准(鼠标同一入口)
+        }
       }
     }
     e.preventDefault();
@@ -1062,6 +1187,7 @@ function updateLockHint() {
       if (t.identifier === joyId) joyDrop();
       else if (t.identifier === fireId) { fireId = null; mouseDown = false; if (fire) fire.classList.remove('pressed'); }
       else if (t.identifier === quitId) { quitId = null; keys.KeyJ = false; if (quitBtn) quitBtn.classList.remove('pressed'); }
+      else if (heliHasTid(t.identifier)) heliReleaseByTid(t.identifier);
       else if (t.identifier === aimId || t.identifier === p2Id) pinchDrop(t.identifier);
     }
   }
@@ -1073,7 +1199,7 @@ function updateLockHint() {
      tjoy 条目=摇杆杆位/大小。全事件驱动。 ===== */
   var custOv = document.getElementById('tcustomov');
   var edId = null, edCtl = null, edX = 0, edY = 0, edP2 = null, edD0 = 1, edS0 = 1;
-  function custCtls() { return { tjoy: base, tfire: fire, tscope: scpBtn, tquit: quitBtn, tmenu: menuB, tsqb: sqbB, tnv: nvB, tth: thB, tcap: capB, tfol: folB, tsense: sense }; }
+  function custCtls() { return { tjoy: base, tfire: fire, tscope: scpBtn, tquit: quitBtn, tmenu: menuB, tsqb: cmdB, tnv: nvB, tth: thB, tcap: capB, tfol: folB, theliu: heliU, thelid: heliD, tsense: sense }; }
   function custShow(on) {
     custOn = on;
     if (custOv) custOv.classList.toggle('hidden', !on);
@@ -1092,7 +1218,7 @@ function updateLockHint() {
     custShow(false);
   });
   function hitCtl(x, y) {                        // 手动命中检测(tjoy pointer-events:none 收不到 target;事件时一次矩形查询)
-    var m = custCtls(), order = ['tmenu', 'tquit', 'tsqb', 'tcap', 'tfol', 'tscope', 'tnv', 'tth', 'tfire', 'tjoy', 'tsense'], i, el2, r;   // tsense 最大置末(内圈优先命中)
+    var m = custCtls(), order = ['tmenu', 'tquit', 'tsqb', 'tcap', 'tfol', 'tscope', 'tnv', 'tth', 'tfire', 'theliu', 'thelid', 'tjoy', 'tsense'], i, el2, r;   // tsense 最大置末(内圈优先命中)
     for (i = 0; i < order.length; i++) {
       el2 = m[order[i]]; if (!el2) continue;
       r = el2.getBoundingClientRect();

@@ -487,7 +487,7 @@
   background: rgba(6, 12, 5, 0.92);
   backdrop-filter: blur(6px);
   border: 1px solid #3d4a2e;
-  padding: 6px 8px;
+  padding: 5px 10px;
   color: #9dffa8;
   display: flex;
   flex-direction: column;
@@ -504,10 +504,10 @@
 }
 .mm-spec-val {
   font-family: "ZCOOL QingKe HuangYou", "Black Ops One", "Microsoft YaHei", sans-serif;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 400;
   letter-spacing: .04em;
-  margin: 2px 0 0;
+  margin: 3px 0 1px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -515,6 +515,7 @@
   text-shadow: 0 0 6px rgba(140,255,158,.35);
 }
 .mm-spec-sub {
+  display: none;   /* 说明性小字已删除:底部标签只保留 类别+大字 */
   font-family: VT323, "Courier New", monospace;
   font-size: 11px;
   color: #6f9a63;

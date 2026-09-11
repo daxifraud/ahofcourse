@@ -40,15 +40,14 @@
     <div class="pak-sub">PRESS ANY KEY / CLICK TO START</div>
   </div>
 </div>
-<script src="js/boot-loader.js"></script>
+<script src="js/boot-loader.js?v=20260910fx4"></script>
 
 
 
 
 <!-- ==================== HUD ==================== -->
 <div id="hud" class="hidden">
-  <div class="hud-corners" aria-hidden="true"><span class="tl"></span><span class="tr"></span><span class="bl"></span><span class="br"></span></div>
-  <div id="fps">-- fps</div>
+  <div class="hud-frame" aria-hidden="true"><span class="cn tl"></span><span class="cn tr"></span><span class="cn bl"></span><span class="cn br"></span><div class="tick-t"></div><div class="tick-b"></div><div class="tick-l"></div><div class="tick-r"></div><div class="topmark"></div><div class="sigmod"><div class="bars"><i></i><i></i><i></i><i></i><i></i></div><span class="lk">LINK</span><span class="db">-68dB</span><span id="sigfps">--</span></div></div>
   <div id="topbar">
     <div id="winfo">兵力 <span id="poola" style="color:#d43a25">200</span> : <span id="poole" style="color:#1f5fd6">200</span> · 存活 <span id="allies" style="color:#d43a25">88</span> : <span id="enemies" style="color:#1f5fd6">88</span> · 个人击毁 <span id="kills">0</span> · 重新部署 <span id="respawns">0</span></div>
   </div>
@@ -63,12 +62,11 @@
   <div id="maws-edge-flash" class="hidden"></div>
   <div id="maws-hud-layer"></div>
   <div id="lwr-hud-layer"></div>
+  <!-- 作战边界警示: 磷光战术 BIOS 语言(与顶部信息条/信号组/导弹告警同族), 弃用旧版黄黑警戒线漫画横幅 -->
   <div id="boundwarn" class="hidden">
-    <div class="bound-stripe"></div>
-    <div class="bound-content">
-      <div class="bound-text">你正在离开作战区域，立刻返回战场！</div>
-    </div>
-    <div class="bound-stripe"></div>
+    <span class="bw-tag">BOUNDARY</span>
+    <span class="bw-sep"></span>
+    <span class="bw-text">正在离开作战区域 · 立刻返回战场</span>
   </div>
   <div id="abandonring"></div><div id="abandontxt"></div>
   <div id="sqarrows"></div>
@@ -134,15 +132,18 @@
   <div id="scope" class="hidden">
     <div class="scope-vig"></div>
     <div class="scope-ring"></div>
-    <div id="zoomedge">x1.0</div>
+    <div class="dial-bezel"></div>
+    <div id="scopedial"></div>
+    <div class="scope-ptr"></div>
     <div id="scoperet">
+      <div class="cdot"></div>
       <div class="sl s-b"></div>
       <div class="sl s-l"></div>
       <div class="sl s-r"></div>
     </div>
     <div id="rangeinfo">测距 --- m</div>
     <div id="artyring" class="hidden"></div>
-    <div id="artyringbk"></div>
+    <div id="artyringtxt" class="hidden"></div>
     <div id="impact"></div>
     <div id="impactRkL" class="impact-rocket"></div>
     <div id="impactRkR" class="impact-rocket"></div>
@@ -159,26 +160,36 @@
 </div>
 <!-- CRT 全屏叠加层:压在 HUD 与菜单之上(z-index 200),comic.js 滑块驱动强度 -->
 <div id="crtfx"></div>
-<!-- 触屏操控层:返回菜单(左上)+摇杆/感应圈(左)+炮镜/夜视/开火键(右下)+小队标识(右中)+弃车键(右上);flow.js 触控区段驱动,桌面恒 hidden -->
+<!-- 触屏操控层:返回菜单(左上)+摇杆/感应圈(左)+炮镜/夜视/开火键(右下)+指挥模式键(右中)+弃车键(右上);flow.js 触控区段驱动,桌面恒 hidden -->
 <div id="btnfx"><i class="f0"></i><i class="f1"></i><i class="f2"></i><span id="btnfxlab"></span></div>
 <div id="tsense" class="hidden"></div>
 <div id="tjoy" class="hidden"><div id="tjoyknob"></div></div>
+<div id="theliu" class="hidden" aria-label="直升机总距与偏航">
+  <span></span><button class="tbtn theli-sub" data-hd="uu" aria-label="总距增加">▲</button><span></span>
+  <button class="tbtn theli-sub" data-hd="ul" aria-label="左转">◀</button><span class="theli-core">上</span><button class="tbtn theli-sub" data-hd="ur" aria-label="右转">▶</button>
+  <span></span><button class="tbtn theli-sub" data-hd="ud" aria-label="总距减少">▼</button><span></span>
+</div>
+<div id="thelid" class="hidden" aria-label="直升机姿态">
+  <span></span><button class="tbtn theli-sub" data-hd="du" aria-label="前倾">▲</button><span></span>
+  <button class="tbtn theli-sub" data-hd="dl" aria-label="左倾">◀</button><span class="theli-core">下</span><button class="tbtn theli-sub" data-hd="dr" aria-label="右倾">▶</button>
+  <span></span><button class="tbtn theli-sub" data-hd="dd" aria-label="后倾">▼</button><span></span>
+</div>
 <button id="tth" class="tbtn hidden" aria-label="热成像">
   <svg width="38" height="38" viewBox="0 0 40 40">
-    <circle cx="20" cy="20" r="15.5" fill="#9aa0a6" stroke="#141414" stroke-width="3"/>
-    <path d="M20 6.5 V15 M20 25 V33.5 M6.5 20 H15 M25 20 H33.5" stroke="#141414" stroke-width="2.6" stroke-linecap="round"/>
-    <circle cx="20" cy="20" r="2" fill="#141414"/>
+    <circle cx="20" cy="20" r="15.5" fill="#9aa0a6" stroke="currentColor" stroke-width="3"/>
+    <path d="M20 6.5 V15 M20 25 V33.5 M6.5 20 H15 M25 20 H33.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>
+    <circle cx="20" cy="20" r="2" fill="currentColor"/>
   </svg>
 </button>
 <button id="tnv" class="tbtn hidden" aria-label="夜视仪">
   <svg width="38" height="38" viewBox="0 0 40 40">
-    <circle cx="20" cy="20" r="15.5" fill="#2f9e44" stroke="#141414" stroke-width="3"/>
-    <path d="M20 6.5 V15 M20 25 V33.5 M6.5 20 H15 M25 20 H33.5" stroke="#141414" stroke-width="2.6" stroke-linecap="round"/>
-    <circle cx="20" cy="20" r="2" fill="#141414"/>
+    <circle cx="20" cy="20" r="15.5" fill="#2f9e44" stroke="currentColor" stroke-width="3"/>
+    <path d="M20 6.5 V15 M20 25 V33.5 M6.5 20 H15 M25 20 H33.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>
+    <circle cx="20" cy="20" r="2" fill="currentColor"/>
   </svg>
 </button>
 <button id="tmenu" class="tbtn hidden" aria-label="返回菜单">
-  <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#141414" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+  <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
     <path d="M7 20 V10 a6 6 0 0 1 12 0 v3"/>
     <path d="M3.5 15.5 L7 20 L10.5 15.5"/>
   </svg>
@@ -186,7 +197,7 @@
 <button id="tsqb" class="tbtn hidden" aria-label="指挥模式">
   <svg width="38" height="38" viewBox="0 0 40 40">
     <path d="M20 3 L34 8.5 V20 C34 29.5 27.5 35.5 20 38.5 C12.5 35.5 6 29.5 6 20 V8.5 Z"
-          fill="none" stroke="#141414" stroke-width="5" stroke-linejoin="round"/>
+          fill="none" stroke="currentColor" stroke-width="5" stroke-linejoin="round"/>
     <path id="tsqbfill" d="M20 3 L34 8.5 V20 C34 29.5 27.5 35.5 20 38.5 C12.5 35.5 6 29.5 6 20 V8.5 Z"
           fill="#c81e12" stroke="#ffffff" stroke-width="2.4" stroke-linejoin="round"/>
     <text x="20" y="26" text-anchor="middle" font-family="system-ui,sans-serif" font-size="16" font-weight="900" fill="#ffffff">1</text>
@@ -199,31 +210,31 @@
   </svg>
 </button>
 <button id="tfol" class="tbtn hidden" aria-label="跟随">
-  <svg width="38" height="38" viewBox="0 0 40 40" fill="none" stroke="#141414" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-    <circle cx="13" cy="9.5" r="3.2" fill="#141414" stroke="none"/>
+  <svg width="38" height="38" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="13" cy="9.5" r="3.2" fill="currentColor" stroke="none"/>
     <path d="M13 13.5 V23 M13 16.5 L8.5 20.5 M13 16.5 L17.5 20.5 M13 23 L9.5 30.5 M13 23 L16.5 30.5"/>
-    <circle cx="27" cy="9.5" r="3.2" fill="#141414" stroke="none"/>
+    <circle cx="27" cy="9.5" r="3.2" fill="currentColor" stroke="none"/>
     <path d="M27 13.5 V23 M27 16.5 L22.5 20.5 M27 16.5 L31.5 20.5 M27 23 L23.5 30.5 M27 23 L30.5 30.5"/>
   </svg>
 </button>
 <button id="tfire" class="tbtn hidden" aria-label="开火">
   <svg width="34" height="52" viewBox="0 0 24 40" style="transform:rotate(18deg)">
     <path d="M12 2 C15.5 8 17 12 17 18 L17 31 L7 31 L7 18 C7 12 8.5 8 12 2 Z"
-          fill="#c81e12" stroke="#141414" stroke-width="2"/>
-    <rect x="5.6" y="31" width="12.8" height="6" fill="#b58a3a" stroke="#141414" stroke-width="2"/>
+          fill="#c81e12" stroke="currentColor" stroke-width="2"/>
+    <rect x="5.6" y="31" width="12.8" height="6" fill="#b58a3a" stroke="currentColor" stroke-width="2"/>
   </svg>
 </button>
 <button id="tscope" class="tbtn hidden" aria-label="炮镜">
   <svg width="38" height="38" viewBox="0 0 40 40">
-    <circle cx="20" cy="20" r="15.5" fill="#ffffff" stroke="#141414" stroke-width="3"/>
-    <path d="M20 6.5 V15 M20 25 V33.5 M6.5 20 H15 M25 20 H33.5" stroke="#141414" stroke-width="2.6" stroke-linecap="round"/>
-    <circle cx="20" cy="20" r="2" fill="#141414"/>
+    <circle cx="20" cy="20" r="15.5" fill="#ffffff" stroke="currentColor" stroke-width="3"/>
+    <path d="M20 6.5 V15 M20 25 V33.5 M6.5 20 H15 M25 20 H33.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>
+    <circle cx="20" cy="20" r="2" fill="currentColor"/>
   </svg>
 </button>
 <button id="tquit" class="tbtn hidden" aria-label="弃车">
-  <svg width="36" height="36" viewBox="0 0 40 40" fill="none" stroke="#141414" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+  <svg width="36" height="36" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
     <rect x="25" y="4" width="11" height="32" rx="1.5" fill="#2e8b3c"/>
-    <circle cx="12" cy="8.5" r="3.2" fill="#141414" stroke="none"/>
+    <circle cx="12" cy="8.5" r="3.2" fill="currentColor" stroke="none"/>
     <path d="M6 19 L11 13.5 L16 16 L20 21 M11 13.5 L10.5 21 L15 26 L12.5 34 M10.5 21 L5.5 27"/>
     <path d="M18 8 L27 8 M24 5 L27 8 L24 11" stroke="#c81e12"/>
   </svg>
@@ -324,8 +335,12 @@
                 <span class="mm-drawer-item-en">WZ-10 HELI</span>
               </div>
               <div class="mm-drawer-item" data-team="ally" data-kind="arty">
-                <span class="mm-drawer-item-name">火箭炮</span>
-                <span class="mm-drawer-item-en">122mm MLRS</span>
+                <span class="mm-drawer-item-name">PHL-11 火箭炮</span>
+                <span class="mm-drawer-item-en">PHL-11 MLRS</span>
+              </div>
+              <div class="mm-drawer-item" data-team="ally" data-kind="aa">
+                <span class="mm-drawer-item-name">PGZ-95 自行高炮</span>
+                <span class="mm-drawer-item-en">PGZ-95 SPAAG</span>
               </div>
               <div class="mm-drawer-item" data-team="enemy" data-kind="tank">
                 <span class="mm-drawer-item-name">M60A1 巴顿坦克</span>
@@ -339,6 +354,14 @@
                 <span class="mm-drawer-item-name">AH-64d 阿帕奇</span>
                 <span class="mm-drawer-item-en">AH-64D APACHE</span>
               </div>
+              <div class="mm-drawer-item" data-team="enemy" data-kind="arty">
+                <span class="mm-drawer-item-name">M142 海马斯</span>
+                <span class="mm-drawer-item-en">M142 HIMARS</span>
+              </div>
+              <div class="mm-drawer-item" data-team="enemy" data-kind="aa">
+                <span class="mm-drawer-item-name">复仇者 防空系统</span>
+                <span class="mm-drawer-item-en">AN/TWQ-1 AVENGER</span>
+              </div>
             </div>
           </div>
         </div>
@@ -349,22 +372,18 @@
         <div class="mm-spec-card">
           <span class="mm-spec-lbl">火炮 FIREPOWER</span>
           <span id="hangar-stat-fire" class="mm-spec-val">100mm 线膛炮</span>
-          <span id="hangar-stat-fire-sub" class="mm-spec-sub">穿深 220mm · 初速 1480m/s</span>
         </div>
         <div class="mm-spec-card">
           <span class="mm-spec-lbl">防护 PROTECTION</span>
           <span id="hangar-stat-armor" class="mm-spec-val">首上 100mm / 炮塔 200mm</span>
-          <span id="hangar-stat-armor-sub" class="mm-spec-sub">RHA 均质钢</span>
         </div>
         <div class="mm-spec-card">
           <span class="mm-spec-lbl">机动 MOBILITY</span>
           <span id="hangar-stat-speed" class="mm-spec-val">50 km/h</span>
-          <span id="hangar-stat-speed-sub" class="mm-spec-sub">520 HP · 柴油机</span>
         </div>
         <div class="mm-spec-card">
           <span class="mm-spec-lbl">火控 OPTICS & FCS</span>
           <span id="hangar-stat-optics" class="mm-spec-val">微光夜视 NV</span>
-          <span id="hangar-stat-optics-sub" class="mm-spec-sub">双向稳定</span>
         </div>
       </div>
 
@@ -431,7 +450,7 @@
           <div class="bios-row"><div class="bios-key">对局时间</div><div class="rrow"><input id="hourinput" class="mapinp bios-num" type="range" min="0" max="24" step="0.5" value="8"><span id="hourval" class="bios-unit">08:00 (白昼)</span></div></div>
           <div class="bios-row"><div class="bios-key">战场尺寸</div><div class="rrow bios-camp"><span class="bios-mini">长</span><input id="leninput" class="mapinp bios-num" type="number" step="100" value="6000"><span class="bios-mini">宽</span><input id="widinput" class="mapinp bios-num" type="number" step="100" value="6000"><span class="bios-unit">米</span></div></div>
           <div class="bios-row"><div class="bios-key">出击营地</div><div class="rrow bios-camp"><span class="bios-mini">战车</span><input id="bdinput_tank" class="mapinp bios-num" type="number" step="100" value="1000"><span class="bios-mini">火炮</span><input id="bdinput_arty" class="mapinp bios-num" type="number" step="100" value="3000"><span class="bios-mini">直升机</span><input id="bdinput_heli" class="mapinp bios-num" type="number" step="100" value="6000"><span class="bios-unit">米</span></div></div>
-          <div class="bios-row"><div class="bios-key">崎岖度</div><div class="rrow"><input id="roughinput" class="mapinp bios-num" type="range" min="-100" max="100" step="1" value="0"><span id="roughval" class="bios-unit">0</span></div></div>
+          <div class="bios-row"><div class="bios-key">崎岖度</div><div class="rrow"><input id="roughinput" class="mapinp bios-num" type="range" min="-100" max="100" step="1" value="25"><span id="roughval" class="bios-unit">+25</span></div></div>
         </div>
         <div id="setuproot"></div>
       </div>
@@ -506,7 +525,7 @@
               <div><em>Z</em>：占领阵地</div>
               <div><em>X</em>：编队跟随</div>
               <div><em>J</em>：弃车 / 重新部署</div>
-              <div><em>T</em>：敌我标识</div>
+              <div><em>T</em>：战术标识</div>
             </div>
           </div>
           <div class="manual-h" style="margin-top:14px">触控手势 (移动端)</div>
@@ -569,33 +588,35 @@
 <!-- ==================== 结算界面 ==================== -->
 <div id="endov" class="overlay hidden"></div>
 
-<script src="js/debug-flag.js"></script>
-<script src="js/vendor/three-r128.js"></script>
-<script src="js/core_util.js"></script>
-<script src="js/core.js"></script>
-<script src="js/audio_common.js"></script>
-<script src="js/audio.js"></script>
-<script src="js/scene.js"></script>
-<script src="js/map_common.js"></script>
-<script src="js/map.js"></script>
-<script src="js/fx_common.js"></script>
-<script src="js/fx.js"></script>
-<script src="js/vehicles_common.js"></script>
-<script src="js/vehicles.js"></script>
-<script src="js/combat.js"></script>
-<script src="js/weapons.js"></script>
-<script src="js/player.js"></script>
-<script src="js/ai_common.js"></script>
-<script src="js/ai.js"></script>
-<script src="js/world.js"></script>
-<script src="js/ui.js"></script>
-<script src="js/preview.js"></script>
-<script src="js/flow.js"></script>
-<script src="js/main.js"></script>
-<script src="js/comic_common.js"></script>
-<script src="js/comic.js"></script>
+<script src="js/debug-flag.js?v=20260910fx4"></script>
+<script src="js/vendor/three-r128.js?v=20260910fx4"></script>
+<script src="js/core_util.js?v=20260910fx4"></script>
+<script src="js/core.js?v=20260910fx4"></script>
+<script src="js/wonder.js?v=20260910fx4"></script>
+<script src="js/audio_common.js?v=20260910fx4"></script>
+<script src="js/audio.js?v=20260910fx4"></script>
+<script src="js/scene.js?v=20260910fx4"></script>
+<script src="js/map_common.js?v=20260910fx4"></script>
+<script src="js/map.js?v=20260910fx4"></script>
+<script src="js/fx_common.js?v=20260910fx4"></script>
+<script src="js/fx.js?v=20260910fx4"></script>
+<script src="js/vehicles_common.js?v=20260910fx4"></script>
+<script src="js/vehicles.js?v=20260910fx4"></script>
+<script src="js/combat.js?v=20260910fx4"></script>
+<script src="js/weapons.js?v=20260910fx4"></script>
+<script src="js/player.js?v=20260910fx4"></script>
+<script src="js/ai_common.js?v=20260910fx4"></script>
+<script src="js/ai.js?v=20260910fx4"></script>
+<script src="js/ai_nav.js?v=20260910fx4"></script>
+<script src="js/world.js?v=20260910fx4"></script>
+<script src="js/ui.js?v=20260910fx4"></script>
+<script src="js/preview.js?v=20260910fx4"></script>
+<script src="js/flow.js?v=20260910fx4"></script>
+<script src="js/main.js?v=20260910fx4"></script>
+<script src="js/comic_common.js?v=20260910fx4"></script>
+<script src="js/comic.js?v=20260910fx4"></script>
 
 
-<script src="js/uifx-enhance.js"></script>
+<script src="js/uifx-enhance.js?v=20260910fx4"></script>
 </body>
 </html>

@@ -63,8 +63,8 @@ var _suspTagA = null;
 var _CAMO_BODY_REF = null, _CAMO_ACC_REF = null;
 var _CAMO_TEAM = 'ally';   // 当前建模载具阵营(仅 visPartPush 打标消费;1=红方数码/2=蓝方NATO)
 var _suspRow = 0;                                                                          // 当前建模车型在环路图集中的行号(0..4)
-var SUSP_ROW = { t59: 0, t99: 1, td89: 2, m1: 3, m60: 4 };                                 // 图集行号(与 SUSP_ATLAS_KEYS 同序)
-var SUSP_ATLAS_KEYS = ['t59', 't99', 'td89', 'm1', 'm60'];
+var SUSP_ROW = { t59: 0, t99: 1, td89: 2, m1: 3, m60: 4, pgz95: 5 };                                 // 图集行号(与 SUSP_ATLAS_KEYS 同序)
+var SUSP_ATLAS_KEYS = ['t59', 't99', 'td89', 'm1', 'm60', 'pgz95'];
 var _suspNW = 4;                                                                           // 当前车型末站位索引(n-1),烧进滚动件 aVTag.w 供 shader 插值用
 function _suspSetRow(k) { _suspRow = SUSP_ROW[k] || 0; _suspNW = (SUSP_SPEC[k] ? SUSP_SPEC[k].n : 5) - 1; }
 /* 模式 1..7(负重轮/摆臂):.z/.w 载「铰点 z / 铰点 y」——逐轮不同,shader 据此绕铰点旋转。
@@ -428,24 +428,26 @@ function twinEndWheel(bP, sk, o, C) {
 }
 
 /* ===== 火箭炮 6×6 卡车轮(轮转子自转)=====
-   单轮构成(尺寸/位置与旧静态版逐分毫不差):轮胎 r0.52/w0.40 + 钢圈 r0.30/w0.41 + 轮毂 r0.16/w0.42,轮心 (±1.05, 0.52, z)。
+   单轮构成(分阵营规格 ARTY_WHEEL_SPEC):红 PHL-11 轮胎 r0.535/w0.30(轮心 x±1.10);蓝 M142 轮胎 r0.59/w0.32(轮心 x±1.04);钢圈/轮毂随比例。
    复用端轮转子 tag(模式 18:只自转,无悬挂行程;卡车无外露轮轴,整轮进 tag)。
    自转角 θ=滚动米数/R,走既有 suspRoll 通道(差速+断轮冻结自动继承;滚动米数由 _trackDifferential 按轮周长取模累计)。
    角向特征(光滑圆柱自转不可见,必须配):外端面螺栓圈×6(落钢圈面上)+胎面花纹块×12(绕周均布,凸出胎面 0.01,前后视角亦可读滚动)。
    sk=侧符(±1);C={ rub 胎色, steel 圈/毂色, dark 螺栓色 }(颜色闭包注入,与 twinWheelSet 同范式)。 */
-var ARTY_WHEEL_R = 0.52;                       // 卡车轮半径(m,转子 tag R/自转除数)
-var ARTY_WHEEL_CIRC = 2 * Math.PI * 0.52;      // 轮周长(滚动米数取模周期;整周取模=零视觉跳变,保 float 精度)
-var ARTY_WHEEL_X = 1.05, ARTY_WHEEL_Y = 0.52;  // 轮心 x/y(与轮组命中壳同位)
-function artyWheel(bP, sk, wz, C) {
-  var R = ARTY_WHEEL_R, wx = ARTY_WHEEL_X, wy = ARTY_WHEEL_Y;
+var ARTY_WHEEL_SPEC = {                        // 分阵营车轮规格(与建模/轮组命中壳/滚动取模同源)
+  ally:  { R: 0.535, wx: 1.10, tw: 0.30, rimR: 0.31, hubR: 0.165 },   // PHL-11: 万山 WS2400 大直径单胎(外胎面=±1.25)
+  enemy: { R: 0.590, wx: 1.04, tw: 0.32, rimR: 0.34, hubR: 0.182 }    // M142: FMTV M1140 泄气保用胎(外胎面=±1.20)
+};
+var ARTY_WHEEL_CIRC_OF = { ally: 2 * Math.PI * 0.535, enemy: 2 * Math.PI * 0.590 };   // 轮周长(滚动米数取模周期;整周取模=零视觉跳变)
+function artyWheel(bP, sk, wz, C, o) {
+  var S = o || ARTY_WHEEL_SPEC.ally, R = S.R, wx = S.wx, wy = R, tw = S.tw;   // 轮心 y=R(接地);缺省规格=红方(向后兼容)
   _suspEndWheelTag(wz, wy, R);   // 卡车轮转子 tag(只自转)
-  vCyl(bP, R, R, 0.40, 12, C.rub, sk * wx, wy, wz, 0, 0, Math.PI / 2);          // 轮胎
-  vCyl(bP, 0.30, 0.30, 0.41, 10, C.steel, sk * wx, wy, wz, 0, 0, Math.PI / 2);  // 钢圈(侧缘出露 5mm)
-  vCyl(bP, 0.16, 0.16, 0.42, 8, C.steel, sk * wx, wy, wz, 0, 0, Math.PI / 2);   // 轮毂
-  wheelBoltRing(bP, sk, wx + 0.205, wy, wz, 0.20, C.dark);   // 螺栓圈×6(落钢圈外端面,转子角向特征)
-  for (var li = 0; li < 12; li++) {                           // 胎面花纹块×12(绕周均布;径向 0.05/凸出胎面 0.01)
+  vCyl(bP, R, R, tw, 12, C.rub, sk * wx, wy, wz, 0, 0, Math.PI / 2);                    // 轮胎
+  vCyl(bP, S.rimR, S.rimR, tw + 0.01, 10, C.steel, sk * wx, wy, wz, 0, 0, Math.PI / 2); // 钢圈(侧缘出露 5mm)
+  vCyl(bP, S.hubR, S.hubR, tw + 0.02, 8, C.steel, sk * wx, wy, wz, 0, 0, Math.PI / 2);  // 轮毂
+  wheelBoltRing(bP, sk, wx + tw / 2, wy, wz, S.rimR * 0.667, C.dark);                   // 螺栓圈×6(落钢圈外端面,转子角向特征)
+  for (var li = 0; li < 12; li++) {                                                     // 胎面花纹块×12(绕周均布;径向 0.05/凸出胎面 0.01)
     var la = li * Math.PI / 6;
-    vBox(bP, 0.42, 0.05, 0.14, C.rub, sk * wx, wy + Math.cos(la) * 0.505, wz + Math.sin(la) * 0.505, la, 0, 0);
+    vBox(bP, tw + 0.02, 0.05, 0.14, C.rub, sk * wx, wy + Math.cos(la) * (R - 0.015), wz + Math.sin(la) * (R - 0.015), la, 0, 0);
   }
   _suspTagClear();
 }

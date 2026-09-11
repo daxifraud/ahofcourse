@@ -15,7 +15,7 @@ var el = {};
 function grabEls() {
   ['hud','fps','allies','enemies','kills','respawns','abandonring','abandontxt','ring','hitm','flash','log','aimdot',
    'startov','pauseov','endov','endtitle','endsub','endstats',
-   'lockhint','ch','scope','rangeinfo','lwsring','zoomedge','impact','impactRkL','impactRkR','chRkL','chRkR','poola','poole','nvd','nvn','artyring','aimhint','helipitchinfo','helimissileinfol','helimissileinfor','boundwarn','heliweaponbar','heliradarlock','rwr-warning','rwr-tag','maws-edge-flash','maws-hud-layer','lwr-hud-layer',
+   'lockhint','ch','scope','rangeinfo','lwsring','scopedial','sigfps','impact','impactRkL','impactRkR','chRkL','chRkR','poola','poole','nvd','nvn','artyring','artyringtxt','aimhint','helipitchinfo','helimissileinfol','helimissileinfor','boundwarn','heliweaponbar','heliradarlock','rwr-warning','rwr-tag','maws-edge-flash','maws-hud-layer','lwr-hud-layer',
    'respawnov','rhqrow','rkindrow','rconfirm','skrow','stylerow','siderow',
    'timeinput','timeval','leninput','widinput','timeremain','roughinput','roughval','sizeinput','bdinput_tank','bdinput_arty','bdinput_heli',
    'hourinput','hourval',                                        // 时间拖动条(小时 0~24)
@@ -183,18 +183,29 @@ function markSel(container, attrKey, value) {
 function bindHeliWeaponBarUI() {
   var w1 = document.getElementById('hwp-1'), w2 = document.getElementById('hwp-2'), w3 = document.getElementById('hwp-3');
   if (w1) w1.addEventListener('click', function() {
-    if (player && isHeliVehicle(player)) {
+    if (player && (isHeliVehicle(player) || (typeof isAAVehicle === 'function' && isAAVehicle(player)))) {
       player._heliWeapon = 3;
-      if (typeof aimHint === 'function') aimHint('武器 [1]：导弹');
+      if (typeof aimHint === 'function') aimHint(typeof isAAVehicle === 'function' && isAAVehicle(player) ? '武器 [1]：防空导弹' : '武器 [1]：导弹');
     }
   });
   if (w2) w2.addEventListener('click', function() {
+    if (player && typeof isAAVehicle === 'function' && isAAVehicle(player)) {
+      if (typeof aimHint === 'function') aimHint('防空载具无火箭弹');
+      return;
+    }
     if (player && isHeliVehicle(player)) {
       player._heliWeapon = 2;
       if (typeof aimHint === 'function') aimHint('武器 [2]：火箭弹');
     }
   });
   if (w3) w3.addEventListener('click', function() {
+    if (player && typeof isAAVehicle === 'function' && isAAVehicle(player)) {
+      if (player.team === 'ally') {
+        player._heliWeapon = 1;
+        if (typeof aimHint === 'function') aimHint('武器 [2]：双联机炮');
+      } else if (typeof aimHint === 'function') aimHint('复仇者无机炮');
+      return;
+    }
     if (player && isHeliVehicle(player)) {
       player._heliWeapon = 1;
       if (typeof aimHint === 'function') aimHint('武器 [3]：机炮');
@@ -464,6 +475,27 @@ function updateHeliDangerousAttitude(dt) {
 
 var _rwrIdle = false;                    // ★审查A4: 非直升机早退边沿门(off 态是本函数不动点, 原版每模拟步 4 次 DOM 突变 ×50Hz)
 var _mawsHtmlPrev = '\u0000';             // ★审查B5: maws 层上帧 HTML(值门用)
+var _mawsFlashWant = false, _lwrFlashWant = false, _edgeFlashPrev = false;   // 边缘红闪统一所有权:MAWS/LWR 只写 want,apply 单点裁决(修 LWR 胜利卡红,2026-09-09)
+function applyEdgeFlash() {
+  var want = _mawsFlashWant || _lwrFlashWant;
+  if (want === _edgeFlashPrev) return;
+  _edgeFlashPrev = want;
+  var f = (typeof el !== 'undefined' && el['maws-edge-flash']) || (typeof document !== 'undefined' && document.getElementById('maws-edge-flash'));
+  if (f) f.classList.toggle('hidden', !want);
+}
+function lwrMawsReset() {   // 结算兜底:两路 want+音+层全清(纵深防御,修 LWR 胜利卡红)
+  _mawsFlashWant = false; _lwrFlashWant = false;
+  _lwrAimT = {}; _lwrAimTank = {}; _lwrOnPrev = false; _lwrHtmlPrev = '';
+  _rwrLastState = 'none';
+  sfxLwrToneStop();
+  if (typeof sfxRwrAlarmStop === 'function') sfxRwrAlarmStop();
+  if (typeof sfxRwrToneStop === 'function') sfxRwrToneStop();
+  var l1 = (typeof el !== 'undefined' && el['lwr-hud-layer']) || (typeof document !== 'undefined' && document.getElementById('lwr-hud-layer'));
+  if (l1 && l1.innerHTML !== '') l1.innerHTML = '';
+  var l2 = (typeof el !== 'undefined' && el['maws-hud-layer']) || (typeof document !== 'undefined' && document.getElementById('maws-hud-layer'));
+  if (l2 && l2.innerHTML !== '') { l2.innerHTML = ''; _mawsHtmlPrev = ''; }
+  _edgeFlashPrev = true; applyEdgeFlash();   // 强制藏一次(绕值门)
+}
 function updateRwrMaws(dt) {
   var rwrEl = el['rwr-warning'] || document.getElementById('rwr-warning');
   var rwrTag = el['rwr-tag'] || document.getElementById('rwr-tag');
@@ -476,7 +508,7 @@ function updateRwrMaws(dt) {
     if (_rwrIdle) return;                             // ★审查A4: 边沿门——hidden/空串/停音均为幂等不动点, 只在进入时做一次
     _rwrIdle = true;
     if (rwrEl) rwrEl.classList.add('hidden');         // (删 className='hidden' 整串覆盖: 该元素仅 toggling hidden 一个类, classList.add 到达同一终态)
-    if (flashEl) flashEl.classList.add('hidden');
+    _mawsFlashWant = false;   // 闲置路只写 want(统一所有权,apply 单点裁决)
     if (layerEl && layerEl.innerHTML !== '') { layerEl.innerHTML = ''; _mawsHtmlPrev = ''; }
     _rwrLastState = 'none';
     if (typeof sfxRwrAlarmStop === 'function') sfxRwrAlarmStop();
@@ -634,14 +666,8 @@ function updateRwrMaws(dt) {
   }
   _rwrLastState = curState;
 
-  // 5. 更新画面边缘红闪
-  if (flashEl) {
-    if (curState === 'missile') {
-      flashEl.classList.remove('hidden');
-    } else {
-      flashEl.classList.add('hidden');
-    }
-  }
+  // 5. 边缘红闪改写 want(统一所有权,apply 单点裁决)
+  _mawsFlashWant = (curState === 'missile');
 
   // 6. 渲染来袭导弹视野内红方框 / 视野外边缘红箭头
   if (layerEl) {
@@ -669,11 +695,11 @@ function updateRwrMaws(dt) {
           // 视野内: 红色方框标注
           var sx = (scr.x * 0.5 + 0.5) * W;
           var sy = (-scr.y * 0.5 + 0.5) * H;
-          htmlStr += '<div class="maws-missile-box" style="left:' + sx.toFixed(1) + 'px;top:' + sy.toFixed(1) + 'px;">' +
-                     '<svg viewBox="0 0 44 44"><polygon points="4,6 40,6 22,38"/></svg>' +
-                     '<span class="maws-missile-tag">⚠ 敌导弹 ' + mDist + 'm</span></div>';
+          htmlStr += '<div class="tgtmk msl" style="left:' + sx.toFixed(1) + 'px;top:' + sy.toFixed(1) + 'px;">' +
+                     '<svg viewBox="0 0 44 44"><polygon class="tri-ink" points="3,7 41,7 22,41"/><polygon class="tri-mk" points="7,10 37,10 22,36"/></svg>' +
+                     '<span class="tgtmk-tag">⚠ 敌导弹 ' + mDist + 'm</span></div>';
         } else {
-          // 视野外: 画面边缘红色闪烁箭头标注方位
+          // 视野外: 画面边缘统一标记箭头(随威胁类型变色)
           var dx = camPos.x, dy = camPos.y;
           if (!inFront) { dx = -dx; dy = -dy; }
           var len = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -684,8 +710,8 @@ function updateRwrMaws(dt) {
           var edgeY = H * 0.5 - (dy / len) * k;
           var ang = Math.atan2(-dy, dx);
 
-          htmlStr += '<div class="maws-edge-arrow" style="left:' + edgeX.toFixed(1) + 'px;top:' + edgeY.toFixed(1) + 'px;transform:translate(-50%,-50%) rotate(' + ang.toFixed(3) + 'rad);">' +
-                     '<svg viewBox="0 0 34 34"><path d="M31 17 L9 6 L14.5 17 L9 28 Z" fill="#ff2d20" stroke="#141414" stroke-width="2.5" stroke-linejoin="round"/></svg>' +
+          htmlStr += '<div class="tgtmk-arrow msl" style="left:' + edgeX.toFixed(1) + 'px;top:' + edgeY.toFixed(1) + 'px;transform:translate(-50%,-50%) rotate(' + ang.toFixed(3) + 'rad);">' +
+                     '<svg viewBox="0 0 34 34"><path d="M31 17 L9 6 L14.5 17 L9 28 Z" stroke="#141414" stroke-width="2.5" stroke-linejoin="round"/></svg>' +
                      '</div>';
         }
       }
@@ -724,6 +750,7 @@ function updateLwr(dt) {
       _lwrOnPrev = false;
       _lwrAimT = {}; _lwrAimTank = {};
       sfxLwrToneStop();
+      _lwrFlashWant = false;   // 结算/死亡/换车灭闪(修胜利卡红)
       if (layerEl && layerEl.innerHTML !== '') { layerEl.innerHTML = ''; _lwrHtmlPrev = ''; }
     }
     return;
@@ -733,7 +760,7 @@ function updateLwr(dt) {
   for (var i = 0; i < aliveList.length; i++) {
     var t = aliveList[i];
     if (t === player || !t.alive || t.team === player.team) continue;
-    var trig = (t.kind === 'td' || t.kind === '99') || (isHeliVehicle(t) && (t._heliWeapon || 3) === 1);   // 计算机解算载具 / 直升机机炮
+    var trig = (t.kind === 'td' || t.kind === '99') || ((isHeliVehicle(t) || (typeof isAAVehicle === 'function' && isAAVehicle(t))) && (t._heliWeapon || 3) === 1);   // 计算机解算载具 / 直升机与防空机炮
     if (!trig) continue;
     var gp = t.gunPivot || t.turret;
     gp.getWorldDirection(_lwD);
@@ -746,8 +773,8 @@ function updateLwr(dt) {
     var cos = (_lwD.x * _lwP.x + _lwD.z * _lwP.z) / (dh * ph2);
     if (cos > 0.995 && t.ai && losClearCached(t, player, dist)) aligned.push(t);   // 遮挡治理:隔着遮挡瞄准不触发激光告警
   }
+  _lwrFlashWant = aligned.length > 0;   // 统一所有权:只写 want(修胜利卡红:空表必须灭)
   if (aligned.length > 0) {
-    if (flashEl) flashEl.classList.remove('hidden');      // 边缘闪烁同直升机被导弹攻击
     sfxLwrTone(true);
   } else {
     sfxLwrToneStop();
@@ -775,7 +802,7 @@ function updateLwr(dt) {
       var htmlStr = '';
       if (inFront && scr.z < 1 && Math.abs(scr.x) < 0.9 && Math.abs(scr.y) < 0.9) {
         var sx = (scr.x * 0.5 + 0.5) * W, sy = (-scr.y * 0.5 + 0.5) * H;
-        htmlStr = '<div class="maws-missile-box" style="left:' + sx.toFixed(1) + 'px;top:' + sy.toFixed(1) + 'px;"><svg viewBox="0 0 44 44"><polygon points="4,6 40,6 22,38"/></svg><span class="maws-missile-tag">⚠ 敌锁定</span></div>';
+        htmlStr = '<div class="tgtmk lwr" style="left:' + sx.toFixed(1) + 'px;top:' + sy.toFixed(1) + 'px;"><svg viewBox="0 0 44 44"><polygon class="tri-ink" points="3,7 41,7 22,41"/><polygon class="tri-mk" points="7,10 37,10 22,36"/></svg><span class="tgtmk-tag">⚠ 敌锁定</span></div>';
       } else {
         var dx = cp.x, dy = cp.y; if (!inFront) { dx = -dx; dy = -dy; }
         var len = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -783,7 +810,7 @@ function updateLwr(dt) {
         var k = Math.min(hx2 / (Math.abs(dx / len) || 1e-4), hy2 / (Math.abs(dy / len) || 1e-4));
         var ex = W * 0.5 + (dx / len) * k, ey = H * 0.5 - (dy / len) * k;
         var ang = Math.atan2(-dy, dx);
-        htmlStr = '<div class="maws-edge-arrow" style="left:' + ex.toFixed(1) + 'px;top:' + ey.toFixed(1) + 'px;transform:translate(-50%,-50%) rotate(' + ang.toFixed(3) + 'rad);"><svg viewBox="0 0 34 34"><path d="M31 17 L9 6 L14.5 17 L9 28 Z" fill="#ff2d20" stroke="#141414" stroke-width="2.5" stroke-linejoin="round"/></svg></div>';
+        htmlStr = '<div class="tgtmk-arrow lwr" style="left:' + ex.toFixed(1) + 'px;top:' + ey.toFixed(1) + 'px;transform:translate(-50%,-50%) rotate(' + ang.toFixed(3) + 'rad);"><svg viewBox="0 0 34 34"><path d="M31 17 L9 6 L14.5 17 L9 28 Z" stroke="#141414" stroke-width="2.5" stroke-linejoin="round"/></svg></div>';
       }
       if (htmlStr !== _lwrHtmlPrev) { layerEl.innerHTML = htmlStr; _lwrHtmlPrev = htmlStr; }   // ★审查B5: 值门(同上)
     } else if (layerEl.innerHTML !== '') { layerEl.innerHTML = ''; _lwrHtmlPrev = ''; }
@@ -976,7 +1003,7 @@ function hudUpdate(dt) {
 
   /* 直升机多武器状态与环形射击计数/装填指示 */
   var hmlEl = el.helimissileinfol, hmrEl = el.helimissileinfor;
-  if (player && player.alive && isHeliVehicle(player)) {
+  if (player && player.alive && (isHeliVehicle(player) || (typeof isAAVehicle === 'function' && isAAVehicle(player)))) {
     var curWp = player._heliWeapon || 3;
     if (curWp === 2) {
       // 武器2: 火箭弹 (14发, 5发/秒, 20s装填) - #ring 呈现剩余火箭弹计数与装填进度
@@ -1037,7 +1064,7 @@ function hudUpdate(dt) {
     var frac = player && player.reloadTime > 0 ? 1 - player.reload / player.reloadTime : 1;   // ★审查C5: 先判空再解引用(原版先解引用后判空, 坦克/直升机两处同病)
     var ringCol = frac >= 1 ? '#9dff6e' : '#ffd76e';
     if (player && player.kind === 'arty' && player.salvoLeft > 0) {
-      frac = 1 - player.salvoLeft / CONF.arty.salvo;
+      frac = 1 - player.salvoLeft / artyConfOf(player).salvo;
       ringCol = '#ff9c4a';
     }
     ringConic(el.ring, ringCol, frac);
@@ -1053,13 +1080,21 @@ function hudUpdate(dt) {
       else ringConic(el.lwsring, '#7fd2ff', 0);
     }
   }
-  if (el.artyring) {                                   // 火箭炮炮镜镜心装填环(与 #ring 完全同源:装填绿/装填中黄/齐射橙)
+  if (el.artyring) {                                   // 火箭炮炮镜镜心环 = 第三人称 #ring 同款(同一 ringCol/frac:就绪绿满环/装填黄倒计时/齐射橙计数;射击计数走圆环)
     var _arOn = player && player.kind === 'arty' && scoped;
     if (_arOn !== el.artyring._on) {                   // 显隐边沿写(旧 classList.contains 每帧查询)
       el.artyring._on = _arOn;
       el.artyring.classList.toggle('hidden', !_arOn);
     }
     if (_arOn) ringConic(el.artyring, ringCol, frac);
+    if (el.artyringtxt) {                              // 环内读数仅装填倒计时数字(与直升机挂架倒计时同族);射击计数/就绪全由圆环表达(同第三人称)
+      var _arTxtOn = _arOn && !(player.salvoLeft > 0) && player.reload > 0;
+      if (_arTxtOn !== el.artyringtxt._on) { el.artyringtxt._on = _arTxtOn; el.artyringtxt.classList.toggle('hidden', !_arTxtOn); }
+      if (_arTxtOn) {
+        var _arTxt = player.reload.toFixed(1) + 's';
+        if (el.artyringtxt._t !== _arTxt) { el.artyringtxt._t = _arTxt; el.artyringtxt.textContent = _arTxt; }
+      }
+    }
   }
 
   /* 雷达预警与导弹来袭告警驱动 */
@@ -1067,11 +1102,13 @@ function hudUpdate(dt) {
   updateHeliDangerousAttitude(dt);
   updateLwr(dt);                                // 激光告警(99/M1/直升机)
   updateLws(dt);                                // 99式激光压制
+  applyEdgeFlash();   // 边缘红闪单点裁决(MAWS/LWR 两路 want)
 
   /* 直升机多武器栏与雷达锁定 UI 呈现 */
   var hwbEl = el.heliweaponbar;
   var hrlEl = el.heliradarlock;
-  var isHeli = player && player.alive && isHeliVehicle(player) && gameState === 'playing';
+  var _isAABar = player && player.alive && typeof isAAVehicle === 'function' && isAAVehicle(player);
+  var isHeli = player && player.alive && (isHeliVehicle(player) || (_isAABar && player.team === 'ally')) && gameState === 'playing';   // 复仇者=单武器 → 整个武器栏隐藏(用户需求#7);PGZ-95 保留两槽;锁定环走上方独立门,复仇者不受影响
   if (hwbEl) {
     if (isHeli && !scoped) {
       if (hwbEl._on !== true) { hwbEl._on = true; hwbEl.classList.remove('hidden'); }
@@ -1083,9 +1120,16 @@ function hudUpdate(dt) {
       // 武器型号名 (依机型: WZ-10 = TY-90/火蛇-70A, AH-64D = AIM-92/Hydra-70; 取规格名括号前的型号段, 值变才写 DOM)
       var _mNm = HELI_MSL_SPEC[heliMslTypeOf(player)], _rNm = HELI_RKT_SPEC[player.kind] || HELI_RKT_SPEC.ah64;
       var _n1 = _mNm ? _mNm.name.split(' (')[0] : '导弹', _n2 = _rNm.name.split(' (')[0];
+      var _isAA = _isAABar;
+      if (_isAA) _n1 = player.team === 'ally' ? '飞弩-6' : 'FIM-92';   // 显示名=实车挂载(用户需求#3/#6;TY-90/AIM-92 仅作内部弹道规格路由)
       var _e1 = w1 ? w1.querySelector('.hwp-name') : null, _e2 = w2 ? w2.querySelector('.hwp-name') : null;
+      if (w2) w2.style.display = _isAA ? 'none' : '';   // PGZ-95 只有导弹+机炮两种武器:隐藏火箭槽(用户需求#2)
       if (_e1 && _e1.textContent !== _n1) _e1.textContent = _n1;
-      if (_e2 && _e2.textContent !== _n2) _e2.textContent = _n2;
+      if (_e2) { var _n2v = _isAA ? '无火箭位' : _n2; if (_e2.textContent !== _n2v) _e2.textContent = _n2v; }
+      var _e3n = w3 ? w3.querySelector('.hwp-name') : null;
+      if (_e3n) { var _n3v = _isAA ? (player.team === 'ally' ? '双联机炮' : '无机炮') : '机炮'; if (_e3n.textContent !== _n3v) _e3n.textContent = _n3v; }
+      var _e3k = w3 ? w3.querySelector('.hwp-key') : null;
+      if (_e3k) { var _k3v = _isAA ? '2' : '3'; if (_e3k.textContent !== _k3v) _e3k.textContent = _k3v; }   // AA 键位:1=导弹 2=机炮(参考直升机多武器键位显示)
 
       var a1 = document.getElementById('hwp-ammo-1'), a2 = document.getElementById('hwp-ammo-2'), a3 = document.getElementById('hwp-ammo-3');
       if (a1) {   // 1号位=导弹弹药(15: 两侧挂架在筒弹药之和 + 装填倒计时)
@@ -1097,7 +1141,7 @@ function hudUpdate(dt) {
         if (a1.textContent !== txt1) a1.textContent = txt1;   // 写门(值不变不写 DOM)
       }
       var _rkN = rocketPodCountOf(player);
-      var txt2 = player._heliRocketReloadT > 0 ? ('装填中 ' + player._heliRocketReloadT.toFixed(0) + 's') : ((player._heliRocketLeft != null ? player._heliRocketLeft : _rkN) + '/' + _rkN);
+      var txt2 = _isAA ? '—' : (player._heliRocketReloadT > 0 ? ('装填中 ' + player._heliRocketReloadT.toFixed(0) + 's') : ((player._heliRocketLeft != null ? player._heliRocketLeft : _rkN) + '/' + _rkN));
       if (a2 && a2.textContent !== txt2) a2.textContent = txt2;
       var txt3 = player.reload > 0 ? (player.reload.toFixed(1) + 's') : '∞';
       if (a3 && a3.textContent !== txt3) a3.textContent = txt3;   // 3号位=机炮
@@ -1167,20 +1211,21 @@ function hudUpdate(dt) {
                     }
                   }
                 }
-                cls = 'radar-target-box locked active-tgt';
+                cls = 'tgtmk locked active-tgt';
                 tagTxt = mCount > 0 ? ('★ 锁定 [攻击中 ' + mCount + '枚]') : '★ 锁定 [已分配火力]';
               } else if (rt.isDesignated) {
-                cls = 'radar-target-box locking';
+                cls = 'tgtmk locking';
                 var pct = Math.min(99, Math.round(rt.lockEnergy * 100));
                 var tRemain = Math.max(0.1, (1.0 - rt.lockEnergy) * rt.tLockRequired).toFixed(1);
                 tagTxt = '锁定中 ' + pct + '% (' + tRemain + 's)';
               } else {
-                cls = 'radar-target-box scanned';
+                cls = 'tgtmk scanned';
                 tagTxt = '跟踪';
               }
               htmlStr += '<div class="' + cls + '" style="left:' + sx.toFixed(1) + 'px;top:' + sy.toFixed(1) + 'px;">' +
-                         '<span class="radar-target-tag">' + tagTxt + '</span>' +
-                         '<span class="radar-target-dist">' + rt.tank.name + ' ' + distTxt + '</span></div>';
+                         '<svg viewBox="0 0 44 44"><g class="ink"><path d="M4 15 V4 H15"/><path d="M29 4 H40 V15"/><path d="M40 29 V40 H29"/><path d="M15 40 H4 V29"/></g><g class="mk"><path d="M4 15 V4 H15"/><path d="M29 4 H40 V15"/><path d="M40 29 V40 H29"/><path d="M15 40 H4 V29"/></g></svg>' +
+                         '<span class="tgtmk-tag">' + tagTxt + '</span>' +
+                         '<span class="tgtmk-dist">' + rt.tank.name + ' ' + distTxt + '</span></div>';
             }
           }
         } else {

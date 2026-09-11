@@ -5,6 +5,11 @@
     font-family: Consolas, "Microsoft YaHei", "PingFang SC", monospace; color:#cfe8c0;
     -webkit-user-select:none; user-select:none; }
   canvas { display:block; cursor:none; }   /* OS 光标隐藏在画布上,主题黄点=FPS 准星,永远钉死屏幕正中心 */
+  /* ===== 火箭炮俯视火控视野(Shift 开镜=俯瞰战场):隐藏 FPS 镜框美术,恢复系统光标 ===== */
+  #scope.artytop .scope-vig, #scope.artytop .scope-ring, #scope.artytop .dial-bezel,
+  #scope.artytop #scopedial, #scope.artytop .scope-ptr, #scope.artytop #scoperet { display: none; }
+  body.artytop canvas { cursor: crosshair; }
+  body.artytop #aimdot, body.artytop #ch { display: none; }
          /* 载具预览画布:鼠标可见(非对局界面,无准星) */
   .hidden { display:none !important; }
 
@@ -21,6 +26,8 @@
     --hud-paper: rgba(252,249,240,.92);   /* 漫画纸白面板底 */
     --hud-line: #141414;                  /* 面板描边(墨) */
     --hud-amber: #ffd93b;                 /* 漫画黄(触控键按压/点亮态、摇杆芯) */
+    --tch-edge:#d9a72e; --tch-edge-dim:#6b5a24; --tch-txt:#e8c86a; --tch-dim:#9aa184;   /* A 橄榄琥珀:触屏键描边/文字 */
+    --tch-bg1:rgba(35,39,32,.92); --tch-bg2:rgba(20,22,17,.94); --tch-press-txt:#141610;   /* A:触屏键底渐变/按压文字(墨) */
     --hud-radius: 3px;                    /* 统一圆角 */
 
     /* —— 分区二:菜单 UI(漫画风:纸白 + 墨线 + 漫画黄)—— */
@@ -44,25 +51,37 @@
   }
   #hud { position:fixed; inset:0; pointer-events:none; z-index:10; }
 
-  /* 对局四角定位框 (BIOS L-bracket) */
-  .hud-corners { position:absolute; inset:10px; z-index:12; pointer-events:none; }
-  .hud-corners span {
-    position:absolute; width:16px; height:16px;
-    border:1.5px solid #6f9a63;
-    box-shadow:0 0 8px rgba(157,255,168,.22);
-  }
-  .hud-corners .tl { top:0; left:0; border-right:0; border-bottom:0; }
-  .hud-corners .tr { top:0; right:0; border-left:0; border-bottom:0; }
-  .hud-corners .bl { bottom:0; left:0; border-right:0; border-top:0; }
-  .hud-corners .br { bottom:0; right:0; border-left:0; border-top:0; }
+  /* 对局定位框(BIOS墨线直角+四边刻度+顶部菱形)+右上信号组(信号柱/LINK/dB/FPS联动) */
+  .hud-frame { position:absolute; inset:10px; z-index:12; pointer-events:none; }
+  .hud-frame .cn { position:absolute; width:18px; height:18px; border:2px solid #9dffa8; }
+  .hud-frame .tl { top:0; left:0; border-right:0; border-bottom:0; }
+  .hud-frame .tr { top:0; right:0; border-left:0; border-bottom:0; }
+  .hud-frame .bl { bottom:0; left:0; border-right:0; border-top:0; }
+  .hud-frame .br { bottom:0; right:0; border-left:0; border-top:0; }
+  .hud-frame .tick-t,.hud-frame .tick-b { position:absolute; left:50%; width:120px; height:5px; transform:translateX(-50%);
+    background:repeating-linear-gradient(90deg,#9dffa8 0 2px,transparent 2px 10px); opacity:.6; }
+  .hud-frame .tick-t { top:0; } .hud-frame .tick-b { bottom:0; }
+  .hud-frame .tick-l,.hud-frame .tick-r { position:absolute; top:50%; width:5px; height:120px; transform:translateY(-50%);
+    background:repeating-linear-gradient(0deg,#9dffa8 0 2px,transparent 2px 10px); opacity:.6; }
+  .hud-frame .tick-l { left:0; } .hud-frame .tick-r { right:0; }
+  .hud-frame .topmark { position:absolute; left:50%; top:-4px; width:10px; height:10px; transform:translateX(-50%) rotate(45deg);
+    background:#141414; border:2px solid #ffd21f; }
+  .sigmod { position:absolute; top:2px; right:2px;   /* 上移:独立FPS框删除后顶边对齐 */ display:flex; align-items:flex-end; gap:7px;
+    background:rgba(10,16,10,.82); border:1px solid rgba(157,255,168,.5); padding:5px 8px;
+    font:13px VT323,Consolas,monospace; color:#9dffa8; }
+  .sigmod .bars { display:flex; align-items:flex-end; gap:2px; height:16px; }
+  .sigmod .bars i { width:4px; background:#9dffa8; animation:sigbar 1.6s steps(2) infinite; }
+  .sigmod .bars i:nth-child(1) { height:5px; } .sigmod .bars i:nth-child(2) { height:8px; animation-delay:.2s; }
+  .sigmod .bars i:nth-child(3) { height:11px; animation-delay:.4s; } .sigmod .bars i:nth-child(4) { height:14px; animation-delay:.6s; }
+  .sigmod .bars i:nth-child(5) { height:16px; animation-delay:.8s; background:#ffd21f; }
+  @keyframes sigbar { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+  .sigmod .lk { color:#fcf9f0; letter-spacing:1px; }
+  .sigmod .db { opacity:.75; }
+  .sigmod #sigfps { color:#ffd21f; }
+  .sigmod #sigfps::after { content:' FPS'; font-size:11px; opacity:.8; }
 
   /* 顶部信息条 — 磷光战术 BIOS */
-  /* fps 为 hud 直接子元素(不入 topbar,避免被居中信息条遮盖),固定屏幕右上角 */
-  #fps { position:absolute; top:8px; right:22px; color:#9dffa8; font-size:14px; font-weight:400;
-    font-family:VT323, "Courier New", monospace; letter-spacing:2px;
-    background:rgba(6,12,5,.92); padding:3px 10px; border:1px solid #3d4a2e; border-radius:0;
-    box-shadow:0 0 10px rgba(157,255,168,.12), 2px 2px 0 #040704; z-index:30; pointer-events:none;
-    text-shadow:0 0 6px rgba(140,255,158,.4); }
+  /* 独立FPS框已删(帧率只走右上信号组#sigfps段);帧率统计/开关逻辑不动 */
   #topbar { position:absolute; top:10px; left:50%; transform:translateX(-50%);
     display:flex; flex-direction:column; align-items:center; gap:6px; }
   #winfo { font-size:16px; letter-spacing:2px; color:#9dffa8; font-weight:400;
@@ -91,18 +110,18 @@
     -webkit-mask:radial-gradient(circle, transparent 31px, #000 32px, #000 34px, transparent 35px);
             mask:radial-gradient(circle, transparent 31px, #000 32px, #000 34px, transparent 35px); }
   #lwsring.hidden { display:none; }
-  /* 火箭炮炮镜镜心装填环(十字准星 cp 追逐镜心,不常驻中心,#ring 随之移位——镜心装填读数用独立环;
-     与 #ring 同款 conic-gradient 进度逻辑:装填绿/装填中黄/齐射橙) */
-  #artyring { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:84px; height:84px; border-radius:50%;
-    background:conic-gradient(#9dff6e 360deg, rgba(20,20,20,.55) 0);
-    -webkit-mask:radial-gradient(circle, transparent 34px, #000 35px, #000 38px, transparent 39px);
-            mask:radial-gradient(circle, transparent 34px, #000 35px, #000 38px, transparent 39px); }
-  /* 镜心环墨底(漫画描边):兄弟元素纯 CSS 随 #artyring 的 hidden 联动,零 JS */
-  #artyringbk { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:84px; height:84px; border-radius:50%;
-    background:#141414;
-    -webkit-mask:radial-gradient(circle, transparent 32.5px, #000 33.5px, #000 39.5px, transparent 40.5px);
-            mask:radial-gradient(circle, transparent 32.5px, #000 33.5px, #000 39.5px, transparent 40.5px); }
-  #artyring.hidden + #artyringbk { display:none; }
+  /* 火箭炮炮镜镜心环 = 第三人称 #ring 完全克隆(同 60px 盒/27–29px 环带/同 ringConic 同源驱动:
+     就绪绿满环 / 装填黄环倒计时 / 齐射橙环计数)。十字准星 cp 追逐镜心不常驻中心,#ring 随之移位——故镜心用同款独立环;
+     射击计数不用数字、由圆环承担;黑色墨底环废弃(ringConic 剩余段 rgba(20,20,20,.55) 即暗色轨道) */
+  #artyring { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:60px; height:60px; border-radius:50%;
+    background:conic-gradient(var(--hud-fg) 360deg, rgba(20,20,20,.55) 0);
+    -webkit-mask:radial-gradient(circle, transparent 26px, #000 27px, #000 29px, transparent 30px);
+            mask:radial-gradient(circle, transparent 26px, #000 27px, #000 29px, transparent 30px); }
+  /* 环内读数仅装填倒计时数字(黄,与直升机挂架倒计时同族);15px 保证 "39.9s" 收于 52px 内孔 */
+  #artyringtxt { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    font-size:15px; font-weight:900; letter-spacing:0; color:#ffd76e; pointer-events:none;
+    text-shadow: 0 2px 0 #141414, 0 -2px 0 #141414, 2px 0 0 #141414, -2px 0 0 #141414, 0 0 8px rgba(0,0,0,.75); }
+  #artyringtxt.hidden { display:none; }
   /* 黄点光标漫画化:实心黄+粗墨描边,弃辉光(硬边色块) */
   #aimdot { position:absolute; left:50%; top:50%; width:10px; height:10px; margin:-5px 0 0 -5px; z-index:100;
     border-radius:50%; background:#ffd21f; border:2px solid #141414;
@@ -229,114 +248,75 @@
     pointer-events: none;
     z-index: 103;
   }
-  /* 05 激光告警标记层(复用 maws 红框/红箭头样式) */
+  /* 05 激光告警标记层(统一标记 .tgtmk 系, 与 MAWS 同笔触) */
   #lwr-hud-layer { position: fixed; inset: 0; pointer-events: none; z-index: 103; }
-  .maws-missile-box {
-    position: absolute;
-    transform: translate(-50%, -50%);
-    width: 44px;
-    height: 44px;
-    pointer-events: none;
-    box-sizing: border-box;
-  }
-  .maws-missile-box svg {
-    width: 44px;
-    height: 44px;
-    display: block;
-    overflow: visible;
-  }
-  .maws-missile-box svg polygon {
-    stroke: #ff2d20;
-    stroke-width: 3.2;
-    stroke-linejoin: round;
-    fill: rgba(255, 45, 32, 0.24);
-    filter: drop-shadow(0 0 5px rgba(255, 45, 32, 0.85));
-    animation: radarLockPulse 0.35s infinite alternate;
-  }
-  .maws-missile-tag {
-    position: absolute;
-    top: -20px;
-    left: 50%;
-    transform: translateX(-50%);
-    white-space: nowrap;
-    font-size: 11px;
-    font-family: "VT323", "ZCOOL QingKe HuangYou", "Noto Sans SC", "Courier New", monospace, sans-serif;
-    font-weight: 900;
-    color: #fff;
-    background: #ff2d20;
-    padding: 1px 6px;
-    border: 1px solid #141414;
-    border-radius: 2px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.8);
-  }
-  .maws-edge-arrow {
-    position: absolute;
-    width: 36px;
-    height: 36px;
-    pointer-events: none;
-    z-index: 110;
-    transform: translate(-50%, -50%);
-  }
-  .maws-edge-arrow svg {
-    width: 36px;
-    height: 36px;
-    display: block;
-    filter: drop-shadow(0 0 8px #ff2d20);
-    animation: mawsArrowFlash 0.3s infinite alternate ease-in-out;
-  }
-  @keyframes mawsArrowFlash {
-    0% { opacity: 0.35; transform: scale(0.9); }
-    100% { opacity: 1.0; transform: scale(1.18); }
-  }
+  /* HUD 统一标记系 .tgtmk (B方案: 导弹红/激光橙): 四角括弧=我方火控 / 三角=敌方威胁; 笔触=墨线衬底+主色主线 */
+  /* 旧 radar-target-box/maws-missile-box/maws-edge-arrow 系已删除(统一标记替代, 勿复用旧类名) */
+  .tgtmk { --mk: #fff; position: absolute; width: 44px; height: 44px; transform: translate(-50%,-50%); pointer-events: none; }
+  .tgtmk svg { width: 44px; height: 44px; display: block; overflow: visible; }
+  .tgtmk .ink { fill: none; stroke: #141414; stroke-width: 5.5; stroke-linecap: square; }
+  .tgtmk .mk { fill: none; stroke: var(--mk); stroke-width: 2.5; stroke-linecap: square; }
+  .tgtmk.scanned { --mk: #f1c40f; }
+  .tgtmk.scanned .mk { stroke-dasharray: 4 3; }
+  .tgtmk.locking { --mk: #3498db; animation: mkBreathe 1s infinite alternate ease-in-out; }
+  .tgtmk.locked { --mk: #ff2d20; animation: mkPulse .5s infinite alternate; }
+  .tgtmk.lwr { --mk: #ff7a00; animation: mkPulse .35s infinite alternate; }
+  .tgtmk.msl { --mk: #ff2d20; animation: mkPulse .35s infinite alternate; }
+  .tgtmk .tri-ink { fill: #141414; stroke: none; }
+  .tgtmk .tri-mk { stroke: var(--mk); stroke-width: 2.5; stroke-linejoin: round; }
+  .tgtmk.lwr .tri-mk { fill: rgba(255,122,0,.26); }
+  .tgtmk.msl .tri-mk { fill: rgba(255,45,32,.26); }
+  .tgtmk-tag { position: absolute; top: -21px; left: 50%; transform: translateX(-50%); white-space: nowrap; font-size: 11px; font-weight: 900; font-family: "VT323","ZCOOL QingKe HuangYou","Noto Sans SC","Courier New",monospace,sans-serif; letter-spacing: .5px; color: var(--mk); background: rgba(20,20,20,.92); border: 1px solid var(--mk); border-radius: 2px; padding: 1px 6px; }
+  .tgtmk-dist { position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%); white-space: nowrap; font-size: 10.5px; font-weight: bold; font-family: "VT323","ZCOOL QingKe HuangYou","Noto Sans SC","Courier New",monospace,sans-serif; color: #fff; text-shadow: -1px -1px 0 #141414,1px -1px 0 #141414,-1px 1px 0 #141414,1px 1px 0 #141414; }
+  .tgtmk-arrow { --mk: #ff2d20; position: absolute; width: 36px; height: 36px; transform: translate(-50%,-50%); pointer-events: none; z-index: 110; }
+  .tgtmk-arrow.lwr { --mk: #ff7a00; }
+  .tgtmk-arrow.msl { --mk: #ff2d20; }
+  .tgtmk-arrow svg { width: 36px; height: 36px; display: block; animation: mkArrowFlash .3s infinite alternate ease-in-out; }
+  .tgtmk-arrow svg path { fill: var(--mk); }
+  @keyframes mkPulse { 0% { transform: translate(-50%,-50%) scale(.95); } 100% { transform: translate(-50%,-50%) scale(1.05); } }
+  @keyframes mkBreathe { 0% { opacity: .55; } 100% { opacity: 1; } }
+  @keyframes mkArrowFlash { 0% { opacity: .35; transform: scale(.9); } 100% { opacity: 1; transform: scale(1.18); } }
 
-  /* 作战边界警示框: 屏幕中央红色警示大字+黄黑警戒线(统一漫画风格) */
+  /* 作战边界警示框: 磷光战术 BIOS(与 #topbar/#winfo/右上信号组/.sigmod 同族)——
+     暗底 1px 细边 + VT323 等宽字 + 硬投影 + 慢呼吸;弃用旧版"黄黑警戒线 + 纸白面板 + 红色大字 + 缩放脉冲"漫画横幅 */
   #boundwarn {
     position: fixed;
+    top: 88px;                                  /* 让开 #topbar(10px) 与 #rwr-warning(52px) */
     left: 50%;
-    top: 32%;
-    transform: translate(-50%, -50%);
-    z-index: 120;
+    transform: translateX(-50%);
+    z-index: 104;
     pointer-events: none;
     display: flex;
-    flex-direction: column;
     align-items: center;
-    filter: drop-shadow(4px 4px 0 #141414);
-    animation: boundPulse 0.7s ease-in-out infinite alternate;
-  }
-  .bound-stripe {
-    width: 100%;
-    height: 12px;
-    background: repeating-linear-gradient(-45deg, #ffd700, #ffd700 12px, #141414 12px, #141414 24px);
-    border: 2px solid #141414;
-    box-sizing: border-box;
-  }
-  .bound-content {
-    background: rgba(252, 249, 240, 0.95);
-    border-left: 4px solid #141414;
-    border-right: 4px solid #141414;
-    padding: 10px 28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-sizing: border-box;
-  }
-  .bound-text {
-    font-size: 24px;
-    font-family: "VT323", "ZCOOL QingKe HuangYou", "Noto Sans SC", "Courier New", monospace, sans-serif;
-    font-weight: 900;
-    color: #ff2d20;
-    letter-spacing: 2px;
+    gap: 9px;
+    padding: 5px 13px;
+    background: rgba(6,12,5,.92);               /* 与 #winfo 同底 */
+    border: 1px solid #6b5a24;                  /* 暗橄榄细边,与 #winfo 的 #3d4a2e 同一语汇 */
+    border-radius: 0;
+    box-shadow: 0 0 12px rgba(255,210,31,.14), 3px 3px 0 #040704;   /* 与 #winfo 同硬投影 */
+    font-family: VT323, "ZCOOL QingKe HuangYou", "Courier New", monospace;
     white-space: nowrap;
-    text-shadow: -2px -2px 0 #141414, 2px -2px 0 #141414, -2px 2px 0 #141414, 2px 2px 0 #141414, 0 3px 0 #141414;
+    animation: boundBreathe .82s infinite alternate ease-in-out;    /* 与 rwrFlashSlow 同语言 */
   }
-  @keyframes boundPulse {
-    0% { transform: translate(-50%, -50%) scale(0.97); }
-    100% { transform: translate(-50%, -50%) scale(1.03); }
+  #boundwarn .bw-tag {                          /* 漫画黄实底标签:与 #sigfps / .sigmod 第5根柱同色 */
+    font-size: 13px; font-weight: 400; letter-spacing: 3px;
+    color: #040704; background: #ffd21f; padding: 1px 7px;
   }
+  #boundwarn .bw-sep { width: 1px; height: 15px; background: rgba(255,210,31,.45); }
+  #boundwarn .bw-text {
+    font-size: 16px; letter-spacing: 2px; color: #ffd21f;           /* 警戒=黄,与 #abandontxt 的红区分开 */
+    text-shadow: 0 0 6px rgba(255,210,31,.35);
+  }
+  @keyframes boundBreathe { 0% { opacity: .55; } 100% { opacity: 1; } }
   @media (max-width: 600px) {
-    .bound-text { font-size: 16px; letter-spacing: 1px; }
-    .bound-content { padding: 6px 14px; }
-    .bound-stripe { height: 8px; }
+    #boundwarn { top: 78px; gap: 6px; padding: 3px 9px; }
+    #boundwarn .bw-tag { font-size: 11px; letter-spacing: 2px; padding: 1px 5px; }
+    #boundwarn .bw-text { font-size: 12.5px; letter-spacing: 1px; }
+    #boundwarn .bw-sep { height: 12px; }
+  }
+  @media (pointer: coarse) {                    /* 触屏紧凑化,与 #winfo 同口径 */
+    #boundwarn { padding: 3px 9px; }
+    #boundwarn .bw-text { font-size: 13px; letter-spacing: 1px; }
   }
 
   /* 直升机武器切换栏: 屏幕底部居中, 战术军规 HUD 风格 */
@@ -491,101 +471,6 @@
     height: 180px;
     display: block;
   }
-  .radar-target-box {
-    position: absolute;
-    transform: translate(-50%, -50%);
-    width: 44px;
-    height: 44px;
-    border: 2px dashed rgba(255, 152, 0, 0.9);
-    box-shadow: 0 0 0 1px #141414;
-    transition: width .1s, height .1s;
-    pointer-events: none;
-    box-sizing: border-box;
-    background: rgba(255, 152, 0, 0.08);
-  }
-  /* 跟踪状态的目标(未选定):黄色虚线方框 + 黄色字体 */
-  .radar-target-box.scanned {
-    border: 2.5px dashed #f1c40f;
-    box-shadow: 0 0 0 1.5px #141414, inset 0 0 6px rgba(241, 196, 15, 0.35);
-    background: rgba(241, 196, 15, 0.08);
-  }
-  .radar-target-box.scanned .radar-target-tag {
-    color: #f39c12;
-    background: rgba(252, 249, 240, 0.96);
-    border-color: #f1c40f;
-  }
-  /* 选定锁定中的目标(最多2个):蓝色方框 + 蓝色字体 */
-  .radar-target-box.locking {
-    border: 2.5px solid #2980b9;
-    box-shadow: 0 0 0 1.5px #141414, inset 0 0 8px rgba(41, 128, 185, 0.45);
-    background: rgba(41, 128, 185, 0.12);
-  }
-  .radar-target-box.locking .radar-target-tag {
-    color: #2980b9;
-    background: rgba(235, 245, 251, 0.98);
-    border-color: #2980b9;
-    font-weight: bold;
-  }
-  /* 已锁定/分配火力的目标(最多4个):红色方框 + 红色字体 + 红色脉动 */
-  .radar-target-box.locked {
-    border: 3px solid #ff2d20;
-    box-shadow: 0 0 0 1.5px #141414, inset 0 0 8px rgba(255, 45, 32, 0.45);
-    background: rgba(255, 45, 32, 0.12);
-    animation: radarLockPulse 0.5s infinite alternate;
-  }
-  .radar-target-box.locked .radar-target-tag {
-    color: #ff2d20;
-    background: rgba(252, 249, 240, 0.98);
-    border-color: #ff2d20;
-    font-size: 11px;
-    font-weight: 900;
-  }
-  .radar-target-tag {
-    color: #27ae60;
-    background: rgba(252, 249, 240, 0.96);
-    border-color: #2ecc71;
-  }
-  /* 当前下一发导弹即将攻击的主攻锁定目标:红色方框 + 红色脉动 */
-  .radar-target-box.active-tgt.locked {
-    border: 3px solid #ff2d20;
-    box-shadow: 0 0 0 1.5px #141414, inset 0 0 8px rgba(255, 45, 32, 0.45);
-    background: rgba(255, 45, 32, 0.12);
-    animation: radarLockPulse 0.5s infinite alternate;
-  }
-  .radar-target-box.active-tgt.locked .radar-target-tag {
-    color: #ff2d20;
-    background: rgba(252, 249, 240, 0.98);
-    border-color: #ff2d20;
-    font-size: 11.5px;
-    font-weight: 900;
-  }
-  .radar-target-tag {
-    position: absolute;
-    top: -20px;
-    left: 50%;
-    transform: translateX(-50%);
-    white-space: nowrap;
-    font-size: 11px;
-    font-weight: bold;
-    color: #ffd93b;
-    font-family: "VT323", "ZCOOL QingKe HuangYou", "Noto Sans SC", "Courier New", monospace, sans-serif;
-    background: rgba(20, 20, 20, 0.88);
-    padding: 1px 5px;
-    border: 1px solid #141414;
-    border-radius: 2px;
-  }
-  .radar-target-dist {
-    position: absolute;
-    bottom: -18px;
-    left: 50%;
-    transform: translateX(-50%);
-    white-space: nowrap;
-    font-size: 10.5px;
-    font-family: "VT323", "ZCOOL QingKe HuangYou", "Noto Sans SC", "Courier New", monospace, sans-serif;
-    font-weight: bold;
-    color: #fff;
-    text-shadow: -1px -1px 0 #141414, 1px -1px 0 #141414, -1px 1px 0 #141414, 1px 1px 0 #141414;
-  }
   .radar-scan-reticle {
     position: absolute;
     left: 50%;
@@ -613,16 +498,12 @@
   }
   .radar-scan-reticle.scanning::before {
     border: 2.5px dashed #ff9800;
-    box-shadow: 0 0 16px rgba(255, 152, 0, 0.45), inset 0 0 12px rgba(255, 152, 0, 0.15);
+    box-shadow: 0 0 0 1.5px rgba(20,20,20,.85), 0 0 16px rgba(255, 152, 0, 0.45), inset 0 0 12px rgba(255, 152, 0, 0.15);
     animation: radarScanSweep 2.5s infinite linear;
   }
   .radar-scan-reticle.locked::before {
     border: 2px solid rgba(46, 204, 113, 0.65);
     box-shadow: 0 0 12px rgba(46, 204, 113, 0.25);
-  }
-  @keyframes radarLockPulse {
-    0% { transform: translate(-50%, -50%) scale(0.96); }
-    100% { transform: translate(-50%, -50%) scale(1.04); }
   }
   @keyframes radarScanSweep {
     0% { transform: rotate(0deg); }
@@ -741,20 +622,32 @@
   .scope-ring { position:absolute; left:50%; top:50%; width:76vmin; height:76vmin;
     transform:translate(-50%,-50%); border:3px solid rgba(20,20,20,.85); border-radius:50%;
     box-shadow:0 0 0 1px rgba(255,255,255,.18); }   /* 漫画墨圈与微白外衬,无辉光。 */
-  /* 炮镜倍率:准星横线右端外侧独立数字(x2.0 形式;world.js 去抖写入,测距栏不再拼倍率) */
-  #zoomedge { position:absolute; left:calc(50% + 27.5vmin); top:calc(50% + 2.6vmin); transform:translate(0,-50%);   /* 下移出横线(不压墨线) */
-    font:900 3vmin/1 system-ui,sans-serif; color:#141414; letter-spacing:.2vmin;
-    text-shadow:0 0 3px rgba(252,249,240,.9), 0 0 1px rgba(252,249,240,.9); pointer-events:none; }
+  /* 炮镜倍率表盘:米白bezel+旋转刻度盘(12主刻度/300°张角)+顶部黄三角指针;world.js建盘+随倍率旋转 */
+  .dial-bezel { position:absolute; left:50%; top:50%; width:87vmin; height:87vmin; transform:translate(-50%,-50%);
+    border:2px solid rgba(252,249,240,.75); border-radius:50%; pointer-events:none; }
+  #scopedial { position:absolute; left:50%; top:50%; width:0; height:0; pointer-events:none; }
+  #scopedial .dtick { position:absolute; left:-1px; top:-42.5vmin; width:2px; height:1.8vmin;
+    background:rgba(252,249,240,.55); transform-origin:1px 42.5vmin; }
+  #scopedial .dtick.maj { left:-1.5px; top:-43vmin; width:3px; height:2.8vmin;
+    background:#fcf9f0; transform-origin:1.5px 43vmin; }
+  #scopedial .dlab { position:absolute; left:0; top:0; width:0; height:0; }
+  #scopedial .dlab span { position:absolute; left:0; top:0; transform:translate(-50%,-50%) translateY(-32vmin);
+    font:2.5vmin VT323,Consolas,monospace; color:#fcf9f0; letter-spacing:.1vmin; }
+  .scope-ptr { position:absolute; left:50%; top:calc(50% - 45.5vmin); transform:translateX(-50%);
+    width:0; height:0; border-left:1.3vmin solid transparent; border-right:1.3vmin solid transparent;
+    border-top:1.8vmin solid #ffd21f; pointer-events:none; }
+  .cdot { position:absolute; left:50%; top:50%; width:5px; height:5px; background:#141414; border-radius:50%;
+    transform:translate(-50%,-50%); box-shadow:0 0 0 1.5px rgba(252,249,240,.8); }
   /* 瞄准镜十字线(参考图口径):墨色细线三段(左/右/下,顶部段随"瞄准镜"字样一并删除),中央断口 6vmin 留空 */
-  .sl { position:absolute; background:#141414; box-shadow:0 0 1px rgba(255,255,255,.35); }
-  .s-b { left:50%; top:calc(50% + 6vmin); width:2px; height:23vmin; transform:translateX(-1px); }
-  .s-l { top:50%; right:calc(50% + 6vmin); height:2px; width:23vmin; transform:translateY(-1px); }
-  .s-r { top:50%; left:calc(50% + 6vmin); height:2px; width:23vmin; transform:translateY(-1px); }
+  .sl { position:absolute; background:#141414; box-shadow:0 0 0 1px rgba(252,249,240,.75); }
+  .s-b { left:50%; top:calc(50% + 6vmin); width:3px; height:23vmin; transform:translateX(-1.5px); }
+  .s-l { top:50%; right:calc(50% + 6vmin); height:3px; width:23vmin; transform:translateY(-1.5px); }
+  .s-r { top:50%; left:calc(50% + 6vmin); height:3px; width:23vmin; transform:translateY(-1.5px); }
   #scoperet { position:absolute; inset:0; pointer-events:none; }   /* 炮镜分划整体:FPS 式钉死屏心(JS 不写 transform) */
-  /* 测距栏:纸白粗体与四向墨描边,视觉语言与命中播报一致。 */
+  /* 测距栏:BIOS磷光绿tag(暗底芯片,等宽字体),视觉语言与信号组一致。 */
   #rangeinfo { position:absolute; left:50%; top:calc(50% + 31vmin); transform:translateX(-50%);
-    color:#fbf7ec; font-size:15px; font-weight:bold; letter-spacing:1px;
-    text-shadow:-1px -1px 0 #141414, 1px -1px 0 #141414, -1px 1px 0 #141414, 1px 1px 0 #141414; white-space:nowrap; }
+    color:#9dffa8; font:2.3vmin VT323,Consolas,monospace; letter-spacing:.15vmin;
+    background:rgba(10,16,10,.82); border:1px solid rgba(157,255,168,.5); padding:.4vmin 1.6vmin; white-space:nowrap; }
   /* 落点指示器:红色硬边环与内外墨描边;JS 只更新位置和尺寸。 */
   #impact { position:absolute; width:16px; height:16px; margin:-8px 0 0 -8px;
     border:2.5px solid #ff2d20; border-radius:50%;
@@ -806,20 +699,21 @@
   /* ===== 触屏操控层(flow.js 触控区段;仅粗指针设备挂载,桌面恒 hidden) ----
      漫画风统一基类 .tbtn:纸白底+墨描边+硬投影+按下缩放/黄底;各键仅保留口径差异(尺寸/描边色/旋转)。
      摇杆底盘 pointer-events:none(触摸判定在 document 级);全件 touch-action:none 防浏览器手势抢占。 ===== */
-  .tbtn { position:fixed; z-index:150; background:var(--hud-paper); border:3px solid var(--hud-ink);
-    padding:0; color:var(--hud-ink); display:flex; align-items:center; justify-content:center; gap:6px;
-    box-shadow:3px 4px 0 rgba(20,20,20,.8); transform:scale(var(--ts,1));
+  .tbtn { position:fixed; z-index:150; background:linear-gradient(180deg,var(--tch-bg1),var(--tch-bg2)); border:2px solid var(--tch-edge);
+    padding:0; color:var(--tch-txt); display:flex; align-items:center; justify-content:center; gap:6px;
+    box-shadow:2px 3px 0 rgba(0,0,0,.55); transform:scale(var(--ts,1));
     touch-action:none; user-select:none; -webkit-user-select:none; -webkit-tap-highlight-color:transparent; }
-  .tbtn.pressed { transform:scale(calc(var(--ts,1)*.92)); box-shadow:1px 2px 0 rgba(20,20,20,.8); background:var(--hud-amber); }
-  .tbtn.lit { background:var(--hud-amber); }
+  .tbtn.pressed { transform:scale(var(--ts,1)) translate(2px,3px); box-shadow:0 0 0 rgba(0,0,0,0); background:var(--tch-edge); color:var(--tch-press-txt); }
+  .tbtn.lit { box-shadow:2px 3px 0 rgba(0,0,0,.55),0 0 12px rgba(217,167,46,.45),inset 0 0 8px rgba(217,167,46,.45); }
+  .tbtn.lit::after { content:''; position:absolute; top:5px; right:5px; width:7px; height:7px; border-radius:50%; background:var(--tch-edge); box-shadow:0 0 6px rgba(217,167,46,.6); }
   #tjoy { position:fixed; width:124px; height:124px; border-radius:50%; z-index:150;
-    border:3px solid var(--hud-ink); background:rgba(252,249,240,.28);
-    box-shadow:0 3px 0 rgba(20,20,20,.5); transform:translate(-50%,-50%);
+    border:2px solid var(--tch-edge); background:rgba(217,167,46,.14);
+    box-shadow:inset 0 0 18px rgba(0,0,0,.5); transform:translate(-50%,-50%);
     pointer-events:none; touch-action:none; }
   #tjoyknob { position:absolute; left:50%; top:50%; width:54px; height:54px; border-radius:50%;
-    background:var(--hud-amber); border:3px solid var(--hud-ink);
-    box-shadow:inset 0 -4px 0 rgba(20,20,20,.3); transform:translate(-50%,-50%); }
-  /* 右侧四键田字格(开火/炮镜 下排,夜视/小队标识 上排;水平 16px+垂直 14px 间隙零重叠) */
+    background:radial-gradient(circle at 35% 30%, var(--tch-edge), var(--tch-edge-dim)); border:2px solid var(--tch-edge);
+    box-shadow:0 0 10px rgba(217,167,46,.45); transform:translate(-50%,-50%); }
+  /* 右侧四键田字格(开火/炮镜 下排,夜视/指挥模式键 上排;水平 16px+垂直 14px 间隙零重叠) */
   #tfire { right:22px; bottom:88px; width:84px; height:84px; border-radius:50%; border-width:4px;
     transform:rotate(-6deg) scale(var(--ts,1)); }
   #tfire.pressed { transform:rotate(-6deg) scale(calc(var(--ts,1)*.9)); }
@@ -830,19 +724,29 @@
   #tcap { left:16px; top:84px; width:64px; height:64px; border-radius:50%; }
   #tfol { left:88px; top:84px; width:64px; height:64px; border-radius:50%; }
   /* 右下键区三行两列(列心距右 154/64,行心距底 130/218/306;开火 84 仅尺寸例外,列心对齐):
-     行3 热成像|弃车 · 行2 夜视|小队标识 · 行1 炮镜|开火 */
+     行3 热成像|弃车 · 行2 夜视|指挥模式键 · 行1 炮镜|开火 */
   #tth { right:122px; bottom:274px; width:64px; height:64px; border-radius:50%; }
   /* 摇杆感应圈:仅自定义界面可见(虚线墨圈+淡黄晕);运行期隐形纯逻辑判定,pointer-events 恒无 */
-  #tsense { position:fixed; z-index:149; border:3px dashed var(--hud-ink); border-radius:50%;
-    background:rgba(255,217,59,.10); transform:translate(-50%,-50%); pointer-events:none; touch-action:none; }
+  #tsense { position:fixed; z-index:149; border:3px dashed var(--tch-edge-dim); border-radius:50%;
+    background:rgba(217,167,46,.10); transform:translate(-50%,-50%); pointer-events:none; touch-action:none; }
   #tquit { right:32px; bottom:274px; width:64px; height:64px; border-radius:50%; border-color:#c81e12; }
-  #tquit.pressed { background:#ffd0cb; }
+  #tquit.pressed { background:#b0442f; color:#f5e9d0; }
   #tmenu { left:16px; top:16px; width:52px; height:52px; border-radius:12px; }   /* 正方形纯图标(文字撤) */
+  /* 直升机双十字键(H1/H2;与摇杆互斥显示;编辑器可拖/缩;竖屏上下/横屏并排) */
+  #theliu, #thelid { position:fixed; z-index:150; display:grid; grid-template-columns:repeat(3,46px); grid-template-rows:repeat(3,46px); gap:4px;
+    transform:scale(var(--ts,1)); transform-origin:center; touch-action:none; user-select:none; -webkit-user-select:none; -webkit-tap-highlight-color:transparent; }
+  #thelid { left:24px; bottom:88px; }   /* 下十字=姿态:摇杆原位 */
+  #theliu { left:24px; top:160px; }     /* 上十字=总距/偏航:竖屏在指令键下方 */
+  @media (orientation:landscape) { #theliu { left:186px; top:auto; bottom:88px; } }   /* 横屏:双键并排(下左上右) */
+  .tbtn.theli-sub { position:static; border-radius:10px; font-size:19px; font-weight:900; transform:none; }
+  .tbtn.theli-sub.pressed { transform:none; }
+  .theli-core { display:flex; align-items:center; justify-content:center; border:1px dashed var(--tch-edge-dim);
+    border-radius:10px; background:rgba(20,22,17,.7); color:var(--tch-dim); font-size:11px; letter-spacing:1px; }
   /* ===== 自定义按钮布局界面(flow.js 触控区段驱动;墨色半透底+顶部提示+底部中间双按钮) ===== */
   #tcustomov { position:fixed; inset:0; z-index:149; background:rgba(20,20,20,.42); }
   #tchint { position:absolute; top:18px; left:50%; transform:translateX(-50%);
-    background:var(--hud-paper); border:2px solid var(--hud-ink); box-shadow:3px 3px 0 rgba(20,20,20,.8);
-    padding:8px 16px; font:700 14px/1.4 system-ui,sans-serif; color:var(--hud-ink); white-space:nowrap; }
+    background:linear-gradient(180deg,#232720,#141610); border:2px solid var(--tch-edge); box-shadow:2px 3px 0 rgba(0,0,0,.55);
+    padding:8px 16px; font:700 14px/1.4 system-ui,sans-serif; color:var(--tch-txt); white-space:nowrap; }
   #tcrow { position:absolute; bottom:26px; left:50%; transform:translateX(-50%); display:flex; gap:14px; }
   #crtfx { position:fixed; inset:0; pointer-events:none; z-index:200; display:none;
     background:

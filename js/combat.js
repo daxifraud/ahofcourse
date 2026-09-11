@@ -71,14 +71,15 @@ function turretEff(t) { var m = t.mods.turret; return m.max > 0 ? clamp(m.hp / m
 function barrelEff(t) { var m = t.mods.gun; return m && m.max > 0 ? clamp(m.hp / m.max, 0, 1) : 1; }
 function fueled(t) { var m = t.mods.fuel; return !m || m.hp > 0; }          // 油箱 0%=断油
 /* ===== 装填速度衰减通用函数(按装填体制分流)----
-   人工装填(59/M60A1/M1A1/89式/火箭炮):炮塔(战斗室)受损伤及装填手 → 炮塔血量%线性,
+   人工装填(59/M60A1/M1A1/89式):炮塔(战斗室)受损伤及装填手 → 炮塔血量%线性,
      0% 降为一半(车组乘员接替装填手,不归零);炮塔转速另走 turretMult(0%=物理卡死);
-   自动装弹机(99式):装填链在弹药架内,炮塔受损不降低装填 → 弹药架血量%线性,同 0.5 下限
-     (供弹链局部损毁仍可人工递弹)。新增自动装弹机型号只需入册 AUTOLOADER_KINDS。 ===== */
+   弹药架方案(99式自动装弹机/火箭炮):装填链在弹药架内,炮塔(火箭炮=转盘,只管转动)受损
+     不降低装填 → 弹药架血量%线性,同 0.5 下限(火箭炮弹药架=发射架/发射舱,火箭弹就装在
+     那里,装填作业围绕它进行)。新增自动装弹机型号只需入册 AUTOLOADER_KINDS。 ===== */
 var AUTOLOADER_KINDS = { '99': true };
 function isAutoloader(t) { return !!AUTOLOADER_KINDS[t.kind]; }
 function _calcReloadMult(t) {
-  if (isAutoloader(t)) {
+  if (isAutoloader(t) || t.kind === 'arty') {   // 火箭炮装填走弹药架(发射架/发射舱)血量方案:转盘(turret)只管转动
     var ma = t.mods.ammo;
     return ma && ma.max > 0 ? Math.max(clamp(ma.hp / ma.max, 0, 1), 0.5) : 1;
   }
@@ -147,7 +148,7 @@ function setTankVisuals(t, v) {
     if (m.userData && m.userData.visual && !m.userData._instSrc) m.visible = v;
   });
   // 直升机挂载导弹显隐状态补偿:退出炮镜恢复可见时,若导弹尚未装填完毕,严格保持隐藏,禁止错误复现
-  if (v && isHeliVehicle(t) && t._heliMslMeshesL) {   // 多联装按筒复现——发射消耗前段筒位,装填中整侧隐藏
+  if (v && (isHeliVehicle(t) || (typeof isAAVehicle === 'function' && isAAVehicle(t))) && t._heliMslMeshesL) {   // 多联装/防空发射架按筒复现——发射消耗前段筒位,装填中整侧隐藏
     var _mxV = t._heliMslMeshesL.length;
     var _rnd = t._heliMslRounds || [_mxV, _mxV];
     var _visL = (t._heliMissileReloadTL == null || t._heliMissileReloadTL <= 0) ? (_rnd[0] || 0) : 0;
@@ -282,7 +283,7 @@ function onModuleDestroyed(t, key, attacker) {
   if (t === player && key === 'turret') player._hullAim = true;
   /* 直升机弹药架损毁 → 事件清空导弹锁定链(锁定能量/锁定量/目标指针),
      下帧起 wantWeapon 分流自然离开导弹模式 —— 修掉"弹药架没了仍全链解算"的空转 */
-  if (isHeliVehicle(t) && key === 'ammo') {
+  if ((isHeliVehicle(t) || (typeof isAAVehicle === 'function' && isAAVehicle(t))) && key === 'ammo') {   // 防空载具发射架=弹药架模块,同规
     t._aiLockEnergy = 0; t._aiIsLocked = false;
     t._heliMissileTarget = null; t._aiLockedTarget2 = null;
   }
@@ -763,8 +764,8 @@ function playerDied(cause) {
     player._prevLockedKeys = {};
     player._heliMissileTarget = null;
   }
-  if (player && isHeliVehicle(player)) {
-    stopHeliRadarScan(player);
+  if (player && (isHeliVehicle(player) || (typeof isAAVehicle === 'function' && isAAVehicle(player)))) {
+    stopHeliRadarScan(player);   // PGZ-95 车载雷达与直升机火控雷达同套扫描状态机
   }
   if (typeof sfxHeliDamageVoiceStop === 'function') sfxHeliDamageVoiceStop();
   if (typeof sfxHeliPullupStop === 'function') sfxHeliPullupStop();
@@ -780,7 +781,7 @@ function playerDied(cause) {
     showPossessOv();
     return;                               // 若已无可接管者,胜负交由 battleCheck:兵力0+全灭判负
   }
-  respawnT = 3.2;                         // 等眨眼闭合完成后再弹战术面板(动画约 2.78s)
+  respawnT = 3.5;                         // 等闭眼+血褪完成后再弹战术面板(动画约 3.34s)
 }
 
 /* 兵力耗尽后的友军载具接管:按类型选择,再随机接管同类存活载具。 */
@@ -880,18 +881,34 @@ function possessByKind(kind) {
   if (t2.kind !== 'arty' && t2._instSrcs && t2._instSrcs[0]) {
     t2._instSrcs[0].material = vehHullMatPlayer;
     t2._hullMat = vehHullMatPlayer;
+    /* P1-1 接管战损交接:炮塔/炮管/炮盾/旋翼换 uniform 链材质(arty 车体亦换 Body 系,不挂 _hullMat);
+       全部 _wxParts 挂逐 draw 钩子(与 spawn 同口径),否则战损冻结/错乱。 */
+    if (t2._instSrcs && typeof vehBodyMatPlayer !== 'undefined') {
+      var _pidx = t2.kind === 'arty' ? [0, 2, 4, 5, 6, 7] : [2, 4, 5, 6, 7];
+      for (var _pi = 0; _pi < _pidx.length; _pi++) {
+        var _pm = t2._instSrcs[_pidx[_pi]];
+        if (_pm) _pm.material = vehBodyMatPlayer;
+      }
+    }
+    if (t2._wxParts && typeof _wxPlayerDrawHook === 'function') {
+      for (var _wkk in t2._wxParts) if (t2._wxParts[_wkk]) t2._wxParts[_wkk].onBeforeRender = _wxPlayerDrawHook;
+    }
   }
 
   t2.turretYawDelta = 0; aimPX = innerWidth * 0.5; aimPY = innerHeight * 0.5; aimChaseOn = true; camAimY = t2.yaw + t2.turretYaw; camAimP = t2.gunPitch;       // 接管:鼠标位回中,相机瞄向=炮口向
   if (t2.ai) { t2.ai.targetO = null; }       // 清掉 AI 残余索敌状态
-  if (t2.kind === 'arty') {                  // 火箭炮瞄具状态复位(上一轮的伺服/校准作废)
+  if (t2.kind === 'arty') {                  // 火箭炮火控状态复位(上一轮的伺服/校准/俯视装定作废)
     t2._artyAz = null; t2._artyAim = null; t2._artySol = null;
     t2._artyKv = 1; t2._servoHoldT = 0; t2.artyRange = 300;
+    t2._topFireWish = false; t2._topTgt = null; t2._topHover = null;
+    t2._artyCreepFwd = 0; t2._topCreepDist = 0; t2._covR = null;
+    t2._topCamX = 0; t2._topCamZ = 0;
   }
   // 直升机火控下发状态隔离(清空上一轮锁定下发/锁定音状态,不强制关雷达——雷达唯一关闭情形=发动机熄火)
   t2._heliMissileTarget = null;
   t2._prevLockedKeys = {};
   t2._heliRadarManualInhibit = false;
+  if (typeof isAAVehicle === 'function' && isAAVehicle(t2) && t2._heliWeapon == null) t2._heliWeapon = 3;   // 防空载具接管默认 1 号位=防空导弹
   if (isHeliVehicle(t2)) {
     if (t2._heliWeapon == null) t2._heliWeapon = 3;
     if (t2._heliEngineState == null || t2._heliEngineState === 'running') {
@@ -917,7 +934,7 @@ function possessByKind(kind) {
      放在上方音效清理之后,使自动开启的"嘟嘟"提示音不被 sfxRadarScanStop 立即掐断。
      修复"接管一架预热已满但雷达关闭的 AI 直升机时雷达保持关闭"的问题;
      若雷达已在开启态(AI 常亮)则保持不动,不重复启动;雷达唯一关闭情形=发动机熄火。 */
-  if (isHeliVehicle(t2) && isHeliRadarReady(t2) && !t2._heliRadarActive) {
+  if ((isHeliVehicle(t2) || (typeof isAAVehicle === 'function' && isAAVehicle(t2))) && isHeliRadarReady(t2) && !t2._heliRadarActive) {
     startHeliRadarScan(t2);
   }
   rebuildTargets();
@@ -967,9 +984,9 @@ function redeployPlayer() {
   if (nt) {
     nt._heliMissileTarget = null;
     nt._prevLockedKeys = {};
-    if (isHeliVehicle(nt) && nt._heliWeapon == null) nt._heliWeapon = 3;
+    if ((isHeliVehicle(nt) || (typeof isAAVehicle === 'function' && isAAVehicle(nt))) && nt._heliWeapon == null) nt._heliWeapon = 3;
   }
-  if (player && isHeliVehicle(player)) {
+  if (player && (isHeliVehicle(player) || (typeof isAAVehicle === 'function' && isAAVehicle(player)))) {
     stopHeliRadarScan(player);
   }
   if (typeof sfxRadarScanStop === 'function') sfxRadarScanStop();
@@ -1378,6 +1395,7 @@ function thermalSync() {
     vehBodyMat.color.setRGB(THERM.veh, THERM.veh, THERM.veh);          // 活载具提亮一档(>地面;深色格栅/行走件相对更暗=金属件层次)
     vehHullMat.color.setRGB(THERM.veh, THERM.veh, THERM.veh);
     vehHullMatPlayer.color.setRGB(THERM.veh, THERM.veh, THERM.veh);
+    if (typeof vehBodyMatPlayer !== 'undefined') vehBodyMatPlayer.color.setRGB(THERM.veh, THERM.veh, THERM.veh);   // P0-2 companion:玩家炮塔系同调
     if (typeof vehInkMat !== 'undefined' && vehInkMat) vehInkMat.color.setHex(0x2a2a2a);
     wreckMat.color.setHex(THERM.wreck); wreckMat.emissive.setHex(0x000000);   // 残骸=地面档(0x3d3d3d,截图标定:与草肤地面实测终值同灰)
     shellMatP.color.setHex(THERM.shell); shellMatE.color.setHex(THERM.shell); // 飞行弹体档
@@ -1393,6 +1411,7 @@ function thermalSync() {
     applyTimeOfDay(timeHour);                                          // 灯光/雾色/背景/云/远郊/灯罩一次性还原
     if (scene.fog) { scene.fog.near = thermalSaved ? thermalSaved.fogN : 900; scene.fog.far = thermalSaved ? thermalSaved.fogF : 6200; }
     vehBodyMat.color.setRGB(1, 1, 1); vehHullMat.color.setRGB(1, 1, 1); vehHullMatPlayer.color.setRGB(1, 1, 1);
+    if (typeof vehBodyMatPlayer !== 'undefined') vehBodyMatPlayer.color.setRGB(1, 1, 1);   // P0-2 companion:同上复原
     if (typeof vehInkMat !== 'undefined' && vehInkMat) vehInkMat.color.setHex(0x141610);
     wreckMat.color.setHex(0x2a2a2a); wreckMat.emissive.setHex(0x101010);   // vehicles_common 出厂值回填
     if (thermalSaved) {
@@ -1512,12 +1531,12 @@ function bindStartHourUI() {
 var startMat = 'grass';
 function randomSeed() { return String(100000 + Math.floor(Math.random() * 900000)); }   // 遭遇战地图种子:6 位随机
 var startSeed = randomSeed();   // 初始随机;点开"遭遇战"按钮时重新随机
-var startRough = 0;
+var startRough = 25;
 var startMatchTime = 15;        // 对局时间(分钟;默认15分钟)
 var startMapLen = 6000;         // 战场长(m;南北/纵深/Z方向)★默认尺寸 12000→6000
 var startMapWid = 6000;         // 战场宽(m;东西/横向/X方向)★默认尺寸 12000→6000(与长相等→正方形)
 var startMapSize = 12000;       // 兼容旧口径
-var startBaseDist = { tank: 500, arty: 1500, heli: 3000 };    // 三兵种大本营纵深(同兵种三翼共用;遭遇战地图卡可改,spawnTeams 落位消费)
+var startBaseDist = { tank: 500, arty: 1500, heli: 3000, aa: 900 };    // 三兵种大本营纵深(同兵种三翼共用;遭遇战地图卡可改,spawnTeams 落位消费)
 /* ★默认地图尺寸改为 6000 后同步折半(上限=长/2=3000);syncBaseDist 亦会按 ratio 折算输入框 */
 function bindStartMatUI() {
   if (!el.stylerow || typeof el.stylerow.querySelectorAll !== 'function') return;

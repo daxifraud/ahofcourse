@@ -207,14 +207,9 @@ function sfxTacticalBeep(count) {
 window.sfxTacticalBeep = sfxTacticalBeep;
 
 /* ---------- ④ 屏幕碎裂与濒死视效资源 ---------- */
+/* 破碎:漫画墨裂纹(阶梯收分20/12/5px,方向/撞击点与旧版一致)+纸白侧刃+碎片+墨星——无滤镜,硬边。 */
 var SHATTER_SVG = '<svg class="uifx-shatter-svg" viewBox="0 0 1920 1080" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">' +
-  '<defs>' +
-    '<filter id="shatterGlow" x="-20%" y="-20%" width="140%" height="140%">' +
-      '<feGaussianBlur stdDeviation="1.5" result="blur"/>' +
-      '<feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>' +
-    '</filter>' +
-  '</defs>' +
-  '<g stroke="rgba(255,255,255,0.92)" stroke-width="2.2" fill="none" filter="url(#shatterGlow)">' +
+  '<g transform="translate(6,-5)" stroke="rgba(252,249,240,.5)" stroke-width="2" fill="none">' +
     '<path d="M1020,520 L840,410 L650,330 L420,240 L180,150 L0,90"/>' +
     '<path d="M1020,520 L910,380 L800,210 L690,70 L640,0"/>' +
     '<path d="M1020,520 L1080,360 L1150,190 L1220,60 L1260,0"/>' +
@@ -225,31 +220,54 @@ var SHATTER_SVG = '<svg class="uifx-shatter-svg" viewBox="0 0 1920 1080" preserv
     '<path d="M1020,520 L890,680 L760,840 L630,980 L560,1080"/>' +
     '<path d="M1020,520 L790,580 L540,630 L290,700 L0,760"/>' +
     '<path d="M1020,520 L810,490 L560,470 L310,430 L0,410"/>' +
-    '<path d="M960,480 L1010,460 L1070,470 L1090,520 L1060,570 L1000,570 L950,530 Z"/>' +
-    '<path d="M890,430 L990,390 L1110,410 L1160,510 L1120,610 L990,620 L870,550 Z"/>' +
-    '<path d="M800,370 L960,310 L1170,330 L1250,490 L1190,680 L970,700 L790,590 Z"/>' +
-    '<path d="M690,290 L920,200 L1250,230 L1370,460 L1280,770 L950,800 L680,650 Z"/>' +
-    '<path d="M540,190 L860,80 L1360,120 L1520,430 L1400,880 L920,930 L530,730 Z"/>' +
+      '</g>' +
+  '<g stroke="#141414" fill="none" stroke-linecap="butt" stroke-linejoin="miter">' +
+    '<g stroke-width="5">' +
+    '<path d="M1020,520 L840,410 L650,330 L420,240 L180,150 L0,90"/>' +
+    '<path d="M1020,520 L910,380 L800,210 L690,70 L640,0"/>' +
+    '<path d="M1020,520 L1080,360 L1150,190 L1220,60 L1260,0"/>' +
+    '<path d="M1020,520 L1230,430 L1460,340 L1710,230 L1920,160"/>' +
+    '<path d="M1020,520 L1280,560 L1540,610 L1760,670 L1920,710"/>' +
+    '<path d="M1020,520 L1210,690 L1380,850 L1510,990 L1580,1080"/>' +
+    '<path d="M1020,520 L1040,710 L1060,890 L1070,1080"/>' +
+    '<path d="M1020,520 L890,680 L760,840 L630,980 L560,1080"/>' +
+    '<path d="M1020,520 L790,580 L540,630 L290,700 L0,760"/>' +
+    '<path d="M1020,520 L810,490 L560,470 L310,430 L0,410"/>' +
+        '</g>' +
+    '<g stroke-width="12">' +
+    '<path d="M1020,520 L840,410 L650,330"/>' +
+    '<path d="M1020,520 L910,380 L800,210"/>' +
+    '<path d="M1020,520 L1080,360 L1150,190"/>' +
+    '<path d="M1020,520 L1230,430 L1460,340"/>' +
+    '<path d="M1020,520 L1280,560 L1540,610"/>' +
+    '<path d="M1020,520 L1210,690 L1380,850"/>' +
+    '<path d="M1020,520 L1040,710 L1060,890"/>' +
+    '<path d="M1020,520 L890,680 L760,840"/>' +
+    '<path d="M1020,520 L790,580 L540,630"/>' +
+    '<path d="M1020,520 L810,490 L560,470"/>' +
+        '</g>' +
+    '<g stroke-width="20">' +
+    '<path d="M1020,520 L840,410"/>' +
+    '<path d="M1020,520 L910,380"/>' +
+    '<path d="M1020,520 L1080,360"/>' +
+    '<path d="M1020,520 L1230,430"/>' +
+    '<path d="M1020,520 L1280,560"/>' +
+    '<path d="M1020,520 L1210,690"/>' +
+    '<path d="M1020,520 L1040,710"/>' +
+    '<path d="M1020,520 L890,680"/>' +
+    '<path d="M1020,520 L790,580"/>' +
+    '<path d="M1020,520 L810,490"/>' +
+        '</g>' +
   '</g>' +
-  '<g stroke="rgba(180,230,255,0.7)" stroke-width="1.4" fill="none">' +
-    '<path d="M840,410 L890,430 L800,370 L760,450 L690,290 L610,380 L540,190 L460,310"/>' +
-    '<path d="M1080,360 L1110,410 L1170,330 L1210,380 L1250,230 L1310,300 L1360,120 L1440,220"/>' +
-    '<path d="M1230,430 L1160,510 L1250,490 L1310,540 L1370,460 L1450,520 L1520,430 L1610,500"/>' +
-    '<path d="M1280,560 L1120,610 L1190,680 L1230,730 L1280,770 L1340,820 L1400,880"/>' +
-    '<path d="M1040,710 L990,620 L970,700 L960,760 L950,800 L940,870 L920,930"/>' +
-    '<path d="M790,580 L950,530 L870,550 L830,620 L790,590 L740,680 L680,650 L610,750"/>' +
-    '<path d="M810,490 L960,480 L890,430 L840,410 L760,450 L650,330 L560,470 L420,240"/>' +
-    '<circle cx="1020" cy="520" r="16" fill="rgba(255,255,255,0.95)"/>' +
-    '<circle cx="1020" cy="520" r="32" fill="none" stroke="rgba(255,255,255,0.8)" stroke-width="2.5"/>' +
-    '<circle cx="1020" cy="520" r="54" fill="none" stroke="rgba(255,255,255,0.45)" stroke-width="1.8"/>' +
+  '<g fill="rgba(252,249,240,.35)" stroke="#141414" stroke-width="3">' +
+    '<polygon points="880,420 950,380 930,460"/>' +
+    '<polygon points="1120,400 1190,430 1130,470"/>' +
+    '<polygon points="900,620 960,660 880,660"/>' +
+    '<polygon points="1130,600 1200,640 1120,650"/>' +
+    '<polygon points="1010,350 1060,350 1035,410"/>' +
   '</g>' +
-  '<g stroke="rgba(10,20,30,0.6)" stroke-width="1.2" fill="none">' +
-    '<path d="M1021,521 L841,411 L651,331 L421,241 L181,151 L1,91"/>' +
-    '<path d="M1021,521 L911,381 L801,211 L691,71 L641,1"/>' +
-    '<path d="M1021,521 L1231,431 L1461,341 L1711,231 L1921,161"/>' +
-    '<path d="M1021,521 L1281,561 L1541,611 L1761,671 L1921,711"/>' +
-    '<path d="M1021,521 L1041,711 L1061,891 L1071,1081"/>' +
-  '</g>' +
+  '<polygon points="1020,448 1026,486 1047,453 1038,491 1070,469 1048,501 1086,492 1053,513 1092,520 1053,526 1086,547 1048,538 1070,570 1038,548 1047,586 1026,553 1020,592 1013,553 992,586 1001,548 969,570 991,538 953,547 986,526 948,520 986,513 953,492 991,501 969,469 1001,491 992,453 1013,486" fill="#fcf9f0" stroke="#141414" stroke-width="8" stroke-linejoin="miter"/>' +
+  '<circle cx="1020" cy="520" r="18" fill="#141414"/>' +
 '</svg>';
 
 /* ---------- ⑤ 阵亡与战术终端 CSS 样式 ---------- */
@@ -261,17 +279,12 @@ var rspCss = '' +
   '#uifx-death .uifx-shatter{position:absolute;inset:0;pointer-events:none;z-index:1;opacity:0;transition:opacity .08s ease-out;}' +
   '#uifx-death .uifx-shatter svg{width:100%;height:100%;display:block;}' +
 
-  /* 血红色边框层 (边缘虚化、微弱跳动、随心跳向中心延伸最多50%) */
+  /* 血层 z8(盖眼睑):随心跳收拢(50%上限),睑闭合后褪去再弹窗 */
   '#uifx-death .uifx-blood-vg{' +
-    'position:absolute;inset:0;pointer-events:none;z-index:2;opacity:0;--blood-depth:0%;' +
+    'position:absolute;inset:0;pointer-events:none;z-index:8;opacity:0;--blood-depth:0%;' +
     'background:radial-gradient(ellipse at 50% 50%,transparent calc(98% - var(--blood-depth)),rgba(195,18,12,.46) calc(100% - var(--blood-depth)*.7),rgba(145,5,5,.94) 100%);' +
     'filter:blur(8px);will-change:background,opacity,transform;' +
-    'animation:bloodyJitter .28s ease-in-out infinite;}' +
-  '@keyframes bloodyJitter{' +
-    '0%,100%{transform:scale(1)}' +
-    '25%{transform:scale(1.008) translate(1px,-1px)}' +
-    '50%{transform:scale(.995) translate(-1px,1px)}' +
-    '75%{transform:scale(1.004) translate(.5px,.5px)}}' +
+    'will-change:opacity;}' +   /* 心跳收拢改由JS血脉调度(见startDeathAnim),CSS抖动删除 */
 
   /* 视野虚化层: 动态中心跟随开眼中心 */
   '#uifx-death .uifx-blur{position:absolute;inset:0;z-index:3;opacity:0;' +
@@ -286,7 +299,7 @@ var rspCss = '' +
   '.uifx-lid svg{width:100%;height:100%;display:block;}' +
   '#uifx-lid-t{top:0;height:72%;filter:blur(6px);transform:translateY(-118%);}' +
   '#uifx-lid-b{bottom:0;height:30%;filter:blur(6px);transform:translateY(118%);}' +
-  '#uifx-death .uifx-blk{position:absolute;inset:0;z-index:6;background:#000;opacity:0;transition:opacity .5s;}' +
+  '#uifx-death .uifx-blk{position:absolute;inset:0;z-index:9;background:#000;opacity:0;transition:opacity .5s;}' +
 
   'canvas.uifx-dying{animation:uifxDieVis 2.55s ease-in forwards;}' +
   '@keyframes uifxDieVis{' +
@@ -433,9 +446,11 @@ function applyLid(f) {
   if (!lidT) return;
   lidT.style.transition = lidB.style.transition = 'none';
   lidT.style.transform = 'translateY(' + (f * 118 - 118) + '%)';
-  var b = Math.pow(f, 1.75) * 0.4;
+  var ss = 0;   // 末段补足:下睑顶边70=上睑弧心70.56之下,真正闭合(旧版闭眼);f≤0.85与旧曲线一致
+  if (f > 0.85) { var sb = (f - 0.85) / 0.15; ss = sb * sb * (3 - 2 * sb); }
+  var b = Math.pow(f, 1.75) * 0.4 + ss * 0.6;
   lidB.style.transform = 'translateY(' + (118 - b * 118) + '%)';
-  var arc = (1 - f) * 22;
+  var arc = 22 - f * 18;   // 闭合仍保留弧口(旧版弧线,中央清晰区可见);f=0与旧一致
   if (lidTPath) lidTPath.setAttribute('d', 'M0 0 H1000 V100 Q500 ' + (100 - arc).toFixed(1) + ' 0 100 Z');
   if (lidBPath) lidBPath.setAttribute('d', 'M0 100 H1000 V0 Q500 ' + arc.toFixed(1) + ' 0 0 Z');
 
@@ -559,7 +574,7 @@ function startDeathAnim(cause) {
   ensureDeathDom();
   ensureTacticalCornerOverlay();
   RSP.phase = 'dying';
-  RSP.blackAt = Date.now() + 2750;
+  RSP.blackAt = Date.now() + 3350;   // 黑场3260/收尾3340(血褪后弹窗,等闭眼+血褪)
   
   deathOv.classList.add('on');
   deathBlk.style.opacity = '0';
@@ -572,6 +587,14 @@ function startDeathAnim(cause) {
   worldDuck(0.06, 1.7);
   sfxHeartbeats();
   sfxTinnitus();
+  var beatP = 840, bloodBeating = true;   // 心跳血脉:血层与暗角beat同周期收拢(暗下去=压向屏幕)
+  var bloodBeat = function () {
+    if (!bloodBeating || !deathBloodVg || RSP.phase !== 'dying') return;
+    deathBloodVg.style.transform = 'scale(1.03)';
+    setTimeout(function () { if (deathBloodVg && RSP.phase === 'dying') deathBloodVg.style.transform = 'scale(1)'; }, 140);
+    setTimeout(bloodBeat, beatP);
+  };
+  bloodBeat();
 
   var isKilled = (cause !== '主动弃车' && cause !== '弃车');
   if (isKilled) {
@@ -598,9 +621,9 @@ function startDeathAnim(cause) {
   setTimeout(function () { lidSet(0.70, 280); }, 1840);
   setTimeout(function () { lidSet(1, 720, 'cubic-bezier(.45,0,.8,.35)'); }, 2260);
   
-  setTimeout(function () { if (deathVg) deathVg.style.animationDuration = '1.2s'; }, 900);
-  setTimeout(function () { if (deathVg) deathVg.style.animationDuration = '1.6s'; }, 1700);
-  setTimeout(function () { if (deathVg) deathVg.classList.remove('beat'); }, 2500);
+  setTimeout(function () { if (deathVg) deathVg.style.animationDuration = '1.2s'; beatP = 1200; }, 900);
+  setTimeout(function () { if (deathVg) deathVg.style.animationDuration = '1.6s'; beatP = 1600; }, 1700);
+  setTimeout(function () { if (deathVg) deathVg.classList.remove('beat'); bloodBeating = false; }, 2500);
 
   setTimeout(function () {
     if (deathBloodVg) {
@@ -609,13 +632,13 @@ function startDeathAnim(cause) {
       deathBloodVg.style.transform = 'scale(1.15)';
     }
     if (deathShatter) deathShatter.style.opacity = '0';
-  }, 2520);
+  }, 3000);   // 睑闭合(2980)后血褪
 
-  setTimeout(function () { deathBlk.style.opacity = '1'; }, 2620);
+  setTimeout(function () { deathBlk.style.opacity = '1'; }, 3260);
   setTimeout(function () {
     if (cv) cv.classList.remove('uifx-dying');
     RSP.phase = 'black';
-  }, 2780);
+  }, 3340);
 }
 
 /* ---------- ⑨ 战术 BIOS 部署/接管模态窗构建 ---------- */
@@ -928,6 +951,7 @@ function transitionHangarToBattle(onComplete) {
 
 /* ---------- ⑫ 对局退回主菜单转场 (Battle -> Hangar) ---------- */
 function transitionBattleToHangar(onComplete) {
+  worldUnduck(0.8);   // §6:局内死亡压制(master 6%)可能残留到结算后,回车库先恢复(否则菜单音效哑 ~19dB 到下次进局)
   var pausePanel = document.querySelector('#pauseov .bios-pause-panel') || document.getElementById('pauseov');
   var endPanel = document.querySelector('#endov .tactical-bios-window') || document.getElementById('endov');
   var activePanel = (el && el.pauseov && !el.pauseov.classList.contains('hidden')) ? pausePanel : endPanel;
@@ -951,6 +975,7 @@ function transitionBattleToHangar(onComplete) {
           if (el && el.hud) el.hud.classList.add('hidden');
           if (el && el.respawnov) el.respawnov.classList.add('hidden');
           if (el && el.possessov) el.possessov.classList.add('hidden');
+          try { if (typeof resetBattleViewModes === 'function') resetBattleViewModes(); } catch (eRVM) {}   // M2:退局观瞄复位(热像共享材质还原,防车库灰车)
           if (typeof window.clearBattleEntities === 'function') window.clearBattleEntities();
           var startov = document.getElementById('startov');
           if (startov) startov.classList.remove('hidden');
@@ -1264,6 +1289,7 @@ if (typeof window.spawnTeams === 'function') {
 if (typeof window.gameOver === 'function') {
   var _gov = window.gameOver;
   window.gameOver = function (win, cause) {
+    if (RSP.phase === 'endblink' || RSP.phase === 'endpending' || RSP.phase === 'endform' || RSP.phase === 'endleave') return;   // 防重入:原 gameOver 延迟 880ms 执行,battleCheck 在窗口内会二次触发(此前表现为弹窗后眼皮回放一次)
     ensureEndUI();
     var go = function () {
       RSP.phase = 'endpending';
@@ -1373,7 +1399,7 @@ var Hangar3D = (function () {
     turret_rear: '炮塔后部', turret_roof: '炮塔顶部', dome: '铸造穹顶',
     hullshell: '车体首上', m1hull: '车体正面复合装甲', m1turret: '炮塔楔形复合装甲',
     t99hull: '车体首上复合装甲', t99turret: '炮塔重型反应装甲', ring: '座圈防护带',
-    trackL: '左侧履带/行动机构', trackR: '右侧履带/行动机构',
+    trackL: '右侧履带/行动机构', trackR: '左侧履带/行动机构',
     rotor: '主旋翼系统', tailRotor: '尾桨抗扭系统', gun: '主炮身管/火控系统'
   };
 
@@ -1385,8 +1411,8 @@ var Hangar3D = (function () {
     trans:  0x06b6d4, // 传动系统 / 旋翼减速器: 电光青 (Electric Cyan)
     crew:   0x10b981, // 乘员室 / 座舱火控: 翡翠绿 (Tactical Green)
     gun:    0x94a3b8, // 武器火控 / 主炮身管: 钛白银 (Titanium Silver)
-    trackL: 0x84cc16, // 左行动机构: 战术青绿 (Tactical Lime)
-    trackR: 0x84cc16, // 右行动机构: 战术青绿
+    trackL: 0x84cc16, // 行动机构(-X 侧=物理右侧,盒名沿用): 战术青绿 (Tactical Lime)
+    trackR: 0x84cc16, // 行动机构(+X 侧=物理左侧,盒名沿用): 战术青绿
     turret: 0x3b82f6  // 炮塔回转机构: 钴蓝 (Cobalt Blue)
   };
 
@@ -1406,21 +1432,21 @@ var Hangar3D = (function () {
       tank: {
         name: '59式 中型坦克', sub: 'TYPE 59 MBT',
         fire: '100mm 线膛炮', fireSub: '穿深 220mm · 初速 1480m/s',
-        armor: '首上 100mm / 炮塔 200mm', armorSub: 'RHA 均质装甲钢',
+        armor: 'RHA 均质装甲钢', armorSub: '首上 100mm / 炮塔 200mm',
         speed: '50 km/h', speedSub: '12150L 520马力柴油机',
         hp: '1800 HP', hpSub: '战备完好率 100%'
       },
       '99': {
         name: '99式 主战坦克', sub: 'ZTZ-99A MBT',
         fire: '125mm 高压滑膛炮', fireSub: '穿深 680mm · 自动装弹机',
-        armor: '正面等效 >1000mm', armorSub: '重型复合装甲 + FY-4反应装甲',
+        armor: '重型复合装甲+反应装甲', armorSub: '正面等效 >1000mm(FY-4)',
         speed: '70 km/h', speedSub: '1500马力涡轮增压柴油机',
         hp: '3200 HP', hpSub: '战备完好率 100%'
       },
       td: {
         name: 'PTZ-89 89式自行反坦克炮', sub: 'PTZ-89 TD',
         fire: '120mm 高膛压滑膛炮', fireSub: '穿深 550mm · 半自动装填',
-        armor: '车体 50mm / 炮塔 80mm', armorSub: '高硬度均质防弹钢板',
+        armor: '高硬度均质装甲钢', armorSub: '车体 50mm / 炮塔 80mm',
         speed: '55 km/h', speedSub: '520马力增压柴油机',
         hp: '1600 HP', hpSub: '战备完好率 100%'
       },
@@ -1432,10 +1458,17 @@ var Hangar3D = (function () {
         hp: '1500 HP', hpSub: '战备完好率 100%'
       },
       arty: {
-        name: '122mm 多管火箭炮', sub: '122mm MLRS',
-        fire: '20联装 122mm 增程火箭弹', fireSub: '最大射程 40km · 区域覆盖',
-        armor: '驾驶室轻型防破片装甲', armorSub: '高机动越野底盘',
-        speed: '80 km/h', speedSub: '重型越野底盘柴油机',
+        name: 'PHL-11 122mm 轮式自行火箭炮', sub: 'PHL-11 MLRS',
+        fire: '40联装 122mm 火箭弹齐射', fireSub: '最大射程 40km · 单发伤害 60 · 装填 40s',
+        armor: '驾驶室轻型防破片装甲', armorSub: '万山 WS2400 系高机动越野底盘',
+        speed: '80 km/h', speedSub: '涡轮增压柴油重型越野底盘',
+        hp: '1300 HP', hpSub: '战备完好率 100%'
+      },
+      aa: {
+        name: 'PGZ-95 自行高炮', sub: 'PGZ-95 SPAAG',
+        fire: '4×飞弩-6 防空导弹 + 2×双联 25mm 机炮', fireSub: '红外格斗弹 6km · 双联机炮=直升机机炮性能',
+        armor: '轻型焊接装甲车体', armorSub: '车载 CLC-1 搜索雷达(游戏口径=直升机火控雷达范围,光标指向搜索)',
+        speed: '53 km/h', speedSub: '履带底盘,伴随机械化部队野战防空',
         hp: '1300 HP', hpSub: '战备完好率 100%'
       }
     },
@@ -1443,14 +1476,14 @@ var Hangar3D = (function () {
       tank: {
         name: 'M60A1 巴顿坦克', sub: 'M60A1 PATTON',
         fire: '105mm M68 线膛炮', fireSub: '穿深 260mm · APFSDS穿甲弹',
-        armor: '首上 109mm / 炮塔 254mm', armorSub: '铸造均质装甲钢',
+        armor: '铸造均质装甲钢', armorSub: '首上 109mm / 炮塔 254mm',
         speed: '48 km/h', speedSub: 'AVDS-1790 750马力柴油机',
         hp: '2000 HP', hpSub: '战备完好率 100%'
       },
       td: {
         name: 'M1A1 艾布拉姆斯', sub: 'M1A1 ABRAMS MBT',
         fire: '120mm M256 滑膛炮', fireSub: '穿深 600mm · 尾翼稳定脱壳穿甲弹',
-        armor: '正面等效 >850mm', armorSub: '贫铀复合装甲 (DU Armor)',
+        armor: '贫铀复合装甲', armorSub: '正面等效 >850mm(DU Armor)',
         speed: '67 km/h', speedSub: 'AGT-1500 燃气轮机',
         hp: '3000 HP', hpSub: '战备完好率 100%'
       },
@@ -1462,10 +1495,17 @@ var Hangar3D = (function () {
         hp: '1650 HP', hpSub: '战备完好率 100%'
       },
       arty: {
-        name: '122mm 多管火箭炮', sub: '122mm MLRS',
-        fire: '20联装 122mm 增程火箭弹', fireSub: '最大射程 40km · 区域覆盖',
-        armor: '轻型装甲底盘', armorSub: '高机动轮式底盘',
-        speed: '80 km/h', speedSub: '大功率柴油动力',
+        name: 'M142 海马斯高机动火箭炮', sub: 'M142 HIMARS',
+        fire: '6联装 227mm GMLRS 制导火箭弹齐射', fireSub: '最大射程 40km · 单发伤害 120 · 装填 12s',
+        armor: '装甲驾驶室', armorSub: 'FMTV M1140 6×6 中型战术车底盘',
+        speed: '85 km/h', speedSub: '卡特彼勒 C7 柴油机 330马力',
+        hp: '1300 HP', hpSub: '战备完好率 100%'
+      },
+      aa: {
+        name: 'AN/TWQ-1 复仇者防空系统', sub: 'AN/TWQ-1 AVENGER',
+        fire: '8×FIM-92 毒刺防空导弹', fireSub: '红外弹 8km · 发射后不管(弹载导引头自搜索)',
+        armor: '悍马轻装甲', armorSub: 'M1097A2 重型悍马 4×4 底盘 · 无车载雷达',
+        speed: '89 km/h', speedSub: '底特律柴油机 V8 6.2L 135hp',
         hp: '1300 HP', hpSub: '战备完好率 100%'
       }
     }
@@ -3548,7 +3588,8 @@ function buildHangarRearLineArt(g) {
         else if (curKind === 'm1' || (curKind === 'td' && curTeam === 'enemy')) matName = '贫铀复合装甲 (DU Armor)';
         else if (curKind === 'ah64') matName = '凯夫拉/陶瓷复合轻装甲';
         else if (curKind === 'wz10') matName = '防弹装甲板 + 复合座舱';
-        else if (curKind === 'arty') matName = '高强度防破片装甲板';
+        else if (curKind === 'arty') matName = (curTeam === 'enemy') ? '装甲驾驶室 + 防破片内衬' : '高强度防破片装甲板';   // 蓝 M142 / 红 PHL-11
+        else if (curKind === 'aa') matName = (curTeam === 'enemy') ? '悍马轻型装甲板' : '轻型焊接装甲 + 防弹玻璃';   // 蓝 复仇者 / 红 PGZ-95
         if (matVal) matVal.textContent = matName;
       }
 
@@ -3669,7 +3710,7 @@ function buildHangarRearLineArt(g) {
 
     if (hoistTrolleyGroup) {
       var isHeli = (curKind === 'wz10' || curKind === 'ah64');
-      hoistXTo = isHeli ? 4.8 : 1.2;   // 不瞬移: render 里滑到目标
+      hoistXTo = (isHeli || curKind === 'arty' || curKind === 'aa') ? 4.8 : 1.2;   // 长车身载具(直升机/火箭炮)小车左移至 4.8;不瞬移: render 里滑到目标
     }
 
     var data = (VEH_DATA[curTeam] && VEH_DATA[curTeam][curKind]) || VEH_DATA.ally.tank;
@@ -3682,8 +3723,8 @@ function buildHangarRearLineArt(g) {
     if (el('hangar-veh-sub')) el('hangar-veh-sub').textContent = data.sub || 'TYPE 59 MBT';
     if (el('hangar-stat-fire')) el('hangar-stat-fire').textContent = data.fire || '100mm 线膛炮';
     if (el('hangar-stat-fire-sub')) el('hangar-stat-fire-sub').textContent = data.fireSub || '穿深 220mm · 初速 1480m/s';
-    if (el('hangar-stat-armor')) el('hangar-stat-armor').textContent = data.armor || '首上 100mm / 炮塔 200mm';
-    if (el('hangar-stat-armor-sub')) el('hangar-stat-armor-sub').textContent = data.armorSub || 'RHA 均质装甲钢';
+    if (el('hangar-stat-armor')) el('hangar-stat-armor').textContent = data.armor || 'RHA 均质装甲钢';
+    if (el('hangar-stat-armor-sub')) el('hangar-stat-armor-sub').textContent = data.armorSub || '首上 100mm / 炮塔 200mm';
     if (el('hangar-stat-speed')) el('hangar-stat-speed').textContent = data.speed || '50 km/h';
     if (el('hangar-stat-speed-sub')) el('hangar-stat-speed-sub').textContent = data.speedSub || '520马力柴油机';
     if (el('hangar-stat-hp')) el('hangar-stat-hp').textContent = data.hp || '1800 HP';

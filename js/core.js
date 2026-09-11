@@ -37,9 +37,12 @@
         ——中央大面积低平、四周渐高;
       振幅自坡前 90m 起经 150m smoothstep 渐隐没入坡墙(坡上 60m 处归零),
       出生线/战线(坡前 50m)仍保有 ~81% 振幅,崎岖度全程可见;
-   ③ 中线镜像:贝塞尔场以 (x,|z|) 采样、盆形以 x²+z² 采样,南北半场地形逐位一致,双方公平;
-   ④ 战斗弹坑(dentGrid)为临时战斗疤痕,非天然地形,初始全 0。 */
-var MAP = { len: 2000, wid: 2000, halfL: 1000, halfW: 1000, side: 2000, half: 1000, seed: '0', seedF: 0, rough: 0, mat: 'grass', slopeW: 150, slopeH: 26, cpStep: 250 };
+   ③ 非对称:贝塞尔场/盆地以真实 (x,z) 采样,南北半场各自随机(中线镜像已取消,颜色层此前已去镜像);
+      公平改由三层机制保障——玩法布局(HQ/出生线)继续镜像 + 构建期连通性验证(奇观重布) + 出生坡度门(见 wonder.js);
+   ④ 战斗弹坑(dentGrid)为临时战斗疤痕,非天然地形,初始全 0。
+   ⑤ 奇观层(wonder.js):种子布点的多奇观加性高度,粗格烘焙+上采样,与中心地形同门(rough=0 时无奇观);
+   ⑥ HQ 夷平:18 座大本营圆心 50m 内烘焙为绝对平地,50~70m 平滑过渡(覆盖 40m 弹坑保护与 30m 重部署环)。 */
+var MAP = { len: 2000, wid: 2000, halfL: 1000, halfW: 1000, side: 2000, half: 1000, seed: '0', seedF: 0, rough: 0, mat: 'grass', slopeW: 150, slopeH: 26, cpStep: 250, wonders: [], hqFlat: null, wonderSalt: '' };
 function hashSeed(str) {                 // 种子(任意文本)→ 32 位确定值(FNV-1a)
   var h = 0x811c9dc5;
   str = String(str == null ? '' : str);
@@ -149,7 +152,7 @@ var BIOME_HEIGHT_FUNCS = [
 ];
 
 function terrainBase(x, z) {
-  var az = Math.abs(z), ax = Math.abs(x);              // 中线镜像:z→|z|,南北半场逐位一致
+  var az = Math.abs(z), ax = Math.abs(x);              // az/ax 仅供边缘坡环与 fade 包络(径向距离语义);场采样已去镜像,吃真实 z(方案 §3)
   var halfL = MAP.halfL || MAP.half, halfW = MAP.halfW || MAP.half;
   var slopeStartL = halfL - MAP.slopeW;
   var slopeStartW = halfW - MAP.slopeW;
@@ -157,15 +160,15 @@ function terrainBase(x, z) {
   var uwW = (ax - slopeStartW) / MAP.slopeW;
   var uw = Math.max(uwL, uwW);              // 边缘坡贝塞尔陡升(盆壁)
   var h = uw > 0 ? bz3(uw > 1 ? 1 : uw, 0, 0.1, 8, MAP.slopeH) : 0;
-  if (MAP.rough !== 0 && (uwL < 0.4 && uwW < 0.4)) {
+  if ((MAP.rough !== 0 || (typeof wLat !== 'undefined' && wLat)) && (uwL < 0.4 && uwW < 0.4)) {   // 中心块:基底仍 rough!==0 门内(rr=0 时 hc 天然归零),奇观 0 崎岖起(任务二)
     /* 中心地形(规则②):崎岖度决定形态——山地=脊线场,盆地=径向盆形;
        渐隐自坡前 90m 起 150m 宽,坡上 60m 处归零;出生线(坡前 50m)保留 ~81% 振幅 */
     var fade = clamp((Math.max(az - (slopeStartL - 90), ax - (slopeStartW - 90))) / 150, 0, 1);
     fade = fade * fade * (3 - 2 * fade);               // smoothstep 渐隐:中心地形平滑没入坡墙
     var rr = MAP.rough / 100;
-    var M = bzField(x, az, MAP.cpStep, 0);             // 宏观场(主波长=边长/8)
-    var det = bzField(x, az, MAP.cpStep / 3, 1) * 0.66
-            + bzField(x, az, MAP.cpStep / 6, 2) * 0.34 - 0.5;   // 细节场(去均值;两细节层内配 0.66/0.34)
+    var M = bzField(x, z, MAP.cpStep, 0);              // 宏观场(主波长=边长/8;去镜像:真实 z 采样)
+    var det = bzField(x, z, MAP.cpStep / 3, 1) * 0.66
+            + bzField(x, z, MAP.cpStep / 6, 2) * 0.34 - 0.5;   // 细节场(去均值;两细节层内配 0.66/0.34)
     var Ms = clamp(0.5 + (M - 0.5) * 3.0, 0, 1);       // 对比拉伸:B 样条场分布集中 0.5±0.15,铺满 0..1 才有真谷真峰
     det = clamp(det * 2.4, -0.5, 0.5);
     var hc = 0;
@@ -176,7 +179,7 @@ function terrainBase(x, z) {
         if (wk > 1e-5) hc += BIOME_HEIGHT_FUNCS[k](M, Ms, det, rr) * wk;
       }
     } else {                                           // 盆地:盆形下沉+缘丘+细波(rr<0,首项为负=下沉)
-      var normX = ax / slopeStartW, normZ = az / slopeStartL;
+      var normX = ax / slopeStartW, normZ = z / slopeStartL;   // 去镜像:语义上吃真实 z(rn 取平方,数值与 |z| 版一致)
       var rn = Math.sqrt(normX * normX + normZ * normZ); if (rn > 1) rn = 1;
       var ub = clamp((rn - 0.35) / 0.65, 0, 1);        // 盆形:中心 1 → 边 0(smoothstep)
       var bowl = 1 - ub * ub * (3 - 2 * ub);
@@ -185,12 +188,14 @@ function terrainBase(x, z) {
       hc = rr * (22 * bowl - 9 * Ms * rimK - 7 * det);
     }
     h += hc * (1 - fade) * 4;   // (N1)崎岖度对中央地形的影响过弱:整体放大到 4× (rough±100 由 ±26m→约 ±104m)
+    if (typeof wonderAt === 'function' && typeof wLat !== 'undefined' && wLat)   // 奇观层:独立缩放 wonderScale+同包络,高度绝对值(不 ×4)
+      h += wonderAt(x, z) * (1 - fade) * (typeof wonderScale === 'function' ? wonderScale(MAP.rough) : (rr < 0 ? -rr : rr));
   }
   return h;
 }
-/* terrainBase 查找表(双线性;低频大尺度分量,覆盖 ±(half+10)):
+/* terrainBase 查找表(格点采样;低频大尺度分量,覆盖 ±(half+10)):
    格距 = max(弹坑网格格距, 贝塞尔最细层波长/4)——主/细节层波长 ≥ cpStep/6,
-   1/4 波长采样双线性插值误差 <1m;物理与视觉网格同走此表,逐位一致。
+   物理与视觉网格同走此表,再用同一套三角权重做格内插值,逐点一致。
    惰性构建(首次 terrainH 调用时一次性);terrainH 每次省去贝塞尔/渐隐求值。
    建场路径(丘陵环坡度)直接调用解析式 terrainBase,不走表——一次性成本不值得缓存。 */
 var tbLatN = 0, tbLatMin = -1010, tbLatStep = 4, tbLat = null;
@@ -200,14 +205,16 @@ var TB_MAXH = 1e9;   // ★审查A1: 全图基础地形上界(建表时一次 O(
    则必然无地形遮挡,可跳过 isRadarLineOccludedByTerrain 的最多 60 次 terrainH 精采样。
    包络格值 = 该粗格覆盖区域内 terrainBase 细采样的最大值,并做 3×3 膨胀(相邻格取大),
    保证任一点落格即覆盖其所在及邻接格的真实地形;查询沿段按 teVStep 步进取格上界的最大值。
-   坑缘(dentGrid rimH ≤ ~1.1m)与双线性内插起伏用 TERR_ENV_MARGIN 安全余量吸收——
+   坑缘(dentGrid rimH ≤ ~1.1m)与格内插值起伏用 TERR_ENV_MARGIN 安全余量吸收——
    包络恒为真实地形高度的严格上界,故"判定放行"绝不漏检遮挡(只可能保守回落精采样)。 */
 var teVN = 0, teVStep = 64, teVMin = -1010, teVLat = null;   // 包络网格(惰性随 tbLat 一并重建)
 var TERR_ENV_MARGIN = 1.5;                                    // 上界安全余量(坑缘凸起 + 内插起伏)
 function buildTerrainBaseTable() {
   if (!BQ.ready) biomeRebuild();                       // P2/P3:保证地貌分区场已就绪
+  if (typeof wonderBuild === 'function') wonderBuild();   // 奇观:种子布点+粗格烘焙(Q1 同门废除:0 崎岖=平坦基底+奇观地标,2026-09-09)
+  else { MAP.wonders = []; if (typeof wLat !== 'undefined') wLat = null; }   // 粗格不跨图残留(防旧表泄漏进新图)
   /* ★与视觉网格逐顶点对齐:步长=各自轴向格距,原点=−halfW/−halfL(=buildGroundMeshes 的顶点世界坐标),
-     使 terrainH 的双线性 = 网格三角形的双线性,基面不再有"表内/表外"两套曲面。 */
+     再配同一套三角权重,使 terrainH 与渲染网格在格内也是同一曲面。 */
   var nx = GRID_N, nz = GRID_N;
   tbLatStep = GRID_CELL;                               // 兼容旧读取(包络/诊断)
   tbLatMin = -MAP.halfW;
@@ -216,6 +223,7 @@ function buildTerrainBaseTable() {
   for (var iz = 0; iz < nz; iz++)
     for (var ix = 0; ix < nx; ix++)
       tbLat[iz * nx + ix] = terrainBase(-MAP.halfW + ix * GRID_CELL_X, -MAP.halfL + iz * GRID_CELL_Z);
+  if (typeof hqFlattenApply === 'function') hqFlattenApply();   // HQ 50m 夷平后遍(基→奇观→夷平→包络,顺序即正义)
   TB_MAXH = -1e9;                                       // ★审查A1: 基础地形上界一次扫描(弹坑缘/内插起伏由 laserRange 侧加 TERR_ENV_MARGIN 裕量覆盖)
   for (var tmx = 0; tmx < tbLat.length; tmx++) if (tbLat[tmx] > TB_MAXH) TB_MAXH = tbLat[tmx];
   buildTerrainEnvelope();
@@ -294,35 +302,43 @@ function applyMapConfig(seed, rough, sideOrLen, mat, wid) {
   CONF.bounds = Math.min(CONF.boundsX, CONF.boundsZ);                        // 活动界=地图边界内缩 20m
   CONF.allySpawnZ = MAP.halfL - 200;                   // 出生线=坡起点(half-150)再内 50m
   CONF.enemySpawnZ = -CONF.allySpawnZ;
+  MAP.wonderSalt = '';
+  MAP.hqFlat = (typeof hqLayoutCompute === 'function' && typeof hqParamsFromGlobals === 'function')
+    ? hqLayoutCompute(hqParamsFromGlobals()) : null;   // HQ 布局前移:地形夷平与 spawnTeams 同源(方案 §5.1)
   dentGrid.fill(0);
   dentEpoch++;                                         // 换图=高度场整体重置,静止车缓存目标一并失效
   scorchGrid.fill(0);
   scorchVtxQ.fill(0);                                    // 顶点层焦土账本
   craterQueue.length = 0;                                // ★换图:待生效弹坑清空(上一局 0.3s 合批窗口内未冲压的弹坑不得带入新图)
+  _cfPart = null;                                        // ★任务27⑤:半冲压坑的行级游标一并清空(旧图落点不得续冲进新图)
   scorchFieldBuild();                                    // 焦土像素层:按新边长重建瓦片/参数图并清空在册爆点
   tbLat = null;                                        // 触发 terrainH 惰性重建
   teVLat = null;                                        // 地形包络随基表一并惰性重建(换图=地形整体重置)
   return MAP.mat;
 }
-/* ★同源修复:基面双线性必须与视觉网格走【同一套权重】——
-   视觉顶点存 terrainH(顶点世界坐标),GPU 在 GRID_CELL 网格上再双线性;
-   若基面另用 tbLatStep 粗网格插值,两条路径在格子内部必然分叉(12km 图实测 maxΔ=0.85m,
-   恰是"车陷入地面/地面自己起伏"的量级)。故这里改用与 terrainH 完全相同的索引换算,
-   tbLat 直接按 GRID_CELL 网格烘焙。 */
+/* ★同源修复:基面采样必须与视觉网格走【同一套三角权重】——
+   视觉顶点存格点高,GPU 在棋盘格交替三角面内插值;若物理另用双线性,
+   两条路径在格子内部必然分叉(陡峭断裂带实测可达 ±0.6m,
+   恰是"车陷入地面/地面自己起伏"的量级)。故这里改用与 buildGroundMeshes
+   完全相同的奇偶规则与三角权重,tbLat 直接按 GRID_CELL 网格烘焙。 */
 function terrainBaseCached(x, z) {
   var fx = (x + MAP.halfW) / GRID_CELL_X, fz = (z + MAP.halfL) / GRID_CELL_Z;
-  var ix = fx | 0, iz = fz | 0;
+  var ix = Math.floor(fx), iz = Math.floor(fz);
   if (ix < 0) ix = 0; else if (ix > tbLatN - 2) ix = tbLatN - 2;
   if (iz < 0) iz = 0; else if (iz > tbLatN - 2) iz = tbLatN - 2;
   var tx = fx - ix, tz = fz - iz, i00 = iz * tbLatN + ix;
-  var a = tbLat[i00] * (1 - tx) + tbLat[i00 + 1] * tx;
-  var b = tbLat[i00 + tbLatN] * (1 - tx) + tbLat[i00 + tbLatN + 1] * tx;
-  return a * (1 - tz) + b * tz;
+  var h00 = tbLat[i00], h10 = tbLat[i00 + 1], h01 = tbLat[i00 + tbLatN], h11 = tbLat[i00 + tbLatN + 1];
+  if (groundCellParity(ix, iz) === 0) {
+    if (tx + tz <= 1) return h00 * (1 - tx - tz) + h01 * tz + h10 * tx;
+    return h11 + (h01 - h11) * (1 - tx) + (h10 - h11) * (1 - tz);
+  }
+  if (tz <= tx) return h00 + (h10 - h00) * tx + (h11 - h10) * tz;
+  return h00 + (h01 - h00) * tz + (h11 - h01) * tx;
 }
 /* ============================================================
    弹坑地形改造(火箭弹轰炸犁出的真实凹坑)
    —— dentGrid 高程增量网格(与地面顶点一一对应)是唯一真源:
-      物理 terrainH 双线性采样它,视觉网格顶点/顶点色同步改写,
+      物理 terrainH 按视觉三角面采样它,视觉网格顶点/顶点色同步改写,
       坦克开进坑会下陷、弹道命中随坑缘起伏、视觉=物理。
    ============================================================ */
 /* 地形顶点分辨率:481 → 721(格距由 边长/480 改成 边长/720)。
@@ -386,15 +402,22 @@ function gndSetNormal(gi) {                      // 解析法线写入(全部块
   if (bz >= 0) { A = groundChunks[ax * CHUNK_N + bz].nrm.array; li = (CHUNK_CELLS * CHUNK_VERTS + lx) * 3; A[li] = _crN.x; A[li + 1] = _crN.y; A[li + 2] = _crN.z; chunkDirty[ax * CHUNK_N + bz] = 1; }
   if (bx >= 0 && bz >= 0) { A = groundChunks[bx * CHUNK_N + bz].nrm.array; li = (CHUNK_CELLS * CHUNK_VERTS + CHUNK_CELLS) * 3; A[li] = _crN.x; A[li + 1] = _crN.y; A[li + 2] = _crN.z; chunkDirty[bx * CHUNK_N + bz] = 1; }
 }
+/* 物理高度=基面格点高+弹坑格点增量,再按视觉网格的同一三角面插值。
+   图内与 GPU 渲染面逐点一致;图外仍只计基面、不计弹坑,保持旧边界语义。 */
 function terrainH(x, z) {
   if (!tbLat) buildTerrainBaseTable();        // 惰性构建(首次采样一次性;此后查表省贝塞尔/渐隐求值)
-  var h = terrainBaseCached(x, z);
   var fx = (x + MAP.halfW) / GRID_CELL_X, fz = (z + MAP.halfL) / GRID_CELL_Z;
-  var ix = fx | 0, iz = fz | 0;
-  if (ix < 0 || iz < 0 || ix >= GRID_N - 1 || iz >= GRID_N - 1) return h;
+  var ix = Math.floor(fx), iz = Math.floor(fz);
+  if (ix < 0 || iz < 0 || ix >= GRID_N - 1 || iz >= GRID_N - 1) return terrainBaseCached(x, z);
   var tx = fx - ix, tz = fz - iz, i00 = iz * GRID_N + ix;
-  var d00 = dentGrid[i00], d10 = dentGrid[i00 + 1], d01 = dentGrid[i00 + GRID_N], d11 = dentGrid[i00 + GRID_N + 1];
-  return h + (d00 * (1 - tx) + d10 * tx) * (1 - tz) + (d01 * (1 - tx) + d11 * tx) * tz;
+  var h00 = tbLat[i00] + dentGrid[i00], h10 = tbLat[i00 + 1] + dentGrid[i00 + 1];
+  var h01 = tbLat[i00 + GRID_N] + dentGrid[i00 + GRID_N], h11 = tbLat[i00 + GRID_N + 1] + dentGrid[i00 + GRID_N + 1];
+  if (groundCellParity(ix, iz) === 0) {
+    if (tx + tz <= 1) return h00 * (1 - tx - tz) + h01 * tz + h10 * tx;
+    return h11 + (h01 - h11) * (1 - tx) + (h10 - h11) * (1 - tz);
+  }
+  if (tz <= tx) return h00 + (h10 - h00) * tx + (h11 - h10) * tz;
+  return h00 + (h01 - h00) * tz + (h11 - h01) * tx;
 }
 // 单个弹坑剖面:中心下凹(高斯) + 坑缘一圈上凸(环状高斯) + 焦土加权
 function craterProfile(r, R, D, rimH) {
@@ -824,33 +847,72 @@ function terrainChangedReanchor(points, rinf) {
     }
   }
 }
+/* ★任务27④:落弹批处理分帧预算——旧行为=0.3s 窗口把队列一次全冲:PHL-11 40 发齐射与多炮齐射/
+   直升机火箭点射重叠时,单批实测 247~281ms 纯 JS(每坑 26²~50² 顶点×7 点超采样冲压+法线重算+
+   最多 64 块脏块全量属性上传 5.4MB)=「火箭弹爆炸必卡一下像暂停」的根因。
+   现:每批处理弹坑至 6ms 预算(至少 2 坑),余坑留队 0.3s 后续批消化;脏块上传每批 ≤2 块,
+   余块保持脏标下批续传(空队列也会为续传运行)。弹坑为永久地貌,延后数帧~数秒出现无感知
+   (爆点烟卡/焦土像素层当帧已盖住落点)。单坑成本(≤~10ms)为不可再分下限。 */
+var CRATER_FLUSH_BUDGET_MS = 6;      // 每批冲压时间预算(ms)
+var CRATER_FLUSH_MIN = 1;            // 每批至少处理坑数(保证队列必然排空;大坑单帧只此一发,小坑预算内续挖)
+var CRATER_CHUNK_UP_MAX = 2;         // 每批脏块上传上限(块)
+var _cfPart = null;            // ★任务27⑤:坑内行级游标状态(未冲完的大坑跨批续冲;换图/clearBattle 置 null)
+var _cfPreQ = [];              // ★任务27⑤:preWrecks 采样参数复用数组(零分配)
+function _crNowMs() { return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now(); }
 function flushCraters() {
-  if (!craterQueue.length || !groundChunks.length) return;
+  if (!groundChunks.length) return;
+  var _cfDirty = false;                                      // 有欠传脏块时,即使队列为空也要运行(续传)
+  for (var _cfD = 0; _cfD < chunkDirty.length; _cfD++) if (chunkDirty[_cfD]) { _cfDirty = true; break; }
+  if (!craterQueue.length && !_cfDirty && !_cfPart) return;   // ★任务27⑤:半冲压坑待续时不得早退(其脏块可能已在前批传清)
   var flushed = [];                                          // 本批落点(大本营再锚固判定用)
   var flushedR = [];                                         // 6a/6b: 逐坑 RINF(贴地物重锚的半径真源)
-  if (typeof terrainChangedPreWrecks === 'function') terrainChangedPreWrecks(craterQueue);   // 6a: 冲压前采样残骸脚下地面高
+  if (typeof terrainChangedPreWrecks === 'function') {       // 6a: 冲压前采样残骸脚下地面高(★任务27⑤:续冲坑一并纳入——采样本批将冲压的落点)
+    _cfPreQ.length = 0;
+    if (_cfPart) _cfPreQ.push(_cfPart.cx, _cfPart.cz, _cfPart.rSp);
+    for (var _pq = 0; _pq < craterQueue.length; _pq++) _cfPreQ.push(craterQueue[_pq]);
+    if (_cfPreQ.length) terrainChangedPreWrecks(_cfPreQ);
+  }
   nrmMarkId++;                                               // cw T1:脏标记版本号推进(跨批复用标记数组零分配)
-  while (craterQueue.length) {
-    var cx = craterQueue.shift(), cz = craterQueue.shift(), rSp = craterQueue.shift() || 22.0;
-    var R = craterRadiusOf(rSp);                              // 弹坑半径(含网格分辨下限,见 craterRadiusOf)
-    var D = 1.6 * (rSp / 22.0);                               // 弹坑深度与爆炸半径线性关联
-    var rimH = 0.55 * (rSp / 22.0);                           // 坑缘凸起与爆炸半径线性关联
-    var RINF = R * 2.4;                                       // 焦土影响范围
-    /* 顶点层半径 RVTX:内缩 4 格(下限 0.45 RINF)。它只是像素层的兜底,必须被「压」在
-       解析焦土已经烧到 ~99% 的黑心里 —— 正常渲染时它对画面的贡献恒小于 1%(实测:
-       内缩 2 格时它会在 0.6~0.9 RINF 的过渡带上留下约 2.9% 的角度起伏,内缩 4 格后
-       < 0.5%);而像素层一旦失效,画面上仍有一块(略小的)焦土,不会整坑消失。 */
-    var RVTX = Math.max(RINF - 4 * GRID_CELL, RINF * 0.45);
-    var cgain = craterStampGain(R, D, rimH);                  // 预滤波的峰值补偿(每坑一次)
-    flushed.push(cx, cz); flushedR.push(RINF);
-    var ix0 = Math.max(0, Math.floor((cx - RINF + MAP.halfW) / GRID_CELL_X)), ix1 = Math.min(GRID_N - 1, Math.ceil((cx + RINF + MAP.halfW) / GRID_CELL_X));   // ±halfW/halfL 偏移(与视觉网格同轴)
-    var iz0 = Math.max(0, Math.floor((cz - RINF + MAP.halfL) / GRID_CELL_Z)), iz1 = Math.min(GRID_N - 1, Math.ceil((cz + RINF + MAP.halfL) / GRID_CELL_Z));
-    for (var iz = iz0; iz <= iz1; iz++) {
-      for (var ix = ix0; ix <= ix1; ix++) {
+  var _cfT0 = _crNowMs(), _cfN = 0;
+  /* ★任务27⑤ 坑内行级游标:每坑 = 一个 _cfPart 状态对象(开坑即建、完工置 null)。冲压内环每
+     256 顶点查一次钟,预算耗尽保存 (iz,ix) 断点、下一批(0.3s 后)续冲 —— 连单个 M142 大坑
+     (44m 口径 ≈ 2500 顶点 ×7 点超采样 ≈ vm 23ms)也被切成有界片段,任何一次 flushCraters 调用都不再含不可分割的大坑。
+     顺序不变性:冲压顺序 = 队列 FIFO × 行×列扫描,与分批方式无关 → 拆分后全部排干的
+     dentGrid/scorchGrid/scorchVtxQ/顶点位置/顶点色/法线与不拆分【逐位一致】(dbg_rocket 场景 F 实证)。
+     续冲批增量照常参与该批 flushed 再锚固(REANCHOR_DEADBAND 4cm 死区幂等,重复再锚收敛)、
+     dentEpoch、法线重算与分块上传;像素层 splat 与余烬 emberCrater 在整坑完工时才登记(至多延后 3 批)。 */
+  while (_cfPart || craterQueue.length) {
+    if (_cfN >= CRATER_FLUSH_MIN && _crNowMs() - _cfT0 >= CRATER_FLUSH_BUDGET_MS) break;
+    if (!_cfPart) {                                          // —— 开新坑:建状态对象(全部每坑常量一次算好)——
+      var cxq = craterQueue.shift(), czq = craterQueue.shift(), rSp = craterQueue.shift() || 22.0;
+      _cfPart = { cx: cxq, cz: czq, rSp: rSp,
+        R: craterRadiusOf(rSp),                              // 弹坑半径(含网格分辨下限,见 craterRadiusOf)
+        D: 1.6 * (rSp / 22.0),                               // 弹坑深度与爆炸半径线性关联
+        rimH: 0.55 * (rSp / 22.0),                           // 坑缘凸起与爆炸半径线性关联
+        RINF: 0, RVTX: 0, cgain: 0, ix0: 0, ix1: 0, iz0: 0, iz1: 0, iz: 0, ix: 0 };
+      var PT = _cfPart;
+      PT.RINF = PT.R * 2.4;                                  // 焦土影响范围
+      /* 顶点层半径 RVTX:内缩 4 格(下限 0.45 RINF)。它只是像素层的兜底,必须被「压」在
+         解析焦土已经烧到 ~99% 的黑心里 —— 正常渲染时它对画面的贡献恒小于 1%(实测:
+         内缩 2 格时它会在 0.6~0.9 RINF 的过渡带上留下约 2.9% 的角度起伏,内缩 4 格后
+         < 0.5%);而像素层一旦失效,画面上仍有一块(略小的)焦土,不会整坑消失。 */
+      PT.RVTX = Math.max(PT.RINF - 4 * GRID_CELL, PT.RINF * 0.45);
+      PT.cgain = craterStampGain(PT.R, PT.D, PT.rimH);       // 预滤波的峰值补偿(每坑一次)
+      PT.ix0 = Math.max(0, Math.floor((PT.cx - PT.RINF + MAP.halfW) / GRID_CELL_X)); PT.ix1 = Math.min(GRID_N - 1, Math.ceil((PT.cx + PT.RINF + MAP.halfW) / GRID_CELL_X));   // ±halfW/halfL 偏移(与视觉网格同轴)
+      PT.iz0 = Math.max(0, Math.floor((PT.cz - PT.RINF + MAP.halfL) / GRID_CELL_Z)); PT.iz1 = Math.min(GRID_N - 1, Math.ceil((PT.cz + PT.RINF + MAP.halfL) / GRID_CELL_Z));
+      PT.iz = PT.iz0; PT.ix = PT.ix0;
+    }
+    var P = _cfPart;
+    var cx = P.cx, cz = P.cz, R = P.R, D = P.D, rimH = P.rimH, RINF = P.RINF, RVTX = P.RVTX, cgain = P.cgain;
+    var ix0 = P.ix0, ix1 = P.ix1, iz1 = P.iz1;
+    flushed.push(cx, cz); flushedR.push(RINF);               // 本批落点(大本营再锚固判定用;续冲坑逐批重复入账,死区幂等)
+    var iz = P.iz, ix = P.ix, _cfV = 0, _cfStop = false;     // 行级游标 + 本坑本批顶点计数(每 256 顶点查钟一次)
+    while (iz <= iz1) {
+      while (ix <= ix1) {
         var wx = -MAP.halfW + ix * GRID_CELL_X, wz = -MAP.halfL + iz * GRID_CELL_Z;
         var dx = wx - cx, dz = wz - cz;
         var r = Math.sqrt(dx * dx + dz * dz);
-        if (r > RINF) continue;
+        if (r > RINF) { ix++; continue; }
         var idx = iz * GRID_N + ix;
         var hqFac = getHQZoneDeformFactor(wx, wz);
         /* ① 高程:径向超采样冲压(craterStamp) —— 抽样结果只依赖到爆心的距离,
@@ -880,11 +942,22 @@ function flushCraters() {
             groundBaseRock[i3 + 1] * (1 - f) + _scTgt[1] * f,
             groundBaseRock[i3 + 2] * (1 - f) + _scTgt[2] * f);
         }
+        if ((++_cfV & 255) === 0 && _crNowMs() - _cfT0 >= CRATER_FLUSH_BUDGET_MS) { _cfStop = true; break; }   // ★任务27⑤:预算断点(当前顶点已冲压)
+        ix++;
       }
+      if (_cfStop) break;
+      iz++; ix = ix0;
     }
-    /* ④ 像素层登记:焦土与过渡带从此在片元里按真实距离解析求值 —— 恒为正圆,与网格无关 */
-    if (getHQZoneDeformFactor(cx, cz) > 0.15) scorchSplatAdd(cx, cz, RINF);
-    emberCrater(cx, cz, R, RINF);       // 余烬单遍处理(da):翻土区抹除+波及区重锚固+坑内/坑缘/外环布点(ONE Mesh·1 draw call)
+    _cfN++;
+    if (_cfStop) {                                           // 保存行级断点:下一未冲顶点 = ix+1(越行界归一到下一行行首)
+      P.iz = iz; P.ix = ix + 1;
+      if (P.ix > ix1) { P.ix = ix0; P.iz = iz + 1; }
+    } else {                                                 // —— 整坑冲压完成 ——
+      _cfPart = null;
+      /* ④ 像素层登记:焦土与过渡带从此在片元里按真实距离解析求值 —— 恒为正圆,与网格无关 */
+      if (getHQZoneDeformFactor(cx, cz) > 0.15) scorchSplatAdd(cx, cz, RINF);
+      emberCrater(cx, cz, R, RINF);       // 余烬单遍处理(da):翻土区抹除+波及区重锚固+坑内/坑缘/外环布点(ONE Mesh·1 draw call)
+    }
   }
   dentEpoch++;                          // 高度场已变:静止车贴地目标缓存整体失效(alignTank 触发器判据)
   // —— 增量解析法线——网格严格贴合高度场(dentGrid 唯一真源),触碰顶点直接中心差分解析重算,
@@ -904,8 +977,11 @@ function flushCraters() {
   if (typeof bsDirtyByCraters === 'function') bsDirtyByCraters(flushed, flushedR);   /* G4-decal: re-anchor surviving blob shadows over dipped ground */
   // —— 脏块上传(替代 cw updateRange 区间上传)——每块 pos/col/nrm 各 ~54KB,
   //    弹坑批典型只脏 1~4 块;视锥外脏块上传照样发生但渲染被剔除 ——
+  var _cfUp = 0;
   for (var cD = 0; cD < CHUNK_N * CHUNK_N; cD++) {
     if (!chunkDirty[cD]) continue;
+    if (_cfUp >= CRATER_CHUNK_UP_MAX) break;                 // ★任务27④:上传预算——余块保持脏标,下批续传(防齐射期单帧 5MB+ 属性上传)
+    _cfUp++;
     chunkDirty[cD] = 0;
     var gc = groundChunks[cD];
     gc.pos.needsUpdate = true; gc.col.needsUpdate = true; gc.nrm.needsUpdate = true; if (gc.rock) gc.rock.needsUpdate = true;
@@ -935,11 +1011,13 @@ var CONF = {
   // 玩家与 AI 用的就是 ally 这套数值 —— 全民平等,凭技术吃饭
   ally:   { struct: 300, pen: 446, penKd: 9.5e-5, dmg: 90, reload: 8.5, speed: 13.9, turn: 0.45, turretRate: 0.175,
             accel: 2.5, decel: 5, color: 0x4e6b38, shellSpeed: 1480,   // 50km/h=13.9m/s;炮塔 10°/s=0.175rad/s;结构统一 300
+            mob: { mass: 36000, power: 387764, eta: 0.80, mu: 0.68, muLat: 0.42, crr: 0.095, vCrawl: 1.0 },   // 59式:36t/520hp;tanθmax=μ−Crr=0.585≈58%
             // 59 式(用户标尺):首上/首下物理 97~100 取 100(首上 23.8° 斜板/鼻板 25.3°,等效由命中壳几何按 LOS 折算)/侧 80/顶 20/后 40 底 25(后底区间 20~60);weak=座圈裙前缝 45 不变
             hullArmor:   { front: 100, side: 80, rear: 40, top: 20, bottom: 25, weak: 45 },
             turretArmor: { front: 200, side: 140, rear: 42, top: 30, weak: 45 } },            // 铸造穹顶最厚处 200~203 取 200/侧 130~150 取 140/顶 30;后 42 未指定照旧;weak=弱点面板 45mm
   enemy:  { struct: 300, pen: 446, penKd: 9.5e-5, dmg: 90, reload: 8.5, speed: 13.3, turn: 0.45, turretRate: 0.419,
             accel: 2.5, decel: 5, color: 0x8a7f4a, shellSpeed: 1480,   // 48km/h=13.3m/s;炮塔 24°/s=0.419rad/s
+            mob: { mass: 48000, power: 559275, eta: 0.80, mu: 0.68, muLat: 0.34, crr: 0.10, vCrawl: 1.0 },   // M60A1:48t/750hp;横坡短板 sideMax≈30%
             hullArmor:   { front: 210, side: 55, rear: 40, top: 20, bottom: 25, weak: 45 },   // M60A1(物理厚度入账):首上物理210(游戏斜板~35°入射→等效≈256≈标尺258)/首下~45°→297区间/侧55/顶20/后底40/25
             turretArmor: { front: 165, side: 76, rear: 50, top: 30, weak: 45 } },              // 物理厚度:炮塔正面165(卵鼻0°=165,颊35°≈201,50°≈257≈标尺最厚254)/侧76/后50/顶30;等效=物理/cos入射角,通用算法无M60专属分支
   shellSpeedE: 1650, gravity: 9.8,   // 双方(含玩家)同用真实低伸弹道:现代动能弹级 1650m/s(提高到真实现代坦克水平≥1000m/s;3BM-42≈1650/M829≈1670/三期≈1700)+真实重力 —— 下坠 @100m≈1.8cm @300m≈16.2cm @600m≈64.8cm(较 1050 时代再平直 2.5×)
@@ -957,22 +1035,46 @@ var CONF = {
      距离=炮弹真实飞行里程(出膛累计),跳弹/穿透链继续按现行 ×0.35/×0.62 在衰减值上叠乘。 */
   fireDOT: 7,
   // 火箭炮载具:皮薄、机动一般、超远程曲射面杀伤;齐射时不能移动
-  arty: { struct: 300, dmg: 60, reload: 16, salvo: 16, salvoGap: 0.22,   // reload=salvo×1s(rocketReloadTimeOf); 齐射 16发:射程 10KM,爆炸面积扩至4倍(溅射半径 22m),散布等比收紧
-          rocketSpeed: 360, splashR: 22, minRange: 130, maxRange: 10000,   // 初速上限支持 10km 超远曲射,波及面积4倍(半径22m)
+  // 红方火箭炮 = PHL-11 122mm 轮式自行火箭炮(40 联装):射程 40km/伤害 60/装填 40s/齐射 40 发
+  arty: { struct: 300, dmg: 60, reload: 40, salvo: 40, salvoGap: 0.22,   // reload=salvo×1s×伤害系数(dmg/60)=40s(rocketReloadTimeOf 大修口径);齐射 40 发
+          rocketSpeed: 640, splashR: 22, minRange: 130, maxRange: 40000,   // 40km 超远曲射(高抛 50.4° 需≈632m/s);溅射半径 22m(splashRadiusFromDamage 锚点)
           pen: 1200,   // 火箭弹直击穿深(mm,战斗部化学能定型值):全场最硬板面(t99首上极限等效≈1058)必穿,与99式主炮1090同量级取上界
-          speed: 7.5, turn: 0.35, turretRate: 1.0, accel: 1.4, decel: 3.8 },   // 发射架伺服 1.0rad/s(与开镜瞄具转速一致)
+          speed: 7.5, turn: 0.35, turretRate: 1.0, accel: 1.4, decel: 3.8,   // 发射架伺服 1.0rad/s(与开镜瞄具转速一致)
+          mob: { mass: 22000, power: 253538, eta: 0.80, mu: 0.50, muLat: 0.35, crr: 0.12, vCrawl: 1.0 } },   // 轮式卡车:22t/340hp(估);极限≈38%,越野弱一档
+  // 蓝方火箭炮 = M142 HIMARS 高机动火箭炮(6 联装 227mm):射程 40km/伤害 120/装填 12s/齐射 6 发
+  artyE: { struct: 300, dmg: 120, reload: 12, salvo: 6, salvoGap: 0.22,   // reload=6×1s×(120/60)=12s(伤害系数=2,单发更重装填更快)
+          rocketSpeed: 640, splashR: 44, minRange: 130, maxRange: 40000,   // 溅射半径 44m=120×22/60(splashRadiusFromDamage 同源自洽)
+          pen: 1200,   // GMLRS 战斗部化学能定型值,与 PHL-11 同级
+          speed: 7.5, turn: 0.35, turretRate: 1.0, accel: 1.4, decel: 3.8,   // 发射架伺服 1.0rad/s(与开镜瞄具转速一致)
+          mob: { mass: 22000, power: 253538, eta: 0.80, mu: 0.50, muLat: 0.35, crr: 0.12, vCrawl: 1.0 } },   // FMTV M1140 6×6:机动与 PHL-11 同级
   artyPerTeam: 4,
+  // 防空载具(AA):红方=PGZ-95 自行高炮(2×双联25mm机炮+4×飞弩-6)/蓝方=AN/TWQ-1 复仇者(8×FIM-92 毒刺)。
+  // 机炮性能=直升机机炮(直-10 航炮口径:伤40/穿35/k4.5e-5/装填0.25s/初速920);
+  // 导弹规格走 HELI_MSL_SPEC 路由(红=ty90/蓝=aim92),装填 40s=AIM-92 同口径;发射点=发射架导弹弹头建模中心。
+  aa: { struct: 300, pen: 35, penKd: 4.5e-5, dmg: 40, reload: 0.125, shellSpeed: 920,   // PGZ-95 双联25mm×2 = 直升机机炮同性能(任务25:射速×2,0.25s→0.125s/点射)
+        speed: 12.0, turn: 0.55, turretRate: 1.047, accel: 2.0, decel: 4.5,             // 履带底盘 ~43km/h;炮塔伺服 60°/s(与直升机机炮塔同)
+        mob: { mass: 22500, power: 320000, eta: 0.80, mu: 0.62, muLat: 0.40, crr: 0.10, vCrawl: 1.0 },   // 履带自行高炮 ~22.5t(估)
+        hullArmor: { front: 20, side: 14, rear: 12, top: 10, bottom: 8, weak: 8 },
+        turretArmor: { front: 18, side: 12, rear: 10, top: 8, weak: 8 } },
+  aaE: { struct: 300, pen: 35, penKd: 4.5e-5, dmg: 40, reload: 0.25, shellSpeed: 920,   // 复仇者无机炮(机炮字段仅占位,武器分支永不消费)
+        speed: 17.0, turn: 0.75, turretRate: 1.047, accel: 2.4, decel: 5.0,              // M1097A2 悍马 4×4 ~61km/h(游戏平衡口径,实车 89km/h)
+        mob: { mass: 3900, power: 134000, eta: 0.80, mu: 0.55, muLat: 0.38, crr: 0.11, vCrawl: 1.0 },    // 战斗全重 3.90t/底特律V8 6.2L 135hp(公开数据)
+        hullArmor: { front: 12, side: 8, rear: 6, top: 6, bottom: 5, weak: 5 },
+        turretArmor: { front: 10, side: 8, rear: 6, top: 6, weak: 6 } },
+  aaPerTeam: 3,
   // 红方89式(用户标尺):全车装甲 30mm(未计倾角等效);单弹种(AP)——
   // AP:1700m/s,@2000m 穿 500mm → P0=594(k=8.6e-5);装填 6s。
   //   最大交火距离 400→700m(760m 视距内望远接敌)。炮塔转速 0.314rad/s(18°/s),无水平角限位。
   td: { struct: 300, pen: 594, penKd: 8.6e-5, dmg: 150, reload: 6.0, speed: 15.3, turn: 0.68, turretRate: 0.314,
         accel: 1.8, decel: 4.2, shellSpeed: 1700,   // 55km/h=15.3m/s;炮塔 18°/s=0.314rad/s
+        mob: { mass: 31000, power: 387764, eta: 0.80, mu: 0.68, muLat: 0.42, crr: 0.09, vCrawl: 1.0 },   // 89式:31t/520hp(估);轻车 Crr 低
         hullArmor:   { front: 30, side: 30, rear: 30, top: 30, bottom: 30, weak: 30 },        // 89式:全车 30mm(用户标尺,未计倾角等效)
         turretArmor: { front: 30, side: 30, rear: 30, top: 30, weak: 30 } },
   // 蓝方 M1A1 Abrams:独立主战坦克机动/装填/360°炮塔/复合装甲配置。
   // 数值按本游戏装甲尺度压缩,保留红方 89 式正面交战时可对抗性;并非把现实等效值原样塞入导致单边无敌。
   m1: { struct: 300, pen: 514, penKd: 7.2e-5, dmg: 130, reload: 7.0, speed: 19.4, turn: 0.52, turretRate: 0.698,
         accel: 2.4, decel: 5.5, shellSpeed: 1500,   // 70km/h=19.4m/s;炮塔 40°/s=0.698rad/s
+        mob: { mass: 61000, power: 1118550, eta: 0.80, mu: 0.70, muLat: 0.44, crr: 0.095, vCrawl: 1.0 },   // M1A1:61t/1500hp;功率重量比碾压,爬坡快
         // M1A1(用户标尺):首上240(用户改值,原复合等效375;浅带面)/首下物理400(glacis 槽,75° 几何折算)/侧80~150取115/后底20~30取25
         hullArmor:   { front: 240, glacis: 400, side: 115, rear: 25, top: 35, bottom: 25, weak: 60 },
         turretArmor: { front: 465, side: 76, rear: 65, top: 40, weak: 60 } },                            // 炮塔正面等效450~480取465/侧等效76/顶30~50取40
@@ -989,11 +1091,12 @@ var CONF = {
      机动:75km/h=20.8m/s;炮塔 30°/s=0.524rad/s。 */
   t99: { struct: 300, pen: 1090, penKd: 8.6e-5, dmg: 150, reload: 7.0, speed: 20.8, turn: 0.55, turretRate: 0.524,
         accel: 2.8, decel: 5.5, shellSpeed: 1750,
+        mob: { mass: 53000, power: 1118550, eta: 0.80, mu: 0.70, muLat: 0.44, crr: 0.09, vCrawl: 1.0 },   // 99式:53t/1500hp;27.8hp/t 全场最强
         hullArmor:   { front: 320, glacis: 362, side: 150, sideF: 300, sideR: 150, rear: 50, top: 20, bottom: 25, weak: 45 },
         turretArmor: { front: 700, side: 100, sideF: 200, sideR: 100, rear: 50, top: 30, weak: 45 } },
   /* AH-64d:按参考图外形比例建模(串列座舱/颚炮/肩置发动机/四叶旋翼+桅顶雷达/短翼双挂点(外火箭巢/内二联AIM-92型导弹)/后三点起落架)。
      轻装甲/航炮框架:M230 30mm 链炮射速每秒4发(0.25s)、穿深 35mm、炮塔转速 60°/s(1.0472rad/s),装甲同属纸甲档。 */
-  ah64: { struct: 230, pen: 35, penKd: 5.0e-5, dmg: 50, reload: 0.25, speed: 69.44, turn: 0.86, turretRate: 1.0472,
+  ah64: { struct: 230, pen: 35, penKd: 5.0e-5, dmg: 50, reload: 0.125, speed: 69.44, turn: 0.86, turretRate: 1.0472,   // 任务25:机炮射速×2(0.25s→0.125s)
           accel: 3.4, decel: 6.0, shellSpeed: 1000,
           hullArmor: { front: 30, side: 20, rear: 16, top: 13, bottom: 12, weak: 11 },
           turretArmor: { front: 24, side: 17, rear: 13, top: 11, weak: 11 } },
@@ -1001,7 +1104,7 @@ var CONF = {
   /* 直-10(WZ-10):按三视图比例建模。识别特征包括光电球塔、串列阶梯座舱、肩置双发上斜排气管、
      五叶主旋翼、无桅顶雷达、短翼四联装TY-90导弹、高置深截面尾梁、右侧剪刀尾桨和三点式起落架。
      23mm 链式航炮:射速每秒4发(0.25s)、穿深 35mm、炮塔转速 60°/s(1.0472rad/s);轻装甲纸甲档(复合材料机体)。 */
-  wz10: { struct: 240, pen: 35, penKd: 4.5e-5, dmg: 40, reload: 0.25, speed: 69.44, turn: 0.90, turretRate: 1.0472,
+  wz10: { struct: 240, pen: 35, penKd: 4.5e-5, dmg: 40, reload: 0.125, speed: 69.44, turn: 0.90, turretRate: 1.0472,   // 任务25:机炮射速×2(0.25s→0.125s)
           accel: 3.6, decel: 6.2, shellSpeed: 920,
           hullArmor: { front: 30, side: 20, rear: 15, top: 12, bottom: 11, weak: 10 },
           turretArmor: { front: 22, side: 16, rear: 12, top: 10, weak: 10 } },
@@ -1015,6 +1118,18 @@ var CONF = {
   bounds: 980,                                     // 可活动范围=地图边界内缩 20m(默认 2km 图初值;applyMapConfig 开局按所选边长重算)
   teamSize: 18, allySpawnZ: 800, enemySpawnZ: -800   // teamSize=蓝方 M60A1 默认数(红方 59 式走 tank59PerTeam;出生线=坡起点内 50m,默认 2km 图初值;applyMapConfig 开局重算)
 };
+
+/* ===== 坡度物理全局开关(2026-09-09 越野大改) ===== */
+var SIM_K = 1.0;   // 0=旧街机手感(applyMotion 走逐位旧代码分支),1=全物理;0~1 之间=阻力/侧滑项线性混合(手感调试用,不必精确)
+function mobDerived(mob) {   // 派生极限(惰性,每 mob 对象算一次):起步极限 tanθmax=μ−Crr(牵引=阻力的精确解)
+  if (!mob) return null;
+  if (mob._tanMax == null) {
+    mob._tanMax = Math.max(0.05, mob.mu - mob.crr);
+    mob._tanSide = Math.max(0.05, mob.muLat);
+    mob._gradeMax = Math.atan(mob._tanMax);
+  }
+  return mob;
+}
 
 /* 载具型号注册表(单一登记源):遭遇战编制菜单/开局生成/命名/重部署/AI 建档统一遍历本表——
    新增型号只需在此登记一个条目,重部署/编制菜单/UI/AI 全链路零改动自动生效:
@@ -1044,9 +1159,12 @@ var VEHICLE_KINDS = [
   { kind: 'wz10', def: 'wz10PerTeam', names: { ally: '直-10', enemy: '直-10' }, sides: { ally: true },
     respawnDelay: 12, spawnName: { ally: '直-10', enemy: '直-10' },
     modelKey: 'wz10', frontalArea: 3.20, nv: true, th: true },
-  { kind: 'arty', def: 'artyPerTeam', names: { ally: '火箭炮', enemy: '火箭炮' },
-    respawnDelay: 24, spawnName: { ally: '火箭炮', enemy: '火箭炮' }, aiAnchor: true,
-    modelKey: 'arty', frontalArea: 7.837, nv: true, th: false }
+  { kind: 'arty', def: 'artyPerTeam', names: { ally: 'PHL-11', enemy: 'M142' },
+    respawnDelay: 24, spawnName: { ally: 'PHL-11', enemy: 'M142' }, aiAnchor: true,
+    modelKey: 'arty', frontalArea: { ally: 5.90, enemy: 6.20 }, nv: true, th: false },
+  { kind: 'aa', def: 'aaPerTeam', names: { ally: 'PGZ-95', enemy: '复仇者' },
+    respawnDelay: 12, spawnName: { ally: 'PGZ-95 自行高炮', enemy: 'AN/TWQ-1 复仇者' }, aiAnchor: true,
+    modelKey: 'aa', frontalArea: { ally: 5.20, enemy: 4.10 }, nv: true, th: false }
 ];
 function vehicleKindEntry(kind) {                // 注册表条目查询(未知型号返回 null)
   for (var vki = 0; vki < VEHICLE_KINDS.length; vki++)
@@ -1156,6 +1274,7 @@ var BATTLE_SETUP = {
 function isM1Vehicle(t) { return !!t && t.kind === 'td' && t.team === 'enemy'; }
 function isTD89Vehicle(t) { return !!t && t.kind === 'td' && t.team === 'ally'; }
 function isHeliVehicle(t) { return !!t && (t.kind === 'ah64' || t.kind === 'wz10'); }
+function isAAVehicle(t) { return !!t && t.kind === 'aa'; }   // 防空载具:红=PGZ-95(雷达+机炮+导弹)/蓝=复仇者(纯导弹,无雷达)
 
 /* ===== 载具三大类标签系统(通用,便于扩展)=====
    三类:'ground'=地面载具(坦克 59/M60/99/M1A1 + 坦克歼击车 89式)、'arty'=炮兵(火箭炮)、'air'=空中载具(直升机)。
@@ -1276,17 +1395,24 @@ var HELI_COLL_VGATE = 3.0;    // 空中错身高度门 m(超过此高度差不�
 /* 最远作战距离=交火底线(本文件 maxCombatDist/combatFloorOf,按散布×目标正面面积解算)——
    AI 所有射程判断统一走交火底线(无静态常数档) */
 
+/* 火箭炮阵营规格路由:红方(ally)=PHL-11 / 蓝方(enemy)=M142。
+   参数可传载具对象或 team 字符串;未知/缺省回落红方规格。全项目读火箭炮规格一律走本函数。 */
+function artyConfOf(t) {
+  var team = (t && (t.team || (typeof t === 'string' ? t : null))) || 'ally';
+  return (team === 'enemy' && typeof CONF !== 'undefined' && CONF.artyE) ? CONF.artyE : CONF.arty;
+}
 /* ===== 模块部位名称统一表 =====
    同类载具使用完全相同的部位文本:主战坦克类(59式/M60A1/M1A1)与歼击车类(89式)
-   本质相同,全部走 tank 表(89式与坦克类统一);火箭炮保留轮组/火箭弹架/
-   发射架/定向管。 */
+   本质相同,全部走 tank 表(89式与坦克类统一);火箭炮:影响转动的模块=发射架下面的
+   转盘(turret);发射架/发射舱=弹药架(ammo,火箭弹放在那里,损毁走殉爆链);定向管=gun。 */
 var MOD_LABELS = {
-  tank: { trackL: '左履带', trackR: '右履带', engine: '发动机', ammo: '弹药架', fuel: '油箱', hull: '车体', turret: '炮塔', gun: '炮管' },
-  arty: { trackL: '左轮组', trackR: '右轮组', engine: '发动机', ammo: '火箭弹架', fuel: '油箱', hull: '车体', turret: '发射架', gun: '定向管' },
-  heli: { trackL: '螺旋桨', trackR: '螺旋桨', engine: '发动机', ammo: '供弹仓', fuel: '油箱', hull: '机身', turret: '机炮塔', gun: '航炮', tailRotor: '尾桨' }
+  tank: { trackL: '右履带', trackR: '左履带', engine: '发动机', ammo: '弹药架', fuel: '油箱', hull: '车体', turret: '炮塔', gun: '炮管' },
+  arty: { trackL: '右轮组', trackR: '左轮组', engine: '发动机', ammo: '弹药架', fuel: '油箱', hull: '车体', turret: '转盘', gun: '定向管' },
+  heli: { trackL: '螺旋桨', trackR: '螺旋桨', engine: '发动机', ammo: '供弹仓', fuel: '油箱', hull: '机身', turret: '机炮塔', gun: '航炮', tailRotor: '尾桨' },
+  aa: { trackL: '右侧行走装置', trackR: '左侧行走装置', engine: '发动机', ammo: '导弹发射架', fuel: '油箱', hull: '车体', turret: '炮塔', gun: '防空武器' }
 };
 function modLabel(kind, team, key) {
-  var cat = kind === 'arty' ? 'arty' : (isHeliVehicle({ kind: kind }) ? 'heli' : 'tank');
+  var cat = kind === 'arty' ? 'arty' : (kind === 'aa' ? 'aa' : (isHeliVehicle({ kind: kind }) ? 'heli' : 'tank'));
   return (MOD_LABELS[cat] && MOD_LABELS[cat][key]) || key;
 }
 
@@ -1466,7 +1592,10 @@ var killMsgOn = true;                                     // 击杀信息开关(
 var pointerLocked = false, lockAvailable = true;
 var keys = {};
 var scopeT = 0, scoped = false, scopeTick = 0;                     // 开镜状态
-var artyPitch = -0.04;                                             // 火箭炮炮镜视角俯仰(鼠标直驱,与坦克纵向同系数)——装定距离改由视线与地面交点反解,不再由鼠标直接改距离
+/* 火箭炮俯视火控:自由光标 NDC(−1..1,y 向上),mousemove/触屏写入,cameraUpdate 每帧反投影成地面装定点 */
+var artTopNX = 0, artTopNY = 0;
+/* 火箭炮俯视火控模式激活(Shift/双指开镜且座车为火箭炮):自由光标装定,指针锁定必须解除 */
+function artyTopActive() { return !!(player && player.alive && player.kind === 'arty' && scopeMode); }
 var scopeZoom = 1;                                        // 炮镜倍率(1.0 默认 ~ 5.0 最大;滚轮调节)
 var scopeMode = false;                                             // 炮镜开关(Shift 点按切换,非长按)
 var scopeInfo = { laser: Infinity, point: null, impDist: 0, tof: 0 };
@@ -1491,3 +1620,4 @@ function dbgFace(t, nWorld) {
   var d = nWorld.x * Math.sin(t.yaw) + nWorld.z * Math.cos(t.yaw);   // 前向 = (sin_yaw, 0, cos_yaw)
   return d > 0.5 ? 'front' : (d < -0.5 ? 'rear' : 'side');
 }
+/* (repair:杂散重复片段已删除) */

@@ -464,40 +464,77 @@ function _rebuildGrassTable() {
   if (_bsProviders && _bsProviders.grass) _bsProviders.grass.list = _grass;
   if (typeof bsMarkDirty === 'function') bsMarkDirty('grass');
 }
-function _sprStream(px, pz) {                 // 每帧调用:未跨区块零成本;跨区块才增量加载 / 卸载 + 重建
+var _sprGenQ = null;                       // ★任务27②:区块生成延迟队列 {tree:[key...],grass:[key...]}——跨区块不再单帧同步生成 15+5 块(每块 ~300-530 格地形采样)
+var _sprTblDirty = { tree: false, grass: false };   // 表重建延后标志:队列消费完再一次性重建(每帧最多重建一张表,树/草错帧)
+var _sprInitFill = false;                  // 开局首刷(reset 后第一次跨区块):同步全量生成,保持加载首帧观感不变
+var _SPR_GEN_BUDGET = 4;                   // 每帧生成区块预算(块):新区块恒落在渲染环外(树 3.5km 窗缘>3km 环、草 1km 窗缘>700m 环),数帧延迟不可见
+var _sprQXY = [0, 0];                      // 队列键解码 scratch
+function _sprQDecode(k, o) { o[0] = ((k / 4096) | 0) - 1024; o[1] = (k % 4096) - 1024; }
+function _sprStream(px, pz) {              // 每帧调用:未跨区块且无积压≈零成本;跨区块只入队/卸载,生成与表重建摊到后续帧
   if (!_treeMesh || typeof THREE === 'undefined') return;
   var C = _SPR_CHUNK, pbx = Math.floor(px / C), pbz = Math.floor(pz / C);
-  if (pbx === _sprLastBX && pbz === _sprLastBZ) return;
-  _sprLastBX = pbx; _sprLastBZ = pbz;
-  var tch = false, gch = false, bx, bz, k, drop = [], i;
-  for (bx = pbx - _SPR_TREE_CR; bx <= pbx + _SPR_TREE_CR; bx++)
-    for (bz = pbz - _SPR_TREE_CR; bz <= pbz + _SPR_TREE_CR; bz++) {
-      k = _sprKey(bx, bz); if (!_treeChunks.has(k)) { _treeChunks.set(k, _genTreeChunk(bx, bz)); tch = true; }
+  var bx, bz, k, i;
+  if (pbx !== _sprLastBX || pbz !== _sprLastBZ) {
+    _sprLastBX = pbx; _sprLastBZ = pbz;
+    if (!_sprGenQ) _sprGenQ = { tree: [], grass: [] };
+    var qt = _sprGenQ.tree, qg = _sprGenQ.grass, drop = [];
+    for (i = qt.length - 1; i >= 0; i--) { _sprQDecode(qt[i], _sprQXY); if (Math.abs(_sprQXY[0] - pbx) > _SPR_TREE_CR || Math.abs(_sprQXY[1] - pbz) > _SPR_TREE_CR) qt.splice(i, 1); }   // 新跨区块后已出窗的排队块直接除名
+    for (bx = pbx - _SPR_TREE_CR; bx <= pbx + _SPR_TREE_CR; bx++)
+      for (bz = pbz - _SPR_TREE_CR; bz <= pbz + _SPR_TREE_CR; bz++) {
+        k = _sprKey(bx, bz); if (_treeChunks.has(k)) continue;
+        var dup = false; for (i = 0; i < qt.length; i++) if (qt[i] === k) { dup = true; break; }
+        if (!dup) qt.push(k);
+      }
+    _treeChunks.forEach(function (a, key) {
+      var cbx = ((key / 4096) | 0) - 1024, cbz = (key % 4096) - 1024;
+      if (Math.abs(cbx - pbx) > _SPR_TREE_CR + 1 || Math.abs(cbz - pbz) > _SPR_TREE_CR + 1) drop.push(key);
+    });
+    for (i = 0; i < drop.length; i++) _treeChunks.delete(drop[i]);
+    if (drop.length) _sprTblDirty.tree = true;      // 卸载块 4km 外 > 3km 渲染环:表重建延后数帧不可见
+    drop.length = 0;
+    for (i = qg.length - 1; i >= 0; i--) { _sprQDecode(qg[i], _sprQXY); if (Math.abs(_sprQXY[0] - pbx) > _SPR_GRASS_CR || Math.abs(_sprQXY[1] - pbz) > _SPR_GRASS_CR) qg.splice(i, 1); }
+    for (bx = pbx - _SPR_GRASS_CR; bx <= pbx + _SPR_GRASS_CR; bx++)
+      for (bz = pbz - _SPR_GRASS_CR; bz <= pbz + _SPR_GRASS_CR; bz++) {
+        k = _sprKey(bx, bz); if (_grassChunks.has(k)) continue;
+        var dup2 = false; for (i = 0; i < qg.length; i++) if (qg[i] === k) { dup2 = true; break; }
+        if (!dup2) qg.push(k);
+      }
+    _grassChunks.forEach(function (a, key) {
+      var cbx = ((key / 4096) | 0) - 1024, cbz = (key % 4096) - 1024;
+      if (Math.abs(cbx - pbx) > _SPR_GRASS_CR + 1 || Math.abs(cbz - pbz) > _SPR_GRASS_CR + 1) drop.push(key);
+    });
+    for (i = 0; i < drop.length; i++) _grassChunks.delete(drop[i]);
+    if (drop.length) _sprTblDirty.grass = true;
+    drop.length = 0;
+  }
+  if (_sprGenQ) {                                    // 队列消费(每帧,含未跨区块帧)
+    var qt2 = _sprGenQ.tree, qg2 = _sprGenQ.grass;
+    if (qt2.length || qg2.length) {
+      if (_sprInitFill) {                            // 开局首刷:同步全量(与旧加载行为一致,首帧即满窗)
+        while (qt2.length) { k = qt2.shift(); _sprQDecode(k, _sprQXY); _treeChunks.set(k, _genTreeChunk(_sprQXY[0], _sprQXY[1])); }
+        while (qg2.length) { k = qg2.shift(); _sprQDecode(k, _sprQXY); _grassChunks.set(k, _genGrassChunk(_sprQXY[0], _sprQXY[1])); }
+        _sprInitFill = false;
+        _rebuildTreeTable(); _rebuildGrassTable();
+        return;
+      }
+      var genN = 0;
+      while (genN < _SPR_GEN_BUDGET && qt2.length) { k = qt2.shift(); _sprQDecode(k, _sprQXY); _treeChunks.set(k, _genTreeChunk(_sprQXY[0], _sprQXY[1])); _sprTblDirty.tree = true; genN++; }
+      while (genN < _SPR_GEN_BUDGET && qg2.length) { k = qg2.shift(); _sprQDecode(k, _sprQXY); _grassChunks.set(k, _genGrassChunk(_sprQXY[0], _sprQXY[1])); _sprTblDirty.grass = true; genN++; }
+    } else if (_sprTblDirty.tree) {                  // 消费完毕→每帧至多重建一张表(树先草后,两张全表重建不同帧叠加)
+      _rebuildTreeTable(); _sprTblDirty.tree = false;
+    } else if (_sprTblDirty.grass) {
+      _rebuildGrassTable(); _sprTblDirty.grass = false;
     }
-  _treeChunks.forEach(function (a, key) {
-    var cbx = ((key / 4096) | 0) - 1024, cbz = (key % 4096) - 1024;
-    if (Math.abs(cbx - pbx) > _SPR_TREE_CR + 1 || Math.abs(cbz - pbz) > _SPR_TREE_CR + 1) drop.push(key);
-  });
-  for (i = 0; i < drop.length; i++) { _treeChunks.delete(drop[i]); tch = true; }
-  drop.length = 0;
-  for (bx = pbx - _SPR_GRASS_CR; bx <= pbx + _SPR_GRASS_CR; bx++)
-    for (bz = pbz - _SPR_GRASS_CR; bz <= pbz + _SPR_GRASS_CR; bz++) {
-      k = _sprKey(bx, bz); if (!_grassChunks.has(k)) { _grassChunks.set(k, _genGrassChunk(bx, bz)); gch = true; }
-    }
-  _grassChunks.forEach(function (a, key) {
-    var cbx = ((key / 4096) | 0) - 1024, cbz = (key % 4096) - 1024;
-    if (Math.abs(cbx - pbx) > _SPR_GRASS_CR + 1 || Math.abs(cbz - pbz) > _SPR_GRASS_CR + 1) drop.push(key);
-  });
-  for (i = 0; i < drop.length; i++) { _grassChunks.delete(drop[i]); gch = true; }
-  if (tch) _rebuildTreeTable();
-  if (gch) _rebuildGrassTable();
+  }
 }
 function _sprStreamReset() {                  // 开局重建:清空流式与账本(新地图=新种子,旧 sid 无意义)
   _treeChunks.clear(); _grassChunks.clear();
   _spriteDelta.tree.clear(); _spriteDelta.grass.clear(); _stumpSids.clear();
   _sprLastBX = 1e9; _sprLastBZ = 1e9;
+  if (_sprGenQ) { _sprGenQ.tree.length = 0; _sprGenQ.grass.length = 0; }
+  _sprTblDirty.tree = false; _sprTblDirty.grass = false;
+  _sprInitFill = true;                        // ★任务27②:新局首刷=开局同步全量生成
 }
-
 /* ===== 2×2 精灵图集共用工装(树 / 树桩 / 草 三张图集结构同构)=====
    流程一致:方形 POT 画布 → 四格逐格裁剪绘制 → 瓦楞纸纹压色收尾 → Clamp 贴图。
    逐格裁剪不可省:圆头笔帽与枝桠会越过格边界渗进相邻格,采样时表现为悬浮残片。 */
@@ -525,6 +562,11 @@ function _sprPaperTex(cv, g, y0, step, line, wash) {
   return t;
 }
 
+function _sprShadowBand(g, x0, yBot, w, h) {   // FX1:预制阴影带(格底横向接地阴影)
+  var gr = g.createLinearGradient(0, yBot - h, 0, yBot);
+  gr.addColorStop(0, 'rgba(8,8,6,0)'); gr.addColorStop(1, 'rgba(8,8,6,0.40)');
+  g.fillStyle = gr; g.fillRect(x0, yBot - h, w, h);
+}
 function _treeMakeTex() {
   if (_treeTex) return _treeTex;
   var _a = _sprAtlasCanvas(512); if (!_a) return null;
@@ -535,71 +577,63 @@ function _treeMakeTex() {
   function woodGrain(x0, y0, x1, y1, col) {  // 干身竖向木纹(手绘感短笔触)
     g.strokeStyle = col; g.lineWidth = 1.6; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
   }
-  function broad(cxp, gY, green, greenD, bark, accent) {  // 圆冠阔叶 · 军事漫画版
-    // —— 墨线冠(整体放大一圈,与原版同法) ——
+  function broad(cxp, gY, green, greenD, bark, accent, light, hot) {  // FX1:圆冠阔叶·7簇错层+透空+树皮纹
+    var INK = '#16130c', i;
+    g.fillStyle = 'rgba(0,0,0,0.30)'; g.beginPath(); g.ellipse(cxp, gY + 3, 34, 8, 0, 0, TAU); g.fill();
+    g.fillStyle = INK; g.beginPath(); g.moveTo(cxp - 11, gY); g.lineTo(cxp - 7, gY - 72); g.lineTo(cxp + 7, gY - 72); g.lineTo(cxp + 11, gY); g.closePath(); g.fill();
+    g.fillStyle = bark; g.beginPath(); g.moveTo(cxp - 7, gY); g.lineTo(cxp - 4.5, gY - 70); g.lineTo(cxp + 4.5, gY - 70); g.lineTo(cxp + 7, gY); g.closePath(); g.fill();
+    g.fillStyle = 'rgba(0,0,0,0.28)'; g.beginPath(); g.moveTo(cxp + 1, gY); g.lineTo(cxp + 4.5, gY - 70); g.lineTo(cxp + 7, gY - 70); g.lineTo(cxp + 7, gY); g.closePath(); g.fill();
+    g.strokeStyle = 'rgba(30,20,8,0.4)'; g.lineWidth = 1.2;
+    g.beginPath(); g.moveTo(cxp - 3, gY - 64); g.lineTo(cxp - 3.5, gY - 12); g.stroke();
+    g.beginPath(); g.moveTo(cxp + 3, gY - 66); g.lineTo(cxp + 3.5, gY - 16); g.stroke();
+    g.fillStyle = bark; g.beginPath(); g.moveTo(cxp - 12, gY); g.lineTo(cxp - 5, gY - 10); g.lineTo(cxp - 2, gY); g.closePath(); g.fill();
+    g.beginPath(); g.moveTo(cxp + 12, gY); g.lineTo(cxp + 5, gY - 10); g.lineTo(cxp + 2, gY); g.closePath(); g.fill();
+    var cl = [[0, -148, 50], [-30, -118, 38], [30, -118, 38], [0, -186, 34], [-48, -146, 28], [48, -146, 28], [0, -100, 32]];
+    g.fillStyle = INK; for (i = 0; i < cl.length; i++) { g.beginPath(); g.arc(cxp + cl[i][0], gY + cl[i][1], cl[i][2] + 5, 0, TAU); g.fill(); }
+    g.fillStyle = greenD; for (i = 0; i < cl.length; i++) { g.beginPath(); g.arc(cxp + cl[i][0], gY + cl[i][1], cl[i][2], 0, TAU); g.fill(); }
+    g.fillStyle = green; for (i = 0; i < cl.length; i++) { g.beginPath(); g.arc(cxp + cl[i][0] - 4, gY + cl[i][1] - 6, cl[i][2] - 5, 0, TAU); g.fill(); }
+    var rnd = mulberry32(cxp * 13 + gY);
+    g.fillStyle = light;
+    for (i = 0; i < 10; i++) { g.beginPath(); g.arc(cxp - 40 + rnd() * 72, gY - 196 + rnd() * 66, 3.5 + rnd() * 4, 0, TAU); g.fill(); }
     g.fillStyle = INK;
-    g.fillRect(cxp - 15, gY - 88, 30, 92);
-    circ(cxp, gY - 150, 54); circ(cxp - 26, gY - 118, 40); circ(cxp + 26, gY - 118, 40); circ(cxp, gY - 192, 40);
-    // —— 树干:基底 + 侧影 + 木纹线 + 节疤 ——
-    g.fillStyle = bark; g.fillRect(cxp - 9, gY - 86, 18, 86);
-    g.fillStyle = 'rgba(0,0,0,0.26)'; g.fillRect(cxp + 1, gY - 86, 8, 86);
-    woodGrain(cxp - 5, gY - 78, cxp - 5, gY - 14, 'rgba(30,20,8,0.35)');
-    woodGrain(cxp + 4, gY - 80, cxp + 4, gY - 18, 'rgba(0,0,0,0.22)');
-    g.fillStyle = 'rgba(24,16,6,0.5)'; circ(cxp + 3, gY - 58, 1.7);
-    // —— 树冠色阶:主色 + 暗部 + 叶簇间隙(以 INK 小洞模拟叶间透空)→ 平涂硬边 ——
-    g.fillStyle = green;
-    circ(cxp, gY - 150, 48); circ(cxp - 26, gY - 118, 34); circ(cxp + 26, gY - 118, 34); circ(cxp, gY - 192, 34);
-    g.fillStyle = greenD;                      // 底部阴影区(向深灰绿,不向艳色)
-    circ(cxp - 30, gY - 108, 27); circ(cxp + 28, gY - 110, 25); circ(cxp, gY - 122, 30);
-    circ(cxp, gY - 92, 15);
-    g.fillStyle = 'rgba(0,0,0,0.16)';          // 叶簇间隙:墨点=透空感
-    circ(cxp - 38, gY - 128, 6); circ(cxp + 40, gY - 130, 5); circ(cxp - 22, gY - 196, 4.5);
-    circ(cxp + 30, gY - 178, 4); circ(cxp - 8, gY - 170, 4);
-    g.fillStyle = accent;                      // 顶部受光簇(低饱和浅橄榄)
-    circ(cxp - 18, gY - 182, 12); circ(cxp - 30, gY - 158, 8); circ(cxp + 8, gY - 190, 7);
+    for (i = 0; i < 9; i++) { g.globalAlpha = .8; g.beginPath(); g.arc(cxp - 44 + rnd() * 88, gY - 186 + rnd() * 80, 2.5 + rnd() * 3.5, 0, TAU); g.fill(); }
+    g.globalAlpha = 1;
+    g.fillStyle = hot;
+    g.beginPath(); g.arc(cxp - 16, gY - 178, 10, 0, TAU); g.fill();
+    g.beginPath(); g.arc(cxp + 4, gY - 190, 7, 0, TAU); g.fill();
+    g.beginPath(); g.arc(cxp - 28, gY - 156, 6, 0, TAU); g.fill();
   }
-  function conif(cxp, gY) {                    // 针叶三层 · 军漫硬边 + 阴影侧排线感
-    g.fillStyle = INK; g.fillRect(cxp - 11, gY - 56, 22, 60);
-    g.fillStyle = '#4e4436'; g.fillRect(cxp - 6, gY - 54, 12, 54);   // 深松干
-    woodGrain(cxp, gY - 50, cxp, gY - 6, 'rgba(20,12,4,0.4)');
-    function tri(yb, yt, hw, col) { g.fillStyle = col; g.beginPath(); g.moveTo(cxp, yt); g.lineTo(cxp - hw, yb); g.lineTo(cxp + hw, yb); g.closePath(); g.fill(); }
-    tri(gY - 40, gY - 120, 66, INK); tri(gY - 95, gY - 170, 56, INK); tri(gY - 140, gY - 214, 44, INK);
-    tri(gY - 46, gY - 116, 58, '#263d2d'); tri(gY - 99, gY - 165, 49, '#324c3a'); tri(gY - 143, gY - 208, 38, '#425e4b');
-    g.fillStyle = 'rgba(0,0,0,0.20)';          // 背光侧(右下):平涂硬阴影
-    g.beginPath(); g.moveTo(cxp, gY - 116); g.lineTo(cxp, gY - 46); g.lineTo(cxp - 40, gY - 46); g.closePath(); g.fill();
-    g.fillStyle = 'rgba(0,0,0,0.13)'; g.beginPath(); g.moveTo(cxp, gY - 46); g.lineTo(cxp, gY - 40); g.lineTo(cxp - 58, gY - 46); g.closePath(); g.fill();
-    // 右下斜排线(近漫画 kakeami 的廉价实现:逐条短斜线)
-    g.strokeStyle = 'rgba(255,255,255,0.08)'; g.lineWidth = 1.4;
-    for (var k = 1; k <= 4; k++) { var yy = gY - 40 - k * 17; g.beginPath(); g.moveTo(cxp + 2, yy); g.lineTo(cxp + 2 + (50 - k * 11), yy + 12); g.stroke(); }
+  function conif(cxp, gY) {                    // FX1:针叶五层塔枝+顶刺
+    var INK = '#16130c', i;
+    g.fillStyle = 'rgba(0,0,0,0.30)'; g.beginPath(); g.ellipse(cxp, gY + 3, 30, 8, 0, 0, TAU); g.fill();
+    g.fillStyle = '#4d3b2a'; g.fillRect(cxp - 5, gY - 34, 10, 34);
+    for (i = 0; i < 5; i++) { var y = gY - 28 - i * 30, hw = 54 - i * 9.5;
+      g.fillStyle = INK; g.beginPath(); g.moveTo(cxp - hw - 5, y); g.lineTo(cxp, y - 34); g.lineTo(cxp + hw + 5, y); g.closePath(); g.fill();
+      g.fillStyle = i % 2 ? '#2f4226' : '#35492b'; g.beginPath(); g.moveTo(cxp - hw, y); g.lineTo(cxp, y - 30); g.lineTo(cxp + hw, y); g.closePath(); g.fill();
+      g.strokeStyle = '#5c7a4c'; g.lineWidth = 3; g.beginPath(); g.moveTo(cxp - hw + 6, y - 3); g.lineTo(cxp - 2, y - 27); g.stroke(); }
+    g.fillStyle = INK; g.beginPath(); g.moveTo(cxp - 7, gY - 178); g.lineTo(cxp, gY - 206); g.lineTo(cxp + 7, gY - 178); g.closePath(); g.fill();
+    g.fillStyle = '#35492b'; g.beginPath(); g.moveTo(cxp - 4, gY - 180); g.lineTo(cxp, gY - 200); g.lineTo(cxp + 4, gY - 180); g.closePath(); g.fill();
   }
-  function dead(cxp, gY) {                     // 焦木枯树 · 战场枯木(墨线 + 焦枝 + 断口亮木)
-    function limb(x0, y0, x1, y1, wO, wC) {
-      g.strokeStyle = INK; g.lineWidth = wO; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
-      g.strokeStyle = '#524d46'; g.lineWidth = wC; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
-      g.strokeStyle = 'rgba(205,190,150,0.10)'; g.lineWidth = Math.max(1.2, wC * 0.22);
-      g.beginPath(); g.moveTo(x0 - wC * 0.14, y0 - wC * 0.14); g.lineTo(x1 - wC * 0.14, y1 - wC * 0.14); g.stroke();
-    }
-    limb(cxp, gY, cxp, gY - 150, 26, 15);
-    limb(cxp, gY - 90, cxp - 46, gY - 150, 16, 8); limb(cxp, gY - 110, cxp + 44, gY - 160, 16, 8);
-    limb(cxp, gY - 140, cxp - 30, gY - 196, 12, 5); limb(cxp, gY - 140, cxp + 26, gY - 192, 12, 5);
-    limb(cxp - 46, gY - 150, cxp - 64, gY - 182, 9, 4); limb(cxp + 44, gY - 160, cxp + 62, gY - 190, 9, 4);
-    // 焦炭段:右侧枝干中段叠焦黑(断/战损感;压 α 保持枝形可读)
-    g.strokeStyle = 'rgba(30,25,16,0.35)'; g.lineWidth = 8;
-    g.beginPath(); g.moveTo(cxp + 6, gY - 120); g.lineTo(cxp + 30, gY - 152); g.stroke();
-    g.lineWidth = 5; g.beginPath(); g.moveTo(cxp - 2, gY - 66); g.lineTo(cxp - 30, gY - 112); g.stroke();
-    // 断口亮木(左上枝端):炮击/风折断面
-    g.fillStyle = INK; circ(cxp - 62, gY - 186, 6.5);
-    g.fillStyle = '#a99c7e'; circ(cxp - 62, gY - 186, 4);
-    // 焦痕斑(干身)
-    g.fillStyle = 'rgba(24,20,13,0.5)';
-    g.beginPath(); g.ellipse(cxp + 4, gY - 26, 7, 9, 0.4, 0, TAU); g.fill();
+  function dead(cxp, gY) {                     // FX1:焦木·断顶+锯齿枝+焦黑渐变
+    var INK = '#16130c', i;
+    g.fillStyle = 'rgba(0,0,0,0.30)'; g.beginPath(); g.ellipse(cxp, gY + 3, 26, 7, 0, 0, TAU); g.fill();
+    g.fillStyle = INK; g.beginPath(); g.moveTo(cxp - 9, gY); g.lineTo(cxp - 5, gY - 120); g.lineTo(cxp + 5, gY - 120); g.lineTo(cxp + 9, gY); g.closePath(); g.fill();
+    g.fillStyle = '#3a2c1e'; g.beginPath(); g.moveTo(cxp - 6, gY); g.lineTo(cxp - 3, gY - 118); g.lineTo(cxp + 3, gY - 118); g.lineTo(cxp + 6, gY); g.closePath(); g.fill();
+    var sc = g.createLinearGradient(0, gY - 40, 0, gY); sc.addColorStop(0, 'rgba(10,8,6,0)'); sc.addColorStop(1, 'rgba(10,8,6,0.75)');
+    g.fillStyle = sc; g.fillRect(cxp - 9, gY - 40, 18, 40);
+    g.fillStyle = INK; g.beginPath(); g.moveTo(cxp - 6, gY - 118); g.lineTo(cxp - 2, gY - 132); g.lineTo(cxp + 1, gY - 122); g.lineTo(cxp + 4, gY - 134); g.lineTo(cxp + 6, gY - 118); g.closePath(); g.fill();
+    var br = [[-1, -108, -46, -150, 6], [-1, -92, 40, -128, 5], [-1, -76, -34, -96, 4], [-1, -60, 30, -70, 4], [-1, -44, -24, -52, 3], [-1, -100, 10, -170, 3]];
+    for (i = 0; i < br.length; i++) { var b = br[i], x0 = cxp + b[0], y0 = gY + b[1], x1 = cxp + b[2], y1 = gY + b[3], w = b[4];
+      g.strokeStyle = INK; g.lineWidth = w + 2.5; g.beginPath(); g.moveTo(x0, y0); g.lineTo((x0 + x1) / 2 + (i % 2 ? 4 : -4), (y0 + y1) / 2); g.lineTo(x1, y1); g.stroke();
+      g.strokeStyle = '#3a2c1e'; g.lineWidth = w; g.beginPath(); g.moveTo(x0, y0); g.lineTo((x0 + x1) / 2 + (i % 2 ? 4 : -4), (y0 + y1) / 2); g.lineTo(x1, y1); g.stroke(); }
+    g.fillStyle = '#241a10'; g.fillRect(cxp - 40, gY - 3, 22, 4); g.fillRect(cxp + 22, gY - 2, 16, 3);
   }
   function inCell(cx0, cy0, fn) { _sprCell(g, 256, cx0, cy0, fn); }
   // 配色 4 格对应生境同前(0/1 阔叶、2 针叶、3 焦木);色板=军事漫画(低饱和橄榄/卡其/焦灰褐)
-  inCell(0, 256, function () { broad(128, 512, '#5d704f', '#364729', '#665443', '#6e8062'); });    // 阔叶·军绿
-  inCell(256, 256, function () { broad(384, 512, '#626946', '#3c4224', '#6b5d4b', '#757b5c'); });  // 阔叶·卡其
-  inCell(0, 0, function () { conif(128, 256); });                                                  // 针叶·深松
-  inCell(256, 0, function () { dead(384, 256); });                                                 // 焦木
+  inCell(0, 256, function () { broad(128, 512, '#5d704f', '#364729', '#665443', '#6e8062', '#7d9070', '#a8b394'); _sprShadowBand(g, 0, 512, 256, 30); });    // 阔叶·军绿
+  inCell(256, 256, function () { broad(384, 512, '#626946', '#3c4224', '#6b5d4b', '#757b5c', '#9a9468', '#c2b984'); _sprShadowBand(g, 256, 512, 256, 30); });  // 阔叶·卡其
+  inCell(0, 0, function () { conif(128, 256); _sprShadowBand(g, 0, 256, 256, 30); });                                                  // 针叶·深松
+  inCell(256, 0, function () { dead(384, 256); _sprShadowBand(g, 256, 256, 256, 30); });                                                 // 焦木
   // ★v2 纸张底纹:暖黄 wash 撤除 → 中性印刷灰纹(漫画原稿纸/印刷网点感,强度更低)
   _treeTex = _sprPaperTex(cv, g, 6, 7, 'rgba(56,50,38,0.10)', 'rgba(120,112,88,0.03)');
   return _treeTex;
@@ -763,10 +797,10 @@ function _stumpMakeTex() {
     g.fillStyle = ringC; g.beginPath(); g.arc(cxp, gY - h + 4, 1.6, 0, TAU); g.fill();
   }
   // 4 格与树图集配色对应:0/1 阔叶(军褐)、2 针叶(深松褐)、3 焦枯(灰褐+碳化)
-  inCell(0, 128, function () { stump(64, 254, '#16130c', '#665545', '#423326', '#b8a588', false); });
-  inCell(128, 128, function () { stump(192, 254, '#16130c', '#6b624d', '#473e2c', '#b2a788', false); });
-  inCell(0, 0, function () { stump(64, 126, '#16130c', '#5c493b', '#3d2d22', '#ad957d', false); });
-  inCell(128, 0, function () { stump(192, 126, '#16130c', '#57524e', '#423e39', '#a39c93', true); });
+  inCell(0, 128, function () { stump(64, 254, '#16130c', '#665545', '#423326', '#b8a588', false); _sprShadowBand(g, 0, 256, 128, 18); });
+  inCell(128, 128, function () { stump(192, 254, '#16130c', '#6b624d', '#473e2c', '#b2a788', false); _sprShadowBand(g, 128, 256, 128, 18); });
+  inCell(0, 0, function () { stump(64, 126, '#16130c', '#5c493b', '#3d2d22', '#ad957d', false); _sprShadowBand(g, 0, 128, 128, 18); });
+  inCell(128, 0, function () { stump(192, 126, '#16130c', '#57524e', '#423e39', '#a39c93', true); _sprShadowBand(g, 128, 128, 128, 18); });
   _stumpTex = _sprPaperTex(cv, g, 4, 6, 'rgba(56,50,38,0.10)', 'rgba(120,112,88,0.03)');
   return _stumpTex;
 }
@@ -857,55 +891,45 @@ function _grassMakeTex() {
     g.quadraticCurveTo(cxm, (gY + tipy) / 2, x0 + wBase / 2, gY);
     g.closePath(); g.fill();
   }
-  function tuft(cxp, gY, col, colD, colO) {                 // 草簇(军事漫画:刃直、簇底收拢)
-    // 簇根聚拢阴影(新):让草"从土里长出来"
-    g.fillStyle = 'rgba(10,12,6,0.20)';
-    g.beginPath(); g.ellipse(cxp, gY - 4, 46, 10, 0, 0, TAU); g.fill();
-    blade(cxp - 30, gY, cxp - 54, gY - 150, 20, colD, colO);
-    blade(cxp + 30, gY, cxp + 56, gY - 146, 20, colD, colO);
-    blade(cxp - 14, gY, cxp - 24, gY - 196, 22, col, colO);
-    blade(cxp + 16, gY, cxp + 30, gY - 190, 22, col, colO);
-    blade(cxp, gY, cxp + 2, gY - 214, 24, col, colO);
-    // 少量枯尖/叶脉(手绘感)
-    g.strokeStyle = 'rgba(0,0,0,0.18)'; g.lineWidth = 1.4;
-    g.beginPath(); g.moveTo(cxp + 14, gY - 60); g.lineTo(cxp + 22, gY - 170); g.stroke();
-    g.strokeStyle = 'rgba(240,235,190,0.12)';
-    g.beginPath(); g.moveTo(cxp - 12, gY - 50); g.lineTo(cxp - 20, gY - 180); g.stroke();
+  function tuft(cxp, gY, col, colD, colO) {                 // FX1:草簇·7弧刃+根影+枯尖+叶脉
+    g.fillStyle = 'rgba(10,12,6,0.30)'; g.beginPath(); g.ellipse(cxp, gY - 2, 40, 10, 0, 0, TAU); g.fill();
+    var bl = [[-26, -150, 17], [-13, -196, 19], [0, -214, 21], [13, -190, 19], [26, -146, 17], [-38, -110, 15], [38, -106, 15]];
+    for (var i = 0; i < bl.length; i++) { var b = bl[i]; blade(cxp + b[0] * .4, gY, cxp + b[0], gY + b[1], b[2], i % 2 ? colD : col, colO); }
+    g.strokeStyle = 'rgba(0,0,0,0.20)'; g.lineWidth = 1.3;
+    g.beginPath(); g.moveTo(cxp + 12, gY - 50); g.lineTo(cxp + 20, gY - 165); g.stroke();
+    g.beginPath(); g.moveTo(cxp - 10, gY - 45); g.lineTo(cxp - 18, gY - 175); g.stroke();
+    g.fillStyle = 'rgba(240,235,190,0.9)';
+    g.beginPath(); g.moveTo(cxp - 26, gY - 150); g.lineTo(cxp - 30, gY - 168); g.lineTo(cxp - 22, gY - 162); g.closePath(); g.fill();
+    g.beginPath(); g.moveTo(cxp + 26, gY - 146); g.lineTo(cxp + 30, gY - 164); g.lineTo(cxp + 22, gY - 158); g.closePath(); g.fill();
+    g.fillStyle = colO;
+    var rnd = mulberry32(cxp + gY); for (i = 0; i < 5; i++) { g.beginPath(); g.arc(cxp - 30 + rnd() * 60, gY - 190 - rnd() * 30, 2, 0, TAU); g.fill(); }
   }
-  function flowers(cxp, gY, col, colD, colO, petal, core) { // 战地野花(低饱和罂粟)
+  function flowers(cxp, gY, col, colD, colO, petal, core) { // FX1:簇+5罂粟(墨盘+瓣+受光弧+芯)
     tuft(cxp, gY, col, colD, colO);
-    var spots = [[cxp - 40, gY - 150], [cxp + 44, gY - 140], [cxp - 6, gY - 205], [cxp + 22, gY - 178], [cxp - 26, gY - 120]];
-    for (var i = 0; i < spots.length; i++) {
-      var sx = spots[i][0], sy = spots[i][1];
-      g.fillStyle = '#211a10'; g.beginPath(); g.arc(sx, sy, 12.5, 0, TAU); g.fill();
+    var spots = [[cxp - 40, gY - 150], [cxp + 44, gY - 140], [cxp - 6, gY - 205], [cxp + 22, gY - 178], [cxp - 28, gY - 168]];
+    for (var i = 0; i < spots.length; i++) { var sx = spots[i][0], sy = spots[i][1];
+      g.fillStyle = '#211a10'; g.beginPath(); g.arc(sx, sy, 11.5, 0, TAU); g.fill();
       g.fillStyle = petal;
-      for (var k = 0; k < 5; k++) { var a = k / 5 * TAU + i; g.beginPath(); g.arc(sx + Math.cos(a) * 6.5, sy + Math.sin(a) * 6.5, 5.2, 0, TAU); g.fill(); }
-      g.fillStyle = 'rgba(255,255,255,0.10)';               // 瓣顶受光(灰白,不提高饱和)
-      for (var k2 = 0; k2 < 2; k2++) { var a2 = (k2 * 3 + 1) / 5 * TAU + i; g.beginPath(); g.arc(sx + Math.cos(a2) * 6.5, sy + Math.sin(a2) * 6.5, 2.2, 0, TAU); g.fill(); }
-      g.fillStyle = core; g.beginPath(); g.arc(sx, sy, 4.6, 0, TAU); g.fill();   // 深色花芯(罂粟特征)
-    }
+      for (var k = 0; k < 5; k++) { var a = k / 5 * TAU + .4; g.beginPath(); g.arc(sx + Math.cos(a) * 6, sy + Math.sin(a) * 6, 6.5, 0, TAU); g.fill(); }
+      g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 2; g.beginPath(); g.arc(sx, sy, 8, Math.PI * 1.1, Math.PI * 1.6); g.stroke();
+      g.fillStyle = core; g.beginPath(); g.arc(sx, sy, 4.2, 0, TAU); g.fill(); }
   }
-  function fern(cxp, gY, col, colD, colO) {                 // 蕨(军绿)
-    function frond(rootx, tipx, tipy, side) {
-      blade(rootx, gY, tipx, tipy, 16, colD, colO);
-      var n = 6;
-      for (var i = 1; i <= n; i++) {
-        var f = i / (n + 1), bx = rootx + (tipx - rootx) * f, by = gY + (tipy - gY) * f;
-        var ll = 26 * (1 - f) + 8;
-        g.strokeStyle = colO; g.lineWidth = 7; g.beginPath(); g.moveTo(bx, by); g.lineTo(bx - ll, by - ll * 0.5); g.stroke();
-        g.beginPath(); g.moveTo(bx, by); g.lineTo(bx + ll, by - ll * 0.5); g.stroke();
-        g.strokeStyle = col; g.lineWidth = 4; g.beginPath(); g.moveTo(bx, by); g.lineTo(bx - ll, by - ll * 0.5); g.stroke();
-        g.beginPath(); g.moveTo(bx, by); g.lineTo(bx + ll, by - ll * 0.5); g.stroke();
-      }
-    }
-    frond(cxp - 24, cxp - 40, gY - 176, -1);
-    frond(cxp + 24, cxp + 42, gY - 170, 1);
-    frond(cxp, cxp + 4, gY - 210, 0);
+  function fern(cxp, gY, col, colD, colO) {                 // FX1:蕨·5羽叶+渐细小叶
+    g.fillStyle = 'rgba(10,12,6,0.30)'; g.beginPath(); g.ellipse(cxp, gY - 2, 36, 9, 0, 0, TAU); g.fill();
+    var fr = [[-52, -120], [-26, -168], [0, -184], [26, -168], [52, -120]];
+    for (var f = 0; f < fr.length; f++) { var tx = cxp + fr[f][0], ty = gY + fr[f][1];
+      g.strokeStyle = colO; g.lineWidth = 6; g.beginPath(); g.moveTo(cxp, gY); g.quadraticCurveTo((cxp + tx) / 2, gY - 20, tx, ty); g.stroke();
+      g.strokeStyle = colD; g.lineWidth = 3.5; g.beginPath(); g.moveTo(cxp, gY); g.quadraticCurveTo((cxp + tx) / 2, gY - 20, tx, ty); g.stroke();
+      for (var i = 1; i <= 6; i++) { var k = i / 7, bx = cxp + (tx - cxp) * k, by = gY + (ty - gY) * k - 8 * k, ll = 24 * (1 - k) + 7;
+        g.strokeStyle = colO; g.lineWidth = 5.5; g.beginPath(); g.moveTo(bx, by); g.lineTo(bx - ll, by - ll * .45); g.stroke();
+        g.beginPath(); g.moveTo(bx, by); g.lineTo(bx + ll, by - ll * .45); g.stroke();
+        g.strokeStyle = col; g.lineWidth = 3; g.beginPath(); g.moveTo(bx, by); g.lineTo(bx - ll, by - ll * .45); g.stroke();
+        g.beginPath(); g.moveTo(bx, by); g.lineTo(bx + ll, by - ll * .45); g.stroke(); } }
   }
-  inCell(0, 256, function () { tuft(128, 508, '#567043', '#334724', '#192113'); });     // 军绿草簇
-  inCell(256, 256, function () { flowers(384, 508, '#5f6b47', '#3c4529', '#1a2012', '#853d38', '#291e12'); }); // 罂粟
-  inCell(0, 0, function () { fern(128, 252, '#4c7058', '#294734', '#111a15'); });       // 蕨
-  inCell(256, 0, function () { tuft(384, 252, '#80794f', '#544f2a', '#262417'); });     // 焦枯草
+  inCell(0, 256, function () { tuft(128, 508, '#567043', '#334724', '#192113'); _sprShadowBand(g, 0, 512, 256, 30); });     // 军绿草簇
+  inCell(256, 256, function () { flowers(384, 508, '#5f6b47', '#3c4529', '#1a2012', '#853d38', '#291e12'); _sprShadowBand(g, 256, 512, 256, 30); }); // 罂粟
+  inCell(0, 0, function () { fern(128, 252, '#4c7058', '#294734', '#111a15'); _sprShadowBand(g, 0, 256, 256, 30); });       // 蕨
+  inCell(256, 0, function () { tuft(384, 252, '#80794f', '#544f2a', '#262417'); _sprShadowBand(g, 256, 256, 256, 30); });     // 焦枯草
   _grassTex = _sprPaperTex(cv, g, 6, 8, 'rgba(48,54,36,0.09)', 'rgba(150,160,120,0.03)');
   return _grassTex;
 }
@@ -1211,7 +1235,7 @@ function _bsEnsureMesh(P, need) {
   var sil = !!(P.opt && P.opt.tex);                              // 提供图集→剪影模式;否则后备 blob
   var tex = sil ? P.opt.tex : _bsMakeBlobTex();
   if (!tex) { P.mesh = null; return; }                          // 无头环境无 2D canvas → 跳过
-  var cap = Math.max(16, need);
+  var cap = Math.max(256, Math.ceil(need * 1.35 / 256) * 256);   // ★任务27②:容量留 35%+256 余量——旧写法 cap=need 精确贴脸,树/草计数每跨区块微增就整套 InstancedMesh+material dispose/重建(浏览器端=着色器重编译+缓冲重传,单帧数十 ms 的"暂停感"尖刺);留余量后仅增长 >35% 才重建
   var geo = new THREE.PlaneGeometry(1, 1);
   geo.rotateX(-Math.PI / 2); geo.translate(0, 0, 0.5);          // 贴地 XZ 面;近边(根部)z=0,向 +z 伸展,宽沿 x
   var cellArr = new Float32Array(cap);
@@ -1225,41 +1249,56 @@ function _bsEnsureMesh(P, need) {
   P.capBuilt = cap;
   if (scene) scene.add(P.mesh);
 }
-function bakeSpriteShadows(key) {        // 全量烘焙一个 provider 的所有阴影实例(事件级调用)
+function _bsNowMs() { return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now(); }
+function bakeSpriteShadows(key, budgetMs) { // 全量烘焙一个 provider 的所有阴影实例(事件级调用)。★任务27②:可续烤——budgetMs 缺省=同步一次烤完(初始帧/bsRebakeAll/调试),给定=帧预算内增量烤(bsFlush 走此路径,2万树/4万草实测 20~43ms 的单帧全量烘焙拆到多帧收敛)
   var P = _bsProviders[key]; if (!P || !P.list || !scene || typeof THREE === 'undefined') return;
   if (!_bsN) { _bsN = new THREE.Vector3(); _bsF = new THREE.Vector3(); _bsR = new THREE.Vector3(); _bsQ = new THREE.Quaternion(); _bsP = new THREE.Vector3(); _bsScl2 = new THREE.Vector3(); _bsMat2 = new THREE.Matrix4(); }
-  var opt = P.opt, list = P.list, i, need = 0;
-  for (i = 0; i < list.length; i++) { if (!opt.filter || opt.filter(list[i])) need++; }   // 仅活着/直立地物投影
-  _bsEnsureMesh(P, need);
-  if (!P.mesh) return;
-  var sun = _bsSun();
-  P.mat.uniforms.uOpacity.value = sun.opa;
-  P.mat.uniforms.uFogNear.value = scene.fog ? scene.fog.near : 900;
-  P.mat.uniforms.uFogFar.value = scene.fog ? scene.fog.far : 6200;
-  if (sun.opa <= 0) { P.mesh.count = 0; P.mesh.visible = false; P.dirty = false; return; }   // 夜:隐藏
+  var opt = P.opt, list = P.list, i;
+  if (P.bkI == null) {                                   // 新 pass 起点:计数→容量→uniforms→太阳快照(pass 内恒定,分帧结果自洽)
+    P.bkT0 = _bsNowMs();                                 // 预算钟含 need 计数/建网前置开销(首帧也封顶)
+    var need = 0;
+    for (i = 0; i < list.length; i++) { if (!opt.filter || opt.filter(list[i])) need++; }   // 仅活着/直立地物投影
+    _bsEnsureMesh(P, need);
+    if (!P.mesh) return;
+    var sun = _bsSun();
+    P.mat.uniforms.uOpacity.value = sun.opa;
+    P.mat.uniforms.uFogNear.value = scene.fog ? scene.fog.near : 900;
+    P.mat.uniforms.uFogFar.value = scene.fog ? scene.fog.far : 6200;
+    if (sun.opa <= 0) { P.mesh.count = 0; P.mesh.visible = false; P.dirty = false; return; }   // 夜:隐藏
+    P.bkI = 0; P.bkOut = 0; P.dirty = false;                 // 脏标即消费:pass 进行中 dirty=false,半途新事件 markDirty 才触发 bsFlush 弃进度重开
+    if (!P.bkSun) P.bkSun = { dx: 0, dz: 0, len: 0 };
+    P.bkSun.dx = sun.dx; P.bkSun.dz = sun.dz; P.bkSun.len = sun.len;
+  }
+  var sun2 = P.bkSun;
   var wS = opt.wScale != null ? opt.wScale : 1.0, lS = opt.lScale != null ? opt.lScale : 1.0;
-  var out = 0, cap = P.capBuilt;
-  for (i = 0; i < list.length && out < cap; i++) {
+  var budget = (budgetMs == null) ? Infinity : budgetMs;
+  var out = P.bkOut, cap = P.capBuilt;
+  for (i = P.bkI; i < list.length && out < cap; i++) {
     var s = list[i]; if (opt.filter && !opt.filter(s)) continue;
     var x = s.x, z = s.z, y = terrainH(x, z);
     terrainNormal(x, z, _bsN);                                   // 落点地形法线 = decal 的「上」
-    var dn = sun.dx * _bsN.x + sun.dz * _bsN.z;                  // 背光方向投影到坡面切平面(贴地形起伏)
-    _bsF.set(sun.dx - _bsN.x * dn, -_bsN.y * dn, sun.dz - _bsN.z * dn);
-    if (_bsF.lengthSq() < 1e-6) _bsF.set(sun.dx, 0, sun.dz);
+    var dn = sun2.dx * _bsN.x + sun2.dz * _bsN.z;                // 背光方向投影到坡面切平面(贴地形起伏)
+    _bsF.set(sun2.dx - _bsN.x * dn, -_bsN.y * dn, sun2.dz - _bsN.z * dn);
+    if (_bsF.lengthSq() < 1e-6) _bsF.set(sun2.dx, 0, sun2.dz);
     _bsF.normalize();
-    _bsR.crossVectors(_bsN, _bsF).normalize();                  // 右 = 上 × 前(右手基)
+    _bsR.crossVectors(_bsN, _bsF).normalize();                   // 右 = 上 × 前(右手基)
     _bsMat2.makeBasis(_bsR, _bsN, _bsF); _bsQ.setFromRotationMatrix(_bsMat2);
-    var W = (s.w || 1) * wS, L = (s.h || 1) * sun.len * lS;      // 宽=地物宽;长=地物高×前缩(剪影随之拉伸)
+    var W = (s.w || 1) * wS, L = (s.h || 1) * sun2.len * lS;     // 宽=地物宽;长=地物高×前缩(剪影随之拉伸)
     _bsP.set(x + _bsN.x * _bsEps, y + _bsN.y * _bsEps, z + _bsN.z * _bsEps);
     _bsScl2.set(W, 1, L);
     _bsMat2.compose(_bsP, _bsQ, _bsScl2);
     P.mesh.setMatrixAt(out, _bsMat2);
     P.cellAttr.array[out] = opt.cellOf ? (opt.cellOf(s) || 0) : 0;   // 图集格号(与地物贴片同格→同一剪影)
     out++;
+    if ((out & 511) === 0 && _bsNowMs() - P.bkT0 > budget) { i++; break; }   // 帧预算尽:存游标让路(每 512 实例查一次表)
   }
-  P.mesh.count = out; P.mesh.visible = out > 0;
+  P.bkOut = out;
+  P.mesh.count = out; P.mesh.visible = out > 0;                  // 增量收敛:已烤部分立即可见,余量后帧补齐(新增区块本就在渲染环外,不可见)
   P.mesh.instanceMatrix.needsUpdate = true; P.cellAttr.needsUpdate = true;
-  P.dirty = false; P.lastT = (typeof gameT !== 'undefined' ? gameT : 0);
+  if (i >= list.length || out >= cap) {                          // pass 完成
+    P.bkI = null;
+    P.dirty = false; P.lastT = (typeof gameT !== 'undefined' ? gameT : 0);
+  } else P.bkI = i;
 }
 function bsMarkDirty(key) { var P = _bsProviders[key]; if (P) P.dirty = true; }
 /* G4-decal: crater batches re-anchor SURVIVING blob shadows (bake recomputes y=terrainH).
@@ -1285,13 +1324,18 @@ function bsDirtyByCraters(points, rinf) {
   }
 }
 function bsRebakeAll() { for (var k in _bsProviders) if (_bsProviders.hasOwnProperty(k)) bakeSpriteShadows(k); }
-function bsFlush() {                     // 渲染帧调用:仅重烘焙「脏」provider(草类节流合并连爆突发),非脏零成本
+var BS_BAKE_BUDGET_MS = 3;                 // ★任务27②:每帧烘焙时间预算(ms,所有脏 provider 合计)
+function bsFlush() {                       // 渲染帧调用:仅烘焙「脏」provider(可续烤增量,帧预算封顶),非脏且无在烤零成本
   var now = (typeof gameT !== 'undefined' ? gameT : 0), k;
+  var t0 = _bsNowMs();
   for (k in _bsProviders) {
     if (!_bsProviders.hasOwnProperty(k)) continue;
-    var P = _bsProviders[k]; if (!P.dirty) continue;
+    var P = _bsProviders[k];
+    if (!P.dirty && P.bkI == null) continue;
+    if (P.dirty && P.bkI != null) { P.bkI = null; P.bkOut = 0; } // 半途来新事件(来源表可能被原地重建)→弃进度重开,保证烘焙结果自洽
     var thr = (P.opt && P.opt.throttle) ? P.opt.throttle : 0;
-    if (thr > 0 && P.lastT >= 0 && (now - P.lastT) < thr) continue;   // 合并突发(如连环爆炸没草)
-    bakeSpriteShadows(k);
+    if (P.bkI == null && thr > 0 && P.lastT >= 0 && (now - P.lastT) < thr) continue;   // 合并突发(如连环爆炸没草)——只闸 pass 起点,在烤续帧不受节流阻断
+    bakeSpriteShadows(k, Math.max(0.5, BS_BAKE_BUDGET_MS - (_bsNowMs() - t0)));
+    if (_bsNowMs() - t0 >= BS_BAKE_BUDGET_MS) break;             // 本帧预算尽:剩余脏 provider 让到下帧
   }
 }
