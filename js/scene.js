@@ -6,6 +6,66 @@
    ============================================================ */
 'use strict';
 /* ============================================================
+   画质档(GFX)——移动端性能优化的单一开关
+   · high = 桌面默认:与优化前逐参数一致(零回归);
+   · mid  = 触屏默认:针对手机 GPU 的填充率/带宽短板降配;
+   · low  = 老机型救急档:再砍像素比(画面明显偏软,仅在 mid 仍卡时用)。
+   三档参数表见 GFX_PRESETS。档位判定优先级:
+     ?gfx=high|mid|low 查询串  >  localStorage.prefGfxProfile  >  设备默认
+   —— 查询串最高便于桌面 A/B 对比与回归验证(改档需刷新页面生效,
+      因为渲染器/阴影贴图都是启动期一次性分配的)。
+   为什么只降触屏端:本作最贵的开销全是"全屏面积 × 每像素成本"(绘制像素比、软阴影、
+   全屏离屏合成),而手机相对桌面最弱的一环正是填充率与显存带宽。
+   · maxPixelRatio 2 → 1.5:渲染缓冲像素数 4× → 2.25×,链路上每一段等比下降(单项收益最大),
+     等效于把开镜 DRS 那套"已被用户接受"的降采样推广到全程。
+     ★★ 必须与下面 resize 分支同源取用 —— 只改一处的话,窗口尺寸一变就把像素比打回 2,前功尽弃。
+   · 阴影贴图 1024 → 512、PCFSoft → PCF:深度 pass 带宽约 1/4,主 pass 每像素阴影采样数 9+ → 4。
+     注意:不得改成"隔帧更新"—— 见下方旧注释,隔帧会造成移动载具影子频闪(已实测)。
+   · stencil:false:本作不使用模板缓冲,显式关掉省一份缓冲与逐像素模板测试。
+     (注意 three r128 渲染器参数名是 stencil;stencilBuffer 是 WebGLRenderTarget 的参数。)
+
+   ★ fx* 字段(爆炸特效专项 E1/E2,见 docs/安卓端性能优化方案.md 附录 B)——
+     与上面几项治的不是同一个病:上面治"全程恒定的全屏开销",fx* 治"爆炸事件的瞬时+长驻开销"。
+     爆点卡为远距可读而按距离线性放大(scopeDistK),屏占比不随距离衰减 ⇒ 一次火箭弹爆炸 =
+     3 层近全屏 alpha 混合(火光/烟/地面高亮),满幅并发 12 张时峰值 ~36 层,移动 GPU 填充率必死。
+     · fxDistMax    距离放大上限。面积律:3.4→1.8 ⇒ 单卡面积 ×(1.8/3.4)²=0.28
+     · fxYieldMax   当量放大上限(M142 44m 溅射本来会拿到 2.0)
+     · fxGroundLight 36m 地面加法高亮面(三层里最大的一层,夜爆照明感来源)
+     · fxSatHi/fxSatLo 满幅卡并发阈值(既有降级调速器的滞回门限,机制本就存在,这里只是收紧)
+     · fxHardMax    硬顶:超过就不再出大卡(扬尘/弹坑/焦土/音效照常,玩法零影响)
+     · fxWreckSmoke 残骸长驻烟柱上限(每具每帧 2 张世界尺寸卡,原 999 且无距离门)
+     · fxSmokeR     残骸烟柱可见半径(m);活载具烟走 _csmRefreshVisible 的 600m 门,残骸烟原本绕过了它
+     · fxBigTex     爆炸贴图基准边长:1024(高)/512(中低)。显存 24MB→6MB,采样带宽 −75%
+     · fxTrailAdapt 齐射期尾迹自适应降频(在飞火箭多时拉大尾迹卡间距)
+     · fxBurstMerge 同帧殉爆卡上限(链式殉爆时后续走小卡,防单帧层数爆炸)
+     · fxBurstDedup 导弹爆炸去重:命中载具只出殉爆卡、命中地面只出爆点卡(原本两套全出=9 层透明)
+     · fxSfxMerge   爆炸音效同点位合并(40m 格 65ms 窗口,压齐射期 Web Audio 节点数)
+     高档全部保持"优化前"的原值 ⇒ 桌面端逐参数零回归。
+    ★2026-09-13:下表 hudAA/hudPost(炮塔小窗与机库的模型质量开关)已移交模型质量档
+     (core_util.js MODQ_PRESETS)独立控制,此处字段原样保留作 sandbox 兜底与数值留档,
+     运行时不再被读取(消费方见 player.js _phudBuild / uifx-enhance.js 机库 init)。
+   ============================================================ */
+var GFX_TOUCH = (window.matchMedia && matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in window;
+var GFX_PRESETS = {
+  high: { maxPixelRatio: 2,   shadowMapSize: 1024, shadowSoft: true,  noStencil: false, hudAA: true,  hudPost: true,
+          fxDistMax: 3.4, fxYieldMax: 2.0, fxGroundLight: true,  fxSatHi: 12, fxSatLo: 8, fxHardMax: 24,
+          fxWreckSmoke: 999, fxSmokeR: 0,   fxBigTex: 1024, fxTrailAdapt: false, fxBurstMerge: 0, fxBurstDedup: false, fxSfxMerge: false },
+  mid:  { maxPixelRatio: 1.5, shadowMapSize: 512,  shadowSoft: false, noStencil: true,  hudAA: false, hudPost: false,
+          fxDistMax: 1.8, fxYieldMax: 1.4, fxGroundLight: false, fxSatHi: 5,  fxSatLo: 3, fxHardMax: 10,
+          fxWreckSmoke: 48,  fxSmokeR: 420, fxBigTex: 512,  fxTrailAdapt: true,  fxBurstMerge: 3, fxBurstDedup: true,  fxSfxMerge: true },
+  low:  { maxPixelRatio: 1.0, shadowMapSize: 512,  shadowSoft: false, noStencil: true,  hudAA: false, hudPost: false,
+          fxDistMax: 1.5, fxYieldMax: 1.2, fxGroundLight: false, fxSatHi: 3,  fxSatLo: 2, fxHardMax: 6,
+          fxWreckSmoke: 24,  fxSmokeR: 300, fxBigTex: 512,  fxTrailAdapt: true,  fxBurstMerge: 2, fxBurstDedup: true,  fxSfxMerge: true }
+};
+var GFX_PROFILE = (function () {
+  var m = /[?&]gfx=(high|mid|low)\b/.exec(window.location.search || '');
+  if (m) return m[1];
+  try { var s = localStorage.getItem('prefGfxProfile'); if (GFX_PRESETS[s]) return s; } catch (e) {}
+  return GFX_TOUCH ? 'mid' : 'high';
+})();
+var GFX = GFX_PRESETS[GFX_PROFILE];
+function gfxMaxPr() { return Math.min(window.devicePixelRatio || 1, GFX.maxPixelRatio); }
+/* ============================================================
    场景搭建
    ============================================================ */
 function initScene() {
@@ -17,17 +77,20 @@ function initScene() {
 
   camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 60000); // 远平面扩展至 60km 配合 30km 雷达与大地图   // 对数深度缓冲:远平面放宽到 6.5km,覆盖 4km 对角(4000√2+2200≈7.8km 仍吃雾),根除丘陵远切
 
-  renderer = new THREE.WebGLRenderer({ powerPreference: 'high-performance', logarithmicDepthBuffer: true });   // 对数深度缓冲——根治远距 Z-fighting:
+  var _rp = { powerPreference: 'high-performance', logarithmicDepthBuffer: true };
+  if (GFX.noStencil) _rp.stencil = false;      // 低档才显式传;高档保持 three 默认,确保桌面端行为逐字节不变
+  renderer = new THREE.WebGLRenderer(_rp);   // 对数深度缓冲——根治远距 Z-fighting:
   //   线性深度量化步长 ∝ z²/near(500m 处 4~10cm > 建模间隙=远距闪烁根因,near 被炮塔内构钳制无法再抬);
   //   对数深度量化步长 ≈ z·ln(far/near)/2^24 ≈ 距离×9e-7(500m≈0.5mm,1500m≈1.4mm),全距离恒定相对精度。
   //   代价:两个自定义 ShaderMaterial(粒子/余烬)需手动补 logdepthbuf include(fx.js 已补);内置材质全自动。
   renderer.setSize(innerWidth, innerHeight);
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setPixelRatio(gfxMaxPr());                // ★ 画质档像素比上限(与 resize 分支同源,勿写死 2)
   _basePixelRatio = renderer.getPixelRatio();        // 记录基准像素比(开镜 DRS 恢复用)
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = modQ('modSunSoft', true) ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;   // 模型质量档:非高=PCF(每像素采样 9+ → 4)
   // 恢复每帧阴影更新——dd 的隔帧(30Hz)更新使移动载具影子每两帧在新鲜/滞后间交替=严重频闪(用户实测);
-  //   性能靠 1024 贴图+±45 相机+残骸不投影;不节流(隔帧是频闪源)。抗抖由 cameraUpdate 纹素对齐
+  //   性能靠贴图尺寸+视锥+残骸不投影;不节流(隔帧是频闪源)。抗抖由 cameraUpdate 纹素对齐。
+  //   低档的省法=512 贴图 + PCF(降单帧成本),绝不是隔帧(隔帧在任何档位都是禁区)。
   document.body.appendChild(renderer.domElement);
 
   hemiLight = new THREE.HemisphereLight(0xcfe4ff, 0x54603f, 0.68); // 降低20%光照亮度 (0.85 -> 0.68)
@@ -35,7 +98,7 @@ function initScene() {
   sunLight = new THREE.DirectionalLight(0xfff2d8, 0.92); // 降低20%光照亮度 (1.15 -> 0.92)
   sunLight.position.set(110, 58, 75);
   sunLight.castShadow = true;
-  sunLight.shadow.mapSize.set(1024, 1024);           // 软阴影;阴影 pass 量级按 1024
+  sunLight.shadow.mapSize.set(modQ('modSunMap', 1024), modQ('modSunMap', 1024));   // 软阴影;阴影 pass 量级按模型质量档(高=1024 / 中低=512)
   sunLight.shadow.camera.near = 1.0;                 // 收紧近平面(默认 0.5),提高 24-bit 深度缓冲区有效精度
   sunLight.shadow.camera.left = -70; sunLight.shadow.camera.right = 70;   // 初值与合并版一致;每帧 updateSunShadow 以 shR 覆盖,±45 不生效已撤
   sunLight.shadow.camera.top = 70; sunLight.shadow.camera.bottom = -70;
@@ -61,7 +124,9 @@ function initScene() {
   addEventListener('resize', function () {
     // 浏览器缩放(即使滚轮路径已拦截,仍可能经 Ctrl+加/减号/菜单触发)会改 devicePixelRatio:
     // 不同步像素比=渲染缓冲停留在旧分辨率(整体发虚)。开镜 DRS 生效中按当前档位换算,避免覆盖 DRS。
-    var pr = Math.min(window.devicePixelRatio || 1, 2);
+    // ★ pr 必须取自 gfxMaxPr()(画质档上限),不能写死 2 —— 否则任何一次 resize(含转屏)
+    //   都会把低档的 1.5 悄悄改回 2,优化静默失效。
+    var pr = gfxMaxPr();
     if (Math.abs(pr - _basePixelRatio) > 0.001) {
       _basePixelRatio = pr;
       renderer.setPixelRatio(_scopeResHi ? Math.max(0.35, pr * _scopeResRatio) : pr);

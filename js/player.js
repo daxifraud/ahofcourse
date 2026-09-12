@@ -651,6 +651,12 @@ function renderHeliRadarMFD(p) {
   var mfdEl = document.getElementById('heliradarmfd');
   if (!mfdCvs || !mfdEl) return;
 
+  /* 触控自定义布局编辑中:MFD 的显隐与几何由 flow.js 的编辑器全权接管
+     (编辑器会让它在非直升机、甚至不在对局中时也显示出来,以便调整位置/大小)。
+     同时把 _on 缓存作废,这样退出编辑后的第一帧必定重新同步 class,
+     不会因为"缓存值恰好等于目标值"而漏掉一次 hidden 切换、导致 MFD 残留。 */
+  if (window._touchLayoutEditing) { mfdEl._on = null; return; }
+
   var isHeli = p && p.alive && (isHeliVehicle(p) || (isAAVehicle(p) && p.team === 'ally')) && gameState === 'playing';   // PGZ-95 车载搜索雷达 MFD 与直升机火控雷达同套呈现(复仇者无雷达)
   if (!isHeli) {
     if (mfdEl._on !== false) { mfdEl._on = false; mfdEl.classList.add('hidden'); }
@@ -1922,6 +1928,7 @@ function updateHeli(t, dt, fwdCmd, latCmd, turnCmd, isAI) {
 
     var dw2 = ((driveT - aeroT - fricT) / prm.rotorInertia) * dt;
     t._heliRotorRPM = Math.max(0, Math.min(w0 * 1.15, t._heliRotorRPM + dw2));
+    if (t === player && window.__HELI_FIX_RPM) { t._heliRotorRPM = w0; t._heliCollCap = 1.0; }
 
     // 回写"总距上限"(=转速): 上限随实际转速提高, 超拉下垂时同步回落 (HUD 消费)
     t._heliCollCap = cap;
@@ -2641,16 +2648,22 @@ function _phudBuild() {
   _phudClear();
   if (!player || !player.alive || !player.group || !camera) return;
   _phud.veh = player;
+  /* 模型质量档(非高):战术屏小渲染器关 MSAA、不上漫画后处理。
+     它自成一个 WebGL 上下文并自备一张 RT,手机上多一个上下文+一遍全屏着色不划算;
+     画布只有 PHUD_W × 64~160 像素,MSAA 与后处理的观感收益本就很有限。
+     跳过 _phud.post 后,playerHudTick 会自动走 else 分支直渲(_phudBuild 之后的判断无需改动)。
+     ★2026-09-13:改由模型质量档驱动(原取 GFX.hudAA,中/低两档本来就同为关,行为逐位不变)。 */
+  var _phudLow = modQ('modAA', true) === false;
   if (!_phud.rnd) {
     var cv = document.getElementById('phudcv');
     if (!cv) return;
-    _phud.rnd = new THREE.WebGLRenderer({ canvas: cv, alpha: true, antialias: true });
+    _phud.rnd = new THREE.WebGLRenderer({ canvas: cv, alpha: true, antialias: !_phudLow });
     _phud.rnd.setClearColor(0x000000, 0);
     _phud.scn = new THREE.Scene();
     _phud.cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 40);
     _phud.cam.position.z = 12;
   }
-  if (!_phud.post && typeof _COMIC_FRAG !== 'undefined' && typeof _comicBrush !== 'undefined' && _comicBrush) {
+  if (!_phud.post && modQ('modPost', true) && typeof _COMIC_FRAG !== 'undefined' && typeof _comicBrush !== 'undefined' && _comicBrush) {
     var pm = new THREE.ShaderMaterial({ uniforms: {
         tDiffuse: { value: null }, tEdge: { value: null }, tDepth: { value: null }, uHasDepth: { value: 0 },
         uRes: { value: new THREE.Vector2(1, 1) }, uThick: { value: 1.35 }, uScale: { value: 1 },

@@ -632,8 +632,11 @@ function animate() {
       for (si = 0; si < aliveList.length; si++) {
         st = aliveList[si];
         if (!st._ipP) { st._ipP = st.group.position.clone(); st._ipPv = st._ipP.clone();   // 惰性初始化(新生车/开局)
-                        st._ipQ = st.group.quaternion.clone(); st._ipQv = st._ipQ.clone(); }
+                        st._ipQ = st.group.quaternion.clone(); st._ipQv = st._ipQ.clone();
+                        st._ipRA = st._heliRotorAngle || 0; st._ipRAv = st._ipRA;          // ★旋翼角插值端点(非直升机恒 0,不写)
+                        st._ipTA = st._heliTailRotorAngle || 0; st._ipTAv = st._ipTA; }
         st._ipPv.copy(st._ipP); st._ipQv.copy(st._ipQ);                 // prev = 上一步末
+        st._ipRAv = st._ipRA; st._ipTAv = st._ipTA;                     // ★旋翼角 prev(标量直赋,不能 copy)
         st.group.position.copy(st._ipP); st.group.quaternion.copy(st._ipQ);   // group ← 模拟态(剥离渲染插值)
       }
       step(SIM_DT);
@@ -641,17 +644,33 @@ function animate() {
         st = aliveList[si];
         if (!st._ipP) continue;                                          // 本步中途新生车:留待下步入轨
         st._ipP.copy(st.group.position); st._ipQ.copy(st.group.quaternion);
+        st._ipRA = st._heliRotorAngle; st._ipTA = st._heliTailRotorAngle;   // ★旋翼角本步末(非直升机 undefined)
       }
       _steps++;
     }
     /* 渲染插值回写:group ← lerp(prev, curr, alpha);玩家/AI 活车统一。
-       炮塔/炮管是限速慢变量(≤0.7rad/s→每步 0.014rad,亚视觉)不插值;残骸仅被推时慢动(≤0.14m/步)不插值。 */
-    var _alpha = _simAcc / SIM_DT, sk, sr;
+       炮塔/炮管是限速慢变量(≤0.7rad/s→每步 0.014rad,亚视觉)不插值;残骸仅被推时慢动(≤0.14m/步)不插值。
+       ★主旋翼/尾桨角必须插值(唯一例外,2026-09-13):旋翼 34rad/s = 每步 0.68rad(39°),比上述"慢变量"
+       阈值快约 50 倍 —— 只写定步长=50Hz 台阶,与渲染帧率错拍成"顿一下跳一下";更糟的是 5 叶对称 72° 下
+       39°>36°(半对称角)会走样成每步 −33° 的**倒转**,与"一卡一卡"的观感完全吻合。
+       按 alpha 在两端点间插值后,每渲染帧前进 (renderDt/SIM_DT)×39°(60fps≈32.6°<36°)= 平滑正转、不走样。
+       环绕处理:差值先折到 ±π 再插值(每步 0.68rad ≪ π,折叠无歧义)。 */
+    var _alpha = _simAcc / SIM_DT, sk, sr, _rotD;
     for (sk = 0; sk < aliveList.length; sk++) {
       sr = aliveList[sk];
       if (!sr._ipP) continue;
       sr.group.position.lerpVectors(sr._ipPv, sr._ipP, _alpha);
       sr.group.quaternion.copy(sr._ipQv).slerp(sr._ipQ, _alpha);
+      if (sr.mainRotorGroup && sr._ipRA != null) {
+        _rotD = sr._ipRA - sr._ipRAv;
+        if (_rotD > Math.PI) _rotD -= TAU; else if (_rotD < -Math.PI) _rotD += TAU;
+        sr.mainRotorGroup.rotation.y = sr._ipRAv + _rotD * _alpha;
+      }
+      if (sr.tailRotorGroup && sr._ipTA != null) {
+        _rotD = sr._ipTA - sr._ipTAv;
+        if (_rotD > Math.PI) _rotD -= TAU; else if (_rotD < -Math.PI) _rotD += TAU;
+        sr.tailRotorGroup.rotation.x = sr._ipTAv + _rotD * _alpha;
+      }
       sr.group.updateMatrixWorld(true);    // _instMatFor 读 matrixWorld(hull 实例矩阵)——回写后必须刷新
     }
     if (window._dbgPerfOn) window.__SIM = { steps: _steps, droppedMs: +(_dropped * 1000).toFixed(1), alpha: +_alpha.toFixed(3) };   // 诊断(调试模式开时)
@@ -806,6 +825,128 @@ function dcAuditShow() {
     apply();
   } catch (e) { /* 按钮故障不挡游戏 */ }
 })();
+/* ===== 画质档(T2-3):高/中/低三档,落 localStorage.prefGfxProfile,重启生效 ----
+   渲染器/阴影贴图/副渲染器全部是启动期按 GFX 一次性分配的;运行中切档要重建整条 GL 链
+   (与开镜 DRS 的 setPixelRatio/RT 重建是同一类操作),不值得为此做热切换,所以这里只写偏好,
+   并明确提示"重启生效"——宁可让用户多按一次启动,也不给一个切了没反应的假开关。
+   ?gfx= 查询串优先级高于本设置(桌面 A/B 与回归验证用),按钮态仍如实反映 localStorage。 ===== */
+(function () {
+  try {
+    var row = document.getElementById('gfxrow'), val = document.getElementById('gfxval');
+    if (!row) return;
+    var btns = row.querySelectorAll('button[data-gfx]');
+    if (!btns.length) return;
+    var LS = 'prefGfxProfile';
+    var NAMES = { high: '高', mid: '中', low: '低' };
+    function stored() {
+      try { var s = localStorage.getItem(LS); return (s === 'high' || s === 'mid' || s === 'low') ? s : ''; }
+      catch (e) { return ''; }
+    }
+    function apply() {
+      var st = stored();
+      var eff = /[?&]gfx=(high|mid|low)\b/.exec(window.location.search || '');
+      var cur = eff ? eff[1] : (st || (typeof GFX_PROFILE !== 'undefined' ? GFX_PROFILE : ''));
+      /* 高亮"当前生效档"而非"已存储档":未选择时也要让玩家看到自己正处在哪一档,
+         否则整个按钮组看起来像没初始化;是否属于设备默认由文案说明。 */
+      for (var i = 0; i < btns.length; i++)
+        if (btns[i].classList && btns[i].classList.toggle)
+          btns[i].classList.toggle('sel', btns[i].getAttribute('data-gfx') === cur);
+      if (val) val.textContent = eff
+        ? ('当前:' + (NAMES[cur] || cur) + '（被 ?gfx= 覆盖）')
+        : (st ? ('当前:' + (NAMES[cur] || cur)) : ('当前:' + (NAMES[cur] || cur) + '（设备默认）'));
+    }
+    for (var i = 0; i < btns.length; i++) (function (b) {
+      b.addEventListener('click', function () {
+        var v = b.getAttribute('data-gfx');
+        if (v !== 'high' && v !== 'mid' && v !== 'low') return;
+        try { localStorage.setItem(LS, v); } catch (e) { /* 无存储环境:本次会话内仍按原档 */ }
+        apply();
+        if (val) val.textContent = '已选:' + NAMES[v] + '（重启游戏生效）';
+      });
+    })(btns[i]);
+    apply();
+  } catch (e) { /* 按钮故障不挡游戏 */ }
+})();
+/* ===== 爆炸效果档:高/低两档,落 localStorage.prefFxQuality,重启生效 ----
+   与画质档完全解耦:高 = 原画质"中"的爆炸质量,低 = 原画质"低"的爆炸质量
+   (数值见 core_util.js FXQ_PRESETS)。重启生效的理由与画质档相同:
+   爆炸贴图在加载期一次烘焙、池并发上限在模块加载期快照,热切要重建全部特效池。
+   ?fxq= 查询串优先级高于本设置(桌面 A/B 与回归验证用)。 ===== */
+(function () {
+  try {
+    var row = document.getElementById('fxqrow'), val = document.getElementById('fxqval');
+    if (!row) return;
+    var btns = row.querySelectorAll('button[data-fxq]');
+    if (!btns.length) return;
+    var LS = 'prefFxQuality';
+    var NAMES = { high: '高', mid: '中', low: '低' };
+    function stored() {
+      try { var s = localStorage.getItem(LS); return (s === 'high' || s === 'mid' || s === 'low') ? s : ''; }
+      catch (e) { return ''; }
+    }
+    function apply() {
+      var st = stored();
+      var eff = /[?&]fxq=(high|mid|low)\b/.exec(window.location.search || '');
+      var cur = eff ? eff[1] : (st || (typeof FXQ_PROFILE !== 'undefined' ? FXQ_PROFILE : ''));
+      for (var i = 0; i < btns.length; i++)
+        if (btns[i].classList && btns[i].classList.toggle)
+          btns[i].classList.toggle('sel', btns[i].getAttribute('data-fxq') === cur);
+      if (val) val.textContent = eff
+        ? ('当前:' + (NAMES[cur] || cur) + '（被 ?fxq= 覆盖）')
+        : (st ? ('当前:' + (NAMES[cur] || cur)) : ('当前:' + (NAMES[cur] || cur) + '（设备默认）'));
+    }
+    for (var i = 0; i < btns.length; i++) (function (b) {
+      b.addEventListener('click', function () {
+        var v = b.getAttribute('data-fxq');
+        if (v !== 'high' && v !== 'mid' && v !== 'low') return;
+        try { localStorage.setItem(LS, v); } catch (e) { /* 无存储环境:本次会话内仍按原档 */ }
+        apply();
+        if (val) val.textContent = '已选:' + NAMES[v] + '（重启游戏生效）';
+      });
+    })(btns[i]);
+    apply();
+  } catch (e) { /* 按钮故障不挡游戏 */ }
+})();
+/* ===== 模型质量档:高/中/低三档,落 localStorage.prefModQuality,重启生效 ----
+   管辖机库 3D 展示 + 炮塔 HUD 迷你窗(MSAA/像素比/阴影/后处理),与画质档完全解耦,
+   三档取值 = 原画质三档的模型精度(数值见 core_util.js MODQ_PRESETS)。
+   重启生效:机库/PHUD 渲染器都是一次性创建的(创建期读档),与画质档同理不做热切换。
+   ?modq= 查询串优先级高于本设置(桌面 A/B 与回归验证用)。 ===== */
+(function () {
+  try {
+    var row = document.getElementById('modqrow'), val = document.getElementById('modqval');
+    if (!row) return;
+    var btns = row.querySelectorAll('button[data-modq]');
+    if (!btns.length) return;
+    var LS = 'prefModQuality';
+    var NAMES = { high: '高', mid: '中', low: '低' };
+    function stored() {
+      try { var s = localStorage.getItem(LS); return (s === 'high' || s === 'mid' || s === 'low') ? s : ''; }
+      catch (e) { return ''; }
+    }
+    function apply() {
+      var st = stored();
+      var eff = /[?&]modq=(high|mid|low)\b/.exec(window.location.search || '');
+      var cur = eff ? eff[1] : (st || (typeof MODQ_PROFILE !== 'undefined' ? MODQ_PROFILE : ''));
+      for (var i = 0; i < btns.length; i++)
+        if (btns[i].classList && btns[i].classList.toggle)
+          btns[i].classList.toggle('sel', btns[i].getAttribute('data-modq') === cur);
+      if (val) val.textContent = eff
+        ? ('当前:' + (NAMES[cur] || cur) + '（被 ?modq= 覆盖）')
+        : (st ? ('当前:' + (NAMES[cur] || cur)) : ('当前:' + (NAMES[cur] || cur) + '（设备默认）'));
+    }
+    for (var i = 0; i < btns.length; i++) (function (b) {
+      b.addEventListener('click', function () {
+        var v = b.getAttribute('data-modq');
+        if (v !== 'high' && v !== 'mid' && v !== 'low') return;
+        try { localStorage.setItem(LS, v); } catch (e) { /* 无存储环境:本次会话内仍按原档 */ }
+        apply();
+        if (val) val.textContent = '已选:' + NAMES[v] + '（重启游戏生效）';
+      });
+    })(btns[i]);
+    apply();
+  } catch (e) { /* 按钮故障不挡游戏 */ }
+})();
 /* 细分面板刷新(dcAuditShow 每 0.5s 调用):__PERF 累计量取窗口差分 */
 var _perfPrev = null;
 function perfPanelUpdate() {
@@ -841,16 +982,42 @@ initEmberFx();
    ② renderer.compile 预链接全场景材质着色器——池网格恒 visible=false 而 compile 只遍历可见物,
      故临时置可见、编译后复原(纯遍历,不渲染不动画)。预热失败绝不阻断启动(退化为旧惰性行为)。 */
 if (typeof window._setBootProgress === 'function') window._setBootProgress(95, 'PREWARMING FX SHADERS...');
-try {
-  if (typeof comicPrewarm === 'function') comicPrewarm();
-  if (typeof fxPrewarm === 'function') fxPrewarm();
-  if (typeof renderer !== 'undefined' && renderer && renderer.compile && typeof scene !== 'undefined' && scene && typeof camera !== 'undefined' && camera) {
-    var _pwHidden = [];
-    scene.traverse(function (o) { if (o.visible === false) { _pwHidden.push(o); o.visible = true; } });
-    renderer.compile(scene, camera);
-    for (var _pwI = 0; _pwI < _pwHidden.length; _pwI++) _pwHidden[_pwI].visible = false;
-  }
-} catch (ePrewarm) { /* 预热失败不阻断启动 */ }
+/* ★★ 预热的调用时机(修正一个长期失效的接线)——
+   index.html MODULES 序是 … main.js(621) → comic_common.js(622) → comic.js(623)。
+   也就是说 main.js 执行时 comic.js **尚未解析**,`typeof comicPrewarm === 'function'` 恒为 false,
+   于是任务27③ 写下的那句守卫调用**一直在静默跳过**:全部漫画特效池(爆点卡/殉爆卡/枪口焰/
+   扬尘/命中火花/硝烟/弹道线)始终是"首次事件才惰性构建",而 renderer.compile 当时也还没有
+   这些池网格可编译 —— 预热注释描述的症状(「一播放爆炸特效就卡一下,单次爆炸也卡」)因此从未被治好。
+   现改为:此处只**定义**,由 comic.js 末尾(最后一个玩法模块)回调。
+   仍属"加载期同步执行"——animate() 的首个 rAF 回调只能在文档内全部同步脚本跑完后才触发,
+   所以预热依旧发生在第一帧之前,boot 进度条语义不变。 */
+function gamePrewarm() {
+  try {
+    if (typeof comicPrewarm === 'function') comicPrewarm();
+    if (typeof fxPrewarm === 'function') fxPrewarm();
+    if (typeof renderer !== 'undefined' && renderer && renderer.compile && typeof scene !== 'undefined' && scene && typeof camera !== 'undefined' && camera) {
+      var _pwHidden = [];
+      scene.traverse(function (o) { if (o.visible === false) { _pwHidden.push(o); o.visible = true; } });
+      renderer.compile(scene, camera);
+      for (var _pwI = 0; _pwI < _pwHidden.length; _pwI++) _pwHidden[_pwI].visible = false;
+    }
+    /* ★E1-6(附录 B §B.2):renderer.compile 只链接着色器、不上传纹理 —— 实测本工程内置 three 的
+       compile 只调 initMaterial/getProgram。爆点(1024²火光+3×1024²烟)与殉爆(512²云冠等)两套
+       共约 24MB 贴图,原本要到「第一次爆炸被渲染的那一帧」才 texImage2D + 生成 mipmap,
+       在 Android WebView 上是单帧数百 ms 的停顿(=用户说的「只炸一次也卡一下」)。
+       这里用 three 现成的 renderer.initTexture 在加载期一次付清。逐张 try:某张贴图异常不阻断启动。 */
+    if (typeof renderer !== 'undefined' && renderer && renderer.initTexture) {
+      var _pwTex = [];
+      if (typeof comicFxTextures === 'function') _pwTex = _pwTex.concat(comicFxTextures());
+      if (typeof fxTextures === 'function') _pwTex = _pwTex.concat(fxTextures());
+      for (var _tI = 0; _tI < _pwTex.length; _tI++) {
+        if (!_pwTex[_tI]) continue;
+        try { renderer.initTexture(_pwTex[_tI]); } catch (eTex) { /* 单张失败跳过 */ }
+      }
+    }
+  } catch (ePrewarm) { /* 预热失败不阻断启动 */ }
+}
+window.gamePrewarm = gamePrewarm;
 initInput();
 bindStartSideUI();
 bindStartKindUI();
@@ -1015,5 +1182,100 @@ function buildMidgame(nAlive, nWreck) {
       } catch (e7) { fail(e7); }
     }
   } catch (e8) { fail(e8); }
+})();
+/* ============================================================
+   ★★★ TEMPORARY FLIGHT RECORDER (?helirec=1) — 2026-09-13 直升机顿挫调查专用,
+   结论一出即删(删后全仓 grep helirec 必须零命中,含本文注释)。
+   用法:index.html?gfx=low&helirec=1 → 自动开局(玩家直-10)→清场→满转速→爬升→W前飞15s
+   → JSON 写入 #helirec-out,标题置 HELI_DONE。
+   每 50ms 记录:[gameT, renderXYZ, simXYZ(_ipP), prevXYZ(_ipPv), alt, camXYZ, steps, droppedMs, spikes]
+   ============================================================ */
+(function () {
+  if (typeof window === 'undefined' || !/[?&]helirec=1/.test(location.search)) return;
+  var out = document.createElement('pre');
+  out.id = 'helirec-out';
+  out.style.cssText = 'position:fixed;left:4px;top:4px;z-index:99;max-width:90vw;max-height:90vh;overflow:auto;' +
+    'font:10px monospace;white-space:pre-wrap;background:rgba(0,0,0,.8);color:#8dfc9a;';
+  document.body.appendChild(out);
+  function phase(s) { document.title = 'HELI_' + s; out.textContent = '[阶段] ' + s; try { console.log('[HELIREC] ' + s); } catch (e9) {} }
+  try {
+    phase('BOOT');
+    startKind = 'wz10'; startSide = 'ally';   // 玩家开局即直-10(红方专属,与 sides 一致)
+    startGame();
+    window._dbgPerfOn = true;                  // 开启 __SIM 步数/alpha 探针
+    window.__TANK_DEBUG = false;
+    setTimeout(function () {
+      try {
+        if (typeof clearAllAI === 'function') clearAllAI();   // 单机洁净空域
+        respawnQueue.length = 0;
+        var prm = (typeof HELI_PARAMS !== 'undefined' && HELI_PARAMS.wz10) || {};
+        if (typeof heliEngineStart === 'function') heliEngineStart(player);
+        player._heliRotorRPM = prm.rotorOmega0 || 30;
+        player._heliTailRotorRPM = (prm.rotorOmega0 || 30) * (prm.tailRatio || 0.2);
+        player._heliGovRunT = (typeof HELI_GOV_RAMP_TIME !== 'undefined') ? HELI_GOV_RAMP_TIME : 30;
+        player._heliStartPhaseT = 99;
+        player._heliCollective = 1.0;
+        keys.KeyW = true;                       // 前倾平飞
+        var t0 = gameT, rec = [], evts = [], tW0 = Date.now();
+        var y0 = player.yaw || 0, fx0 = Math.sin(y0), fz0 = Math.cos(y0);   // 起飞朝向前轴
+        var lastF = null, lastS = null, lastC = null, lastT = gameT, backN = 0, worstBack = 0;
+        try { console.log('[HELIREC] yaw0=' + y0.toFixed(2)); } catch (e9b) {}
+        phase('FLY');
+        var iv = setInterval(function () {
+          try {
+            if (!player || !player.alive || !player.group) { return; }
+            var rp = player.group.position, sp = player._ipP, pv = player._ipPv, cp = camera.position;
+            var fR = rp.x * fx0 + rp.z * fz0;                 // 渲染位置沿起飞前轴投影
+            var fS = sp ? sp.x * fx0 + sp.z * fz0 : null;     // 模拟位置同口径
+            var cM = Math.sqrt(cp.x * cp.x + cp.z * cp.z);
+            if (lastF != null) {
+              var dR = fR - lastF;                            // 本采样渲染位移(前+ / 退-)
+              if (dR < -0.15) {                               // ★倒退事件:用户症状的机器定义
+                backN++;
+                if (dR < worstBack) worstBack = dR;
+                var dS = (fS != null && lastS != null) ? fS - lastS : null;   // 模拟跟退否?
+                var dC = (lastC != null) ? cM - lastC : null;                 // 相机跳否?
+                evts.push([+gameT.toFixed(2), +dR.toFixed(2), dS == null ? null : +dS.toFixed(2),
+                  dC == null ? null : +dC.toFixed(2),
+                  player._heliAlt != null ? +player._heliAlt.toFixed(1) : null]);
+                try { console.log('[HELIREC-EVT] t=' + gameT.toFixed(1) + ' back=' + dR.toFixed(2) +
+                  ' simBack=' + (dS == null ? '?' : dS.toFixed(2)) + ' camD=' + (dC == null ? '?' : dC.toFixed(2)) +
+                  ' alt=' + (player._heliAlt != null ? player._heliAlt.toFixed(1) : '?')); } catch (e9c) {}
+              }
+            }
+            lastF = fR; lastS = fS; lastC = cM; lastT = gameT;
+            if (rec.length < 400) {
+              rec.push([+gameT.toFixed(3),
+                +rp.x.toFixed(3), +rp.y.toFixed(3), +rp.z.toFixed(3),
+                sp ? +sp.x.toFixed(3) : null, sp ? +sp.y.toFixed(3) : null, sp ? +sp.z.toFixed(3) : null,
+                pv ? +pv.x.toFixed(3) : null, pv ? +pv.y.toFixed(3) : null, pv ? +pv.z.toFixed(3) : null,
+                player._heliAlt != null ? +player._heliAlt.toFixed(2) : null,
+                +cp.x.toFixed(2), +cp.y.toFixed(2), +cp.z.toFixed(2),
+                window.__SIM ? window.__SIM.steps : null,
+                window.__SIM ? window.__SIM.droppedMs : null,
+                window.__SPIKE ? window.__SPIKE.n : 0]);
+            }
+            if (((gameT - t0) | 0) % 3 === 0 && gameT - t0 > 0.5 && (gameT * 10 | 0) % 30 === 0) {
+              try { console.log('[HELIREC] t=' + gameT.toFixed(1) + ' kind=' + player.kind +
+                ' eng=' + player._heliEngineState + ' phT=' + player._heliStartPhaseT +
+                ' rpm=' + (player._heliRotorRPM || 0).toFixed(1) + ' coll=' + (player._heliCollective || 0).toFixed(2) +
+                ' cap=' + (player._heliCollCap || 0).toFixed(2) + ' pwr=' + (player._heliPower || 0).toFixed(2) +
+                ' gov=' + (player._heliGovRunT || 0).toFixed(0) +
+                ' alt=' + (player._heliAlt != null ? player._heliAlt.toFixed(1) : '?') +
+                ' vx=' + (player._heliVx || 0).toFixed(1) + ' vz=' + (player._heliVz || 0).toFixed(1) +
+                ' f=' + fR.toFixed(1) + ' backN=' + backN); } catch (e9d) {}
+            }
+            if (gameT - t0 > 15 || Date.now() - tW0 > 45000) {
+              clearInterval(iv);
+              keys.KeyW = false;
+              out.textContent = JSON.stringify({ backN: backN, worstBack: +worstBack.toFixed(2), evts: evts, rec: rec });
+              document.title = 'HELI_DONE';
+              try { console.log('[HELIREC] DONE backN=' + backN + ' worst=' + worstBack.toFixed(2)); } catch (e9e) {}
+            }
+          } catch (e2) { clearInterval(iv); phase('FAIL'); out.textContent = 'FAIL: ' + (e2 && e2.stack || e2); }
+        }, 50);
+      } catch (e) { phase('FAIL'); out.textContent = 'FAIL: ' + (e && e.stack || e); }
+    }, 3000);
+  } catch (e0) { phase('FAIL'); out.textContent = 'FAIL: ' + (e0 && e0.stack || e0); }
 })();
 

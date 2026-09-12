@@ -1269,6 +1269,48 @@ var BATTLE_SETUP = {
   enemy:  { pool: CONF.startPool, cap: defaultCap('enemy'), roster: defaultRoster('enemy') }
 };
 
+/* ===== 触屏端(安卓/移动)默认编制覆盖 =====
+   ★2026-09-13:默认战场规模提到每阵营 40 台:直升机 2 / 火箭炮 2 / 防空车 1 台固定,
+   剩余名额在其余载具型号之间平均分配(除不尽的余数按注册表顺序补给靠前的型号)。
+   例:红方其余 tank/99/td 三型分 35 台 = 12+12+11;蓝方其余 tank/td 两型分 35 台 = 18+17。
+   桌面端(精确指针)完全不受影响,仍用上面的 CONF 默认编制。
+   注意:本段必须放在 VEHICLE_KINDS / vehicleKindAllowed / BATTLE_SETUP 之后。 */
+var IS_TOUCH_SETUP = (window.matchMedia && matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in window;
+var TOUCH_SETUP_CAP = 40;                                  // 触屏端每阵营最大在场载具数(★2026-09-13 由 20 提到 40)
+var TOUCH_SETUP_FIXED = { wz10: 2, ah64: 2, arty: 2, aa: 1 };   // 固定编成:直升机 2 / 火箭炮 2 / 防空车 1(型号不存在于该阵营时自动忽略;wz10 仅红方,ah64 仅蓝方,故每方直升机恰 2 台)
+if (IS_TOUCH_SETUP) {
+  (function () {
+    var teams = ['ally', 'enemy'];
+    for (var ti = 0; ti < teams.length; ti++) {
+      var tm = teams[ti], S = BATTLE_SETUP[tm];
+      // 1) 收集本阵营允许的型号(与编制菜单同一判定源)
+      var allowed = [];
+      for (var vi = 0; vi < VEHICLE_KINDS.length; vi++) {
+        var kd = VEHICLE_KINDS[vi].kind;
+        if (vehicleKindAllowed(tm, kd)) allowed.push(kd);
+      }
+      // 2) 先落固定编成,其余型号进"平均分配"队列
+      var next = {}, fixed = 0, rest = [];
+      for (var ai = 0; ai < allowed.length; ai++) {
+        var k = allowed[ai];
+        if (TOUCH_SETUP_FIXED[k] != null) { next[k] = TOUCH_SETUP_FIXED[k]; fixed += TOUCH_SETUP_FIXED[k]; }
+        else { next[k] = 0; rest.push(k); }
+      }
+      // 3) 余下名额平均分配,余数补给靠前的型号;严格保证 sum(roster) === cap
+      var left = Math.max(0, TOUCH_SETUP_CAP - fixed);
+      if (rest.length > 0) {
+        var each = Math.floor(left / rest.length), extra = left - each * rest.length;
+        for (var oi = 0; oi < rest.length; oi++) next[rest[oi]] = each + (oi < extra ? 1 : 0);
+      }
+      // 4) 回写 roster(非本阵营型号一律 0,杜绝幽灵配额)并同步 cap
+      var sum = 0;
+      for (var wi = 0; wi < allowed.length; wi++) { S.roster[allowed[wi]] = next[allowed[wi]]; sum += next[allowed[wi]]; }
+      S.cap = sum;
+      S.rosterBase = null;                                 // 让 scaleRosterToCap 以新 roster 作基线
+    }
+  })();
+}
+
 /* “td”保留为编制/菜单槽键以兼容存档与重部署队列,但作战平台按阵营分流:
    红方td=89式360°旋转重炮炮塔;蓝方td=M1A1旋转炮塔。isTD89Vehicle只负责89式远狙/重炮特性。 */
 function isM1Vehicle(t) { return !!t && t.kind === 'td' && t.team === 'enemy'; }

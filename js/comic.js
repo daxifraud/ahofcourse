@@ -443,6 +443,7 @@ function _comicAntennaSync() {
 function _comicFxTick() {
   var nw = performance.now(), dt = _cbLastT ? Math.min(0.08, (nw - _cbLastT) / 1000) : 0.016;
   _cbLastT = nw;
+  _comicFrameId++;                                     // ★E2-4:帧序号(链式殉爆同帧闸的唯一推进点)
   _cbTick(dt, nw / 1000);                              // 爆点动画+载具殉爆卡
   _comicMuzzleUpdate(dt);                              // 主炮漫画火光/炮口烟/高亮 halo
   _comicHitUpdate(dt);                                 // 炮弹命中三类型贴图
@@ -1505,13 +1506,22 @@ function _hzSmokeUpdate(dt){
     u.needsUpdate=al.needsUpdate=c.needsUpdate=true;
   }
 }
-/* B2 残骸长驻黑烟柱:注册表 + CSM 并入写盘(零新增 draw call,见 E2 钩子) */
-var WRSMOKE_MAX=999,WRSMOKE_AMT=1.0,WRSMOKE_TAU=90,WRSMOKE_FLOOR=0.5;
+/* B2 残骸长驻黑烟柱:注册表 + CSM 并入写盘(零新增 draw call,见 E2 钩子)
+   ★E1-8(附录 B §B.4):原实现有两个移动端致命点——
+     ① 上限 999 柱、衰减下限 WRSMOKE_FLOOR=0.5 ⇒ 永不消失,随消耗战单调累积
+        (兵力 200:200,后期数百具残骸 × 每具每帧 2 张世界尺寸卡);
+     ② _wreckSmokeWrite **完全没有距离/视锥门** —— 活载具的烟走 _csmRefreshVisible 的
+        「600m + 投影出屏」双门,残骸烟柱却绕过了它,无条件灌进 _csmMesh(frustumCulled=false)。
+   这两点叠加 = 用户报告的「爆炸之后就一直卡、越打越卡」。现按档限量 + 加距离门。
+   距离门用平方比较(零开方),且**不做投影测试**:投影要 camera.updateMatrixWorld + project,
+   逐柱逐帧做反而把 GPU 问题搬成 CPU 问题;屏外实例的片元本来就被 GPU 裁掉,省的是混合填充。 */
+var WRSMOKE_MAX=gfxFx('fxWreckSmoke',999),WRSMOKE_AMT=1.0,WRSMOKE_TAU=90,WRSMOKE_FLOOR=0.5;
+var WRSMOKE_R2=(function(){var r=gfxFx('fxSmokeR',0);return r>0?r*r:Infinity;})();   // 可见半径平方(0/高档=不限)
 var _wreckSmokeList=[];
 function wreckSmokeRegister(t){
   if(!t||!t.group||!t.group.position)return;
   for(var i=0;i<_wreckSmokeList.length;i++)if(_wreckSmokeList[i].t===t)return;
-  while(_wreckSmokeList.length>=WRSMOKE_MAX)_wreckSmokeList.shift();   // 上限 999 柱,最旧优先熄灭
+  while(_wreckSmokeList.length>=WRSMOKE_MAX)_wreckSmokeList.shift();   // 上限按档(高 999/中 48/低 24),最旧优先熄灭
   var now=(typeof _csmClock!=='undefined')?_csmClock:0;
   _wreckSmokeList.push({t:t,born:now,seed:Math.random(),ph:Math.random(),sj:_sfxJit()});
 }
@@ -1519,12 +1529,14 @@ function wreckSmokeClear(){_wreckSmokeList.length=0;}
 function _wreckSmokeWrite(){
   if(WRSMOKE_AMT<=0||!_wreckSmokeList.length)return;
   var now=(typeof _csmClock!=='undefined')?_csmClock:0;
+  var camP=(WRSMOKE_R2!==Infinity&&typeof camera!=='undefined'&&camera)?camera.position:null;
   for(var i=0;i<_wreckSmokeList.length;i++){
     var W=_wreckSmokeList[i],t=W.t;
     if(!t||!t.group||!t.group.position)continue;   // 引用失效即跳过(位置逐帧读 live,坠机残骸下落过程自动跟随)
+    var px=t.group.position.x,py=t.group.position.y,pz=t.group.position.z;
+    if(camP){var gdx=px-camP.x,gdz=pz-camP.z;if(gdx*gdx+gdz*gdz>WRSMOKE_R2)continue;}   // ★E1-8 距离门(确定性,无闪断)
     var age=now-W.born;if(age<0)age=0;
     var envA=WRSMOKE_FLOOR+(1-WRSMOKE_FLOOR)*Math.exp(-age/WRSMOKE_TAU);   // 浓黑→薄烟下限,此后长期驻留
-    var px=t.group.position.x,py=t.group.position.y,pz=t.group.position.z;
     var wx=Math.sin(W.seed*6.2832),wz=Math.cos(W.seed*6.2832);   // 风向定死/残骸,同柱两卡同向 leaning
     for(var k=0;k<2;k++){
       var life=(k===0?7.0:9.5);   // 缕寿命 7~9.5s:发动机烟(约 1s)的 8 倍速慢放
@@ -1920,11 +1932,20 @@ var CB_POOL=28,_cbPool=null,_cbSerial=0;   // 28 槽=双门齐射交错稳态并
 /* ★任务27⑥:饱和降级调速器——池按「双门齐射」设计,猎杀 AI 8 门同拍齐射时到达率 ~10/s×2.8s 寿命
    把 28 槽顶满(实测 cbPeak=28):槽位争抢=卡在同一集群反复闪现,三大张面×3.4 距离补偿=填充率卡。
    活跃卡 ≥HI 后续爆点降级(短寿命/小幅面/无地面高亮),≤LO 恢复;滞回防振荡。纯视觉,玩法零改动。 */
-var CB_SAT_HI=12,CB_SAT_LO=8,_cbSat=false,_cbDegN=0,_cbLive=0,CB_HARD_MAX=24;
+var CB_SAT_HI=gfxFx('fxSatHi',12),CB_SAT_LO=gfxFx('fxSatLo',8),_cbSat=false,_cbDegN=0,_cbLive=0,CB_HARD_MAX=gfxFx('fxHardMax',24);
 /*   参数依据(dbg_burstline 实测):到达率峰值 ~10/s → 降级卡稳态并发 ≈ 率×1.2s 寿命 ≈ 12;
    HI=12 触发时存量满幅卡 ≤12 张(2.8s 内衰减),叠加降级稳态后瞬态 ≤~22 < 28 槽,
-   槽位争抢(丢新保旧抢最旧)全程不触发;≥24 硬顶=极端双风暴时干脆不出卡(扬尘/弹坑/焦土/音效照常)。 */
+   槽位争抢(丢新保旧抢最旧)全程不触发;≥24 硬顶=极端双风暴时干脆不出卡(扬尘/弹坑/焦土/音效照常)。
+   ★E1-3(附录 B):以上全部是**桌面档**标定。触屏端 GPU 填充率只有桌面的零头,同样的 12 张满幅卡
+   =峰值 ~36 层近全屏 alpha 混合,必卡;故三档门限改从 GFX 取(中 5/3/10、低 3/2/6)。
+   只收紧门限、不动 CB_POOL=28 —— 池容量牵动内存布局与抢槽语义(丢新保旧),不是并发闸。 */
 var VB_POOL=8,_vbPool=null,_vbSerial=0;
+/* ★E1-5/E2-1/E2-4(附录 B)档位快照:模块加载期取一次(GFX 在 scene.js 里已就位,见 index.html MODULES 序)。
+   · _cbGroundLight=false ⇒ 不出 36m 地面加法高亮面(三层里最大的一层)
+   · CB_BIG_TEX         ⇒ 爆炸贴图基准边长(1024→512:火光+3 变体烟 21MB→5.3MB,采样带宽 −75%)
+   · VB_FRAME_MAX       ⇒ 同帧殉爆卡上限(0=不限;链式殉爆时后续降级为小口径爆点卡) */
+var _cbGroundLight=gfxFx('fxGroundLight',true),CB_BIG_TEX=gfxFx('fxBigTex',1024),VB_FRAME_MAX=gfxFx('fxBurstMerge',0);
+var _comicFrameId=0,_vbFrameId=-1,_vbFrameN=0;   // 帧序号仅由 _comicFxTick 推进(E2-4 同帧闸用)
 var _cbPetalTex=null,_cbSplatTex=null,_cbSplatTexs=null,_cbCoreTex=null; // 新火光/烟/亮度贴图
 var _cbFireGeo=null,_comicExplosionSmokeGeo=null,_cbLightGeo=null;
 var _vbCanopyTex=null,_vbStemTex=null,_vbSkirtTex=null,_vbDebrisTex=null,_vbFlashTex=null;
@@ -1938,8 +1959,18 @@ var CB_GROUND_EPS=.055;
 var _cbScaleCtx={ready:false,epoch:0,scoped:false,cx:0,cy:0,cz:0};
 /* 与载具殉爆完全一致的印刷色板:墨黑轮廓、橙色外焰、纯黄主体、暖黄高光。 */
 var COMIC_DET_INK='#1b100b',COMIC_DET_ORANGE='#f26a21',COMIC_DET_ORANGE_HI='#ff8d19',COMIC_DET_YELLOW='#ffc400',COMIC_DET_YELLOW_HI='#ffd72a',COMIC_DET_RUST='#d84b25';
+/* ★E2-1(附录 B):爆炸贴图边长按画质档。绘制代码全部按 1024 基准的硬编码坐标写死,
+   所以这里只换画布尺寸 + 一次 g.scale(S/1024) —— 下面几百行贝塞尔/花瓣/尖芒坐标**一个都不用改**,
+   图案逐点等比缩小。火光 1 张 + 烟 3 变体 = 21MB → 5.3MB(含 mip),采样带宽 −75%。 */
+function _cbTexCanvas(){
+  var S=CB_BIG_TEX,cv=document.createElement('canvas');cv.width=cv.height=S;
+  var g=cv.getContext('2d');g.clearRect(0,0,S,S);
+  if(S!==1024)g.scale(S/1024,S/1024);
+  g.lineJoin='round';g.lineCap='round';
+  return {cv:cv,g:g};
+}
 function _cbMakeRocketFireTex(){
-  var cv=document.createElement('canvas');cv.width=cv.height=1024;var g=cv.getContext('2d'),rnd=mulberry32(0xF17E2028);g.clearRect(0,0,1024,1024);g.lineJoin='round';g.lineCap='round';
+  var _c=_cbTexCanvas(),cv=_c.cv,g=_c.g,rnd=mulberry32(0xF17E2028);
   function poly(pts,fill,stroke,lw){g.beginPath();g.moveTo(pts[0][0],pts[0][1]);for(var i=1;i<pts.length;i++)g.lineTo(pts[i][0],pts[i][1]);g.closePath();g.fillStyle=fill;g.fill();if(stroke){g.strokeStyle=stroke;g.lineWidth=lw||10;g.stroke();}}
   /* 最新参考图的放射尖芒:以(512,512)为唯一中心,亮黄长芒配少量白色内芒。 */
   function spike(tx,ty,bx,by,w,fill){var dx=tx-bx,dy=ty-by,L=Math.sqrt(dx*dx+dy*dy)||1,px=-dy/L,py=dx/L;poly([[bx+px*w,by+py*w],[tx,ty],[bx-px*w,by-py*w],[bx-dx*.12,by-dy*.12]],fill,null,0);}
@@ -1967,13 +1998,13 @@ function _cbMakeRocketFireTex(){
   /* 极少数微小橙色碎焰。 */for(i=0;i<5;i++){var px=118+rnd()*800,py=205+rnd()*585;if(Math.abs(px-512)<240&&Math.abs(py-512)<230)continue;g.beginPath();g.arc(px,py,8+rnd()*7,0,TAU);g.fillStyle='#ff9500';g.fill();}
   var t=new THREE.CanvasTexture(cv);t.minFilter=THREE.LinearMipmapLinearFilter;t.magFilter=THREE.LinearFilter;t.generateMipmaps=true;if(THREE.sRGBEncoding)t.encoding=THREE.sRGBEncoding;return t;}
 function _cbMakeRocketSmokeTex(v){
-  var cv=document.createElement('canvas');cv.width=cv.height=1024;var g=cv.getContext('2d');g.clearRect(0,0,1024,1024);g.lineJoin='round';g.lineCap='round';
+  var _c=_cbTexCanvas(),cv=_c.cv,g=_c.g;
   /* FX7-CB:3变体构图(v=0端正/1宽冠斜柱/2高穹粗柱) */
   paintCB(g,v||0);
   var t=new THREE.CanvasTexture(cv);t.minFilter=THREE.LinearMipmapLinearFilter;t.magFilter=THREE.LinearFilter;t.generateMipmaps=true;if(THREE.sRGBEncoding)t.encoding=THREE.sRGBEncoding;return t;}
 
 function _cbMakeRocketLightTex(){var cv=document.createElement('canvas');cv.width=cv.height=128;var g=cv.getContext('2d'),r=g.createRadialGradient(64,64,0,64,64,63);r.addColorStop(0,'rgba(255,255,230,.95)');r.addColorStop(.25,'rgba(255,216,92,.62)');r.addColorStop(.65,'rgba(255,112,14,.20)');r.addColorStop(1,'rgba(255,75,5,0)');g.fillStyle=r;g.fillRect(0,0,128,128);var t=new THREE.CanvasTexture(cv);t.minFilter=THREE.LinearMipmapLinearFilter;t.magFilter=THREE.LinearFilter;t.generateMipmaps=true;return t;}
-function _cbBuildEntry(slot){var grp=new THREE.Group(),face=new THREE.Group(),e={on:false,t:0,age:0,life:2.8,mirror:1,sMul:1,sizeJitter:_sfxJit(),yieldK:1,scaleEpoch:-1,rangeVisible:true,distRef:55,distMin:.95,distMax:3.4,scalePointY:0,burstY:0};
+function _cbBuildEntry(slot){var grp=new THREE.Group(),face=new THREE.Group(),e={on:false,t:0,age:0,life:2.8,mirror:1,sMul:1,sizeJitter:_sfxJit(),yieldK:1,scaleEpoch:-1,rangeVisible:true,distRef:55,distMin:.95,distMax:gfxFx('fxDistMax',3.4),scalePointY:0,burstY:0};
   e.fireMat=new THREE.MeshBasicMaterial({map:_cbPetalTex,transparent:true,opacity:0,depthWrite:false,side:THREE.DoubleSide,blending:THREE.NormalBlending,toneMapped:false,fog:false});
   e.smokeMat=new THREE.MeshBasicMaterial({map:_cbSplatTex,transparent:true,opacity:0,depthWrite:false,side:THREE.DoubleSide,toneMapped:false,fog:true});
   e.lightMat=new THREE.MeshBasicMaterial({map:_cbCoreTex,transparent:true,opacity:0,depthWrite:false,side:THREE.DoubleSide,blending:THREE.AdditiveBlending,toneMapped:false,fog:false});
@@ -2227,7 +2258,7 @@ function _vbBuildEntry(seedI) {
   var grp = new THREE.Group(), face = new THREE.Group();
   var e = {
     on: false, age: 0, t: 0, life: 2.75, sMul: 1, sizeJitter: _sfxJit(), yieldK: 1,
-    scaleEpoch: -1, rangeVisible: true, distRef: 70, distMin: 0.94, distMax: 3.1, scalePointY: 1.5,
+    scaleEpoch: -1, rangeVisible: true, distRef: 70, distMin: 0.94, distMax: Math.min(3.1, gfxFx('fxDistMax', 3.1)), scalePointY: 1.5,
     phase: seedI * 1.73, spN: 18,
     spDir: new Float32Array(18 * 3), spVel: new Float32Array(18), spSize: new Float32Array(18)
   };
@@ -2351,10 +2382,10 @@ function comicArtyBurst(bp, rSplash) {
   e.life = e.deg ? 1.2 : 2.8;
   if (e.deg) _cbDegN++;
   var splashRadius = (rSplash != null && rSplash > 0) ? rSplash : 22.0;
-  e.yieldK = splashRadius / 22.0;                         // 贴图大小与爆炸半径自动线性关联 (22m=1.0x, 11m=0.5x)
+  e.yieldK = Math.min(splashRadius / 22.0, gfxFx('fxYieldMax', 2.0));   // 贴图大小与爆炸半径自动线性关联 (22m=1.0x, 11m=0.5x);★E1-2:当量放大上限按档钳(M142 44m 本来吃满 2.0)
   e.burstY = bp.y; e.group.position.copy(bp);
   _cbRefreshRocketGround(e);                              // 火光/高亮先钉当前地表;爆心高度另存给炮镜判定
-  e.fire.visible = e.smoke.visible = true; e.light.visible = !e.deg; _cbRefreshActiveScale(e); _cbAnim(e, 0);   // ★任务27⑥:降级卡省掉 36m 加法高亮面
+  e.fire.visible = e.smoke.visible = true; e.light.visible = !e.deg && _cbGroundLight; _cbRefreshActiveScale(e); _cbAnim(e, 0);   // ★任务27⑥:降级卡省掉 36m 加法高亮面;★E1-5:触屏档整档关闭该面
 }
 
 /* ===== 载具蘑菇云入场(燃爆=1.5,殉爆=2.1) ===== */
@@ -2363,10 +2394,23 @@ function comicBurstFX(bp, scale) {
   _cbPrepareScaleContext(performance.now() / 1000, false);
   var C = _cbScaleCtx, dx0 = bp.x - C.cx, dy0 = bp.y - C.cy, dz0 = bp.z - C.cz;
   if (!scopeFarVisible(C.scoped, dx0 * dx0 + dy0 * dy0 + dz0 * dz0)) return;   // 2km 硬裁剪(镜内直通,通用口径)
+  /* ★E2-4(附录 B §B.5):链式殉爆同帧闸。一发大当量弹落进车群时,applySplash → 弹药架归零 →
+     detonate → explosion → 本函数,可在**同一帧内**连续触发多次;每张殉爆卡是 6 个透明 Mesh
+     (冠/柱/裙/闪/烟/碎块),8 槽池会被同帧刷满 = 瞬时 ~48 层近全屏混合。
+     闸只挡"同帧第 N 张之后"的大卡,改出小口径爆点卡(3 层)保留爆炸可读性;
+     伤害/击毁/音效/弹坑全在调用方,完全不受影响。高档 VB_FRAME_MAX=0 ⇒ 不限,行为与改动前一致。 */
+  if (VB_FRAME_MAX > 0) {
+    if (_vbFrameId !== _comicFrameId) { _vbFrameId = _comicFrameId; _vbFrameN = 0; }
+    if (_vbFrameN >= VB_FRAME_MAX) {
+      if (typeof comicArtyBurst === 'function') comicArtyBurst(bp, 16.0);   // 降级:小口径爆点卡(仍有火光+烟,层数减半)
+      return;
+    }
+    _vbFrameN++;
+  }
   try { _vbEnsurePool(); } catch (err) { return; }            // 纯视觉失败绝不打断伤害/声音主链
   var e = poolIdleOldest(_vbPool, VB_POOL) || _vbPool[0];
   e.on = true; e.age = ++_vbSerial; e.t = 0; e.scaleEpoch = -1;
-  e.yieldK = clamp((scale || 1.5) / 1.5, 0.9, 1.28);         // 殉爆比燃爆宽/高约 28%,不再简单整贴图翻倍
+  e.yieldK = Math.min(clamp((scale || 1.5) / 1.5, 0.9, 1.28), gfxFx('fxYieldMax', 2.0));   // 殉爆比燃爆宽/高约 28%,不再简单整贴图翻倍;★E1-2:再按档钳当量上限
   /* 炮镜视角整张屏幕使用爆炸当量原生尺寸(燃爆1×、殉爆1.28×),绝不叠加距离补偿;
      退出炮镜后继续采用有限图标化,保证第三人称远景可读。 */
   e.sizeJitter = _sfxJit();          // 镜内亦消费但不应用,保持视觉分支 RNG 调用数不变(_sfxJit 同样只消耗 1 个 Math.random(),幅度统一为 [0.85,1.15])
@@ -2404,7 +2448,7 @@ function _cbAnim(e,dt){if(!e.on)return;e.t+=dt;var k=e.t/e.life;if(k>=1){e.on=fa
   /* 画布中心、平面原点和真实爆点三者重合;地形/弹坑重锚只改变根节点,scalePointY会反向补偿。 */
   e.fire.scale.set(e.mirror*fireScale,fireScale,fireScale);e.fire.position.set(0,e.scalePointY,0);e.fire.rotation.z=0;e.fireMat.opacity=fireFade;e.fire.visible=fireFade>.005;
   var E=comicSmokeExpand(P.smokeAge,COMIC_EXP_ROCKET.smokeLife,.06,1.82,.62,.62,2.8,.72);e.smoke.scale.set(E.scale*s*1.15,E.scale*s*1.15,E.scale*s*1.15);e.smoke.position.y=(8.9+E.rise)*s*1.15;e.smokeMat.opacity=P.smokeOn?.92*E.alpha:0;e.smoke.visible=P.smokeOn;
-  var lf=Math.max(0,1-e.t/.38);e.light.scale.set(36*s,1,36*s);e.lightMat.opacity=.40*lf;
+  if(_cbGroundLight){var lf=Math.max(0,1-e.t/.38);e.light.scale.set(36*s,1,36*s);e.lightMat.opacity=.40*lf;}   // ★E1-5:关档时连尺度/透明度都不必算(该面恒不可见)
 }
 /* 载具专属时间轴:地裙先铺、火柱上冲、云冠随后横向翻开;不再套用火箭花球动画。 */
 function _vbAnim(e, dt) {
@@ -2978,4 +3022,50 @@ function comicPrewarm() {
   }
 }
 window.comicPrewarm = comicPrewarm;
+/* ★E1-6(附录 B §B.2):把全部漫画特效贴图交出去,供 main.js 在加载期逐张 renderer.initTexture()。
+   为什么必须有这一步 —— 实测本工程内置 three 的 compile 实现:
+     this.compile=function(t,e){ ... t.traverse(function(e){const n=e.material; if(n) ... Pt(n,t,e)}) }
+   它只走 initMaterial/getProgram(链接着色器),**完全不碰纹理**;而同一份文件里有现成的
+     initTexture=function(t){ J.setTexture2D(t,0), q.unbindTexture() }
+   所以在 E1-6 之前,爆点/殉爆两池约 24MB 的 1024²/512² 画布贴图仍然是在
+   「第一次爆炸被渲染的那一帧」才做 texImage2D + glGenerateMipmap ——
+   Android WebView 下 canvas→texture 常走 CPU readback 慢路径,单帧数百 ms。
+   这正是「哪怕只炸一次也要卡一下」的那一份,与并发数无关,任务27③ 的预热并没有覆盖到。
+   返回值含 null(未建的懒池贴图)由调用方跳过;顺序无关。 */
+function comicFxTextures() {
+  var a = [_comicBrush, _comicBurnTex, _comicBurnSmokeTex,
+           _cmzSideTex, _cmzFrontTex, _cmzSmokeTex, _cmzIllumTex,
+           _chiTex, _chsTex, _csmTex, _crtTex, _cgdTex, _ctdTex, _crlSmokeTex,
+           _cbPetalTex, _cbCoreTex,
+           _vbCanopyTex, _vbStemTex, _vbSkirtTex, _vbDebrisTex, _vbFlashTex,
+           _tacTex, _cmdStarTex];
+  if (_cbSplatTexs) for (var i = 0; i < _cbSplatTexs.length; i++) a.push(_cbSplatTexs[i]);
+  else if (_cbSplatTex) a.push(_cbSplatTex);
+  return a;
+}
+window.comicFxTextures = comicFxTextures;
+/* ★附录 B §B.7.1:爆炸专项探针。dcAudit 只数"可见网格个数",完全不反映卡的**面积**——
+   而本专项的瓶颈恰恰是面积×层数,所以判定必须看活跃卡数与 avgRenderMs 的相关性。
+   纯读取、零副作用,控制台随时 __FXLIVE();判定矩阵见文档 §B.7.3。 */
+window.__FXLIVE = function () {
+  return {
+    cb: _cbLive, cbDeg: _cbDegN, cbSat: _cbSat,                      // 爆点卡:活跃/累计降级/是否饱和
+    vb: (function () { var n = 0; if (_vbPool) for (var i = 0; i < VB_POOL; i++) if (_vbPool[i].on) n++; return n; })(),
+    crt: _crtLive, cgd: _cgdLive, ctd: _ctdLive, crl: _crlLive,       // 尾迹/扬尘/刨土/发射烟
+    csm: _csmActive, wsmoke: _wreckSmokeList.length, rkl: _rklLive,   // 行进烟总写入/残骸烟柱/弹道线
+    gfx: (typeof GFX_PROFILE !== 'undefined') ? GFX_PROFILE : '?',
+    fxq: (typeof FXQ_PROFILE !== 'undefined') ? FXQ_PROFILE : '?',   // 爆炸独立档(与画质解耦后以此为准)
+    knobs: { distMax: gfxFx('fxDistMax', 3.4), yieldMax: gfxFx('fxYieldMax', 2.0), satHi: CB_SAT_HI,
+             hardMax: CB_HARD_MAX, groundLight: _cbGroundLight, bigTex: CB_BIG_TEX,
+             wreckMax: WRSMOKE_MAX, burstMerge: VB_FRAME_MAX }
+  };
+};
 window.comicBattleClear = comicBattleClear;
+
+/* ★★ 加载期预热的**唯一触发点**(修正长期失效的接线,见 main.js gamePrewarm 的注释)——
+   comic.js 是 index.html MODULES 序里最后一个玩法模块,到这一行时:
+     renderer/scene/camera(scene.js) √  fx 池(fx.js) √  漫画池与贴图清单(本文件,上方已全部定义) √
+   所以这里是"全部依赖就位、且仍在首帧之前"的唯一正确位置。
+   旧接线把调用写在 main.js 里,而 main.js 先于本文件执行 ⇒ typeof comicPrewarm 恒为 false,
+   预热(池构建 + 着色器预链接 + E1-6 贴图上传)整块被静默跳过,首爆必卡。 */
+if (typeof gamePrewarm === 'function') gamePrewarm();

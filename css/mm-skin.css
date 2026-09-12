@@ -176,12 +176,6 @@
   color: #061006 !important;
   border-color: #c8ffc0 !important;
 }
-#startov.mm-skin .mm-bug-tag {
-  color: #6f9a63 !important;
-  background: rgba(6,12,5,.9) !important;
-  border: 1px solid #3d4a2e !important;
-  font-family: VT323, monospace !important;
-}
 #startov.mm-skin .mm-hangar-stamp {
   background: #0e160a !important;
   color: #9dffa8 !important;
@@ -567,17 +561,6 @@
   height: 24px;
   fill: currentColor;
 }
-.mm-bug-tag {
-  font-size: 10px;
-  color: #8a927a;
-  letter-spacing: .05em;
-  background: rgba(20, 22, 16, 0.88);
-  padding: 4px 8px;
-  border: 1px solid rgba(217, 167, 46, 0.3);
-  box-shadow: 2px 2px 0 rgba(0,0,0,0.4);
-  border-radius: 2px;
-}
-
 /* ⑦ 模态弹窗系统 (Modal Dialogs: 遭遇战参数 & 游戏设置+操作说明) */
 .mm-modal-dialog {
   position: fixed!important;

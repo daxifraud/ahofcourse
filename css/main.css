@@ -26,8 +26,17 @@
     --hud-paper: rgba(252,249,240,.92);   /* 漫画纸白面板底 */
     --hud-line: #141414;                  /* 面板描边(墨) */
     --hud-amber: #ffd93b;                 /* 漫画黄(触控键按压/点亮态、摇杆芯) */
-    --tch-edge:#d9a72e; --tch-edge-dim:#6b5a24; --tch-txt:#e8c86a; --tch-dim:#9aa184;   /* A 橄榄琥珀:触屏键描边/文字 */
-    --tch-bg1:rgba(35,39,32,.92); --tch-bg2:rgba(20,22,17,.94); --tch-press-txt:#141610;   /* A:触屏键底渐变/按压文字(墨) */
+    /* —— 分区三:触屏磷光键(磷光军事 BIOS P1,安卓触控按钮重绘演示.html 定稿,绿磷光写死)—— */
+    --ph:#9dffa8; --phb:#c8ffc0; --phd:#6f9a63;          /* 磷光绿:标准/亮/暗 */
+    --ring:rgba(157,255,168,.38); --ring-hi:rgba(200,255,192,.9);
+    --dash:rgba(157,255,168,.18); --tick:rgba(157,255,168,.55);
+    --fill-c:rgba(10,18,8,.10); --fill-e:rgba(10,18,8,.34);  /* 中心→边缘 微暗角(半透明) */
+    --fill-p:rgba(14,22,10,.55);                              /* 按下加深 */
+    --glow:rgba(157,255,168,.5); --bloom:rgba(157,255,168,.28);
+    --line:#3d4a2e; --bg:#0e160a; --bg2:#060c05;
+    --sig:#ffc857; --sig-ring:rgba(255,200,87,.45); --sig-glow:rgba(255,200,87,.55);
+    --warn:#ff8f6e; --warn-ring:rgba(255,143,110,.5);
+    --ally:#e05247; --foe:#5f97e8;
     --hud-radius: 3px;                    /* 统一圆角 */
 
     /* —— 分区二:菜单 UI(漫画风:纸白 + 墨线 + 漫画黄)—— */
@@ -430,6 +439,11 @@
     pointer-events: none;
     box-sizing: border-box;
     padding: 6px;
+    /* 触屏自定义布局:与其它触控键同一套缩放机制(--ts 由 flow.js 的 layApply 写入;
+       transform-origin:center 保证"以中心缩放",与 layApply 用中心点定位的口径一致,
+       转屏/拖动时不会因为原点不同而漂移)。桌面端不写 --ts,scale(1) 恒等,零影响。 */
+    transform: scale(var(--ts,1));
+    transform-origin: center;
   }
   .mfd-bezel {
     display: flex;
@@ -697,56 +711,180 @@
      强度 0 时 display:none 连合成也免掉。桶形畸变仍在场景合成着色器内(DOM 无零成本畸变手段)。
      三层背景:①二次暗角 ②横向扫描线(2px 周期) ③纵向三元荫罩(3px 周期),与原着色器 CRT 同口径。 */
   /* ===== 触屏操控层(flow.js 触控区段;仅粗指针设备挂载,桌面恒 hidden) ----
-     漫画风统一基类 .tbtn:纸白底+墨描边+硬投影+按下缩放/黄底;各键仅保留口径差异(尺寸/描边色/旋转)。
+     磷光军事 BIOS 皮肤(安卓触控按钮重绘演示.html 定稿,绿磷光 P1 写死,旧漫画琥珀硬壳已整段删除):
+     结构(.tbtn 定位壳:fixed 层叠 + --ts 自定义缩放 + 手势三件套,零视觉)与皮肤(.pb 圆键/.pbx 方键/.joy 摇杆)分离;
+     布局/尺寸/--ts 缩放/自定义编辑器全部保留,键 id 与 tbtn/theli-sub 类钩子不动,零 JS 结构改动。
      摇杆底盘 pointer-events:none(触摸判定在 document 级);全件 touch-action:none 防浏览器手势抢占。 ===== */
-  .tbtn { position:fixed; z-index:150; background:linear-gradient(180deg,var(--tch-bg1),var(--tch-bg2)); border:2px solid var(--tch-edge);
-    padding:0; color:var(--tch-txt); display:flex; align-items:center; justify-content:center; gap:6px;
-    box-shadow:2px 3px 0 rgba(0,0,0,.55); transform:scale(var(--ts,1));
-    touch-action:none; user-select:none; -webkit-user-select:none; -webkit-tap-highlight-color:transparent; }
-  .tbtn.pressed { transform:scale(var(--ts,1)) translate(2px,3px); box-shadow:0 0 0 rgba(0,0,0,0); background:var(--tch-edge); color:var(--tch-press-txt); }
-  .tbtn.lit { box-shadow:2px 3px 0 rgba(0,0,0,.55),0 0 12px rgba(217,167,46,.45),inset 0 0 8px rgba(217,167,46,.45); }
-  .tbtn.lit::after { content:''; position:absolute; top:5px; right:5px; width:7px; height:7px; border-radius:50%; background:var(--tch-edge); box-shadow:0 0 6px rgba(217,167,46,.6); }
+  .tbtn { position:fixed; z-index:150;
+    padding:0; background:transparent; border:none; touch-action:none;
+    user-select:none; -webkit-user-select:none; -webkit-tap-highlight-color:transparent;
+    transform:scale(var(--ts,1)); }
+  /* —— 磷光圆键(开火/炮镜/夜视/热像/弃车/指挥/占领/跟随/激光):半透明无底填充,视野零遮挡 —— */
+  .pb { /* ★定位只许来自 .tbtn(fixed):演示页那条相对定位声明绝不能带进来,否则与 .tbtn 同特异性且后出现,
+         会把全部按钮拉回文档流、堆在 body 顶部把画布顶出可视区=黑屏+按钮乱套(2026-09-13 事故) */
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
+    border-radius:50%; border:none; cursor:pointer; color:var(--ph); background:transparent;
+    -webkit-tap-highlight-color:transparent; user-select:none; touch-action:manipulation;
+    transition:transform .06s; }
+  .pb .disc { position:absolute; inset:0; border-radius:50%;
+    background:radial-gradient(circle at 50% 46%, var(--fill-c) 42%, var(--fill-e) 100%);
+    box-shadow:inset 0 0 0 1.5px var(--ring);
+    transition:box-shadow .12s, background .12s; }
+  .pb .disc::before { content:''; position:absolute; inset:7px; border-radius:50%; border:1px dashed var(--dash); }
+  .pb .disc::after { content:''; position:absolute; inset:0; border-radius:50%;
+    background:
+      linear-gradient(var(--tick),var(--tick)) 50% 0/2px 7px no-repeat,
+      linear-gradient(var(--tick),var(--tick)) 50% 100%/2px 7px no-repeat,
+      linear-gradient(var(--tick),var(--tick)) 0 50%/7px 2px no-repeat,
+      linear-gradient(var(--tick),var(--tick)) 100% 50%/7px 2px no-repeat; }
+  .pb svg { position:relative; width:56%; height:56%; filter:drop-shadow(0 0 5px var(--glow)); transition:filter .12s; }
+  .pb svg * { vector-effect:non-scaling-stroke; }
+  .pb .lab { position:relative; font-family:VT323,"Courier New",monospace; font-size:11px; letter-spacing:.22em;
+    color:var(--phd); line-height:1; margin-top:-2px; text-shadow:0 0 6px rgba(0,0,0,.8); }
+  .tbtn.pb.pressed { transform:scale(var(--ts,1)) scale(.94); }
+  .tbtn.pb.pressed .disc { background:radial-gradient(circle at 50% 46%, var(--fill-p) 30%, var(--fill-e) 100%);
+    box-shadow:inset 0 0 0 1.5px var(--ring-hi), 0 0 22px var(--bloom); }
+  .tbtn.pb.pressed svg { filter:drop-shadow(0 0 9px var(--glow)); color:var(--phb); }
+  .pb.lit .disc { box-shadow:inset 0 0 0 1.5px var(--sig-ring), 0 0 16px rgba(255,200,87,.22); }
+  .pb.lit { color:var(--sig); }
+  .pb.lit svg { filter:drop-shadow(0 0 7px var(--sig-glow)); }
+  .pb.lit .lab { color:var(--sig); }
+  .pb .led { position:absolute; top:6px; right:6px; width:6px; height:6px; border-radius:50%; background:var(--sig);
+    box-shadow:0 0 7px var(--sig-glow); animation:ledBlink 1.3s steps(2,start) infinite; display:none; }
+  .pb.lit .led { display:block; }
+  @keyframes ledBlink { 50% { opacity:.25; } }
+  /* 信号琥珀变体(开火专用)/ 警戒红变体(弃车强调) */
+  .pb.sig { color:var(--sig); }
+  .pb.sig .disc { box-shadow:inset 0 0 0 1.5px var(--sig-ring); }
+  .pb.sig .disc::before { border-color:rgba(255,200,87,.2); }
+  .pb.sig .disc::after { background:
+      linear-gradient(var(--sig-ring),var(--sig-ring)) 50% 0/2px 7px no-repeat,
+      linear-gradient(var(--sig-ring),var(--sig-ring)) 50% 100%/2px 7px no-repeat,
+      linear-gradient(var(--sig-ring),var(--sig-ring)) 0 50%/7px 2px no-repeat,
+      linear-gradient(var(--sig-ring),var(--sig-ring)) 100% 50%/7px 2px no-repeat; }
+  .pb.sig svg { filter:drop-shadow(0 0 6px var(--sig-glow)); }
+  .pb.sig .lab { color:var(--sig); }
+  .tbtn.pb.sig.pressed .disc { box-shadow:inset 0 0 0 2px rgba(255,143,110,.95), 0 0 26px rgba(255,143,110,.4); }
+  .tbtn.pb.sig.pressed svg { color:var(--warn); filter:drop-shadow(0 0 10px rgba(255,143,110,.7)); }
+  .pb.warnline .disc { box-shadow:inset 0 0 0 1.5px var(--warn-ring); }
+  .pb.warnline svg .acc { stroke:var(--warn); }
+  .pb.lasline svg .acc { stroke:#5f97e8; }
+  .pb .pring { position:absolute; left:-4px; top:-4px; width:calc(100% + 8px); height:calc(100% + 8px); transform:rotate(-90deg); pointer-events:none; }
+  .pb .pring .prbg { fill:none; stroke:currentColor; stroke-opacity:.14; stroke-width:1.5; stroke-dasharray:2 6; }
+  .pb .pring .prfg { fill:none; stroke:#5f97e8; stroke-width:3; stroke-linecap:round; opacity:.95; filter:drop-shadow(0 0 4px rgba(95,151,232,.7)); }
+  .pb.lasline.firing .disc { box-shadow:inset 0 0 0 1.5px rgba(95,151,232,.85), 0 0 18px rgba(95,151,232,.3); }
+  .pb.lasline.firing svg { filter:drop-shadow(0 0 9px rgba(95,151,232,.85)); }
+  .pb.lasline.firing .led { display:block; background:#5f97e8; box-shadow:0 0 8px #5f97e8; }
+  .pb.lasline.cooling { color:var(--phd); }
+  .pb.lasline.cooling .disc { box-shadow:inset 0 0 0 1.5px rgba(255,200,87,.45); }
+  .pb.lasline.cooling .pring .prfg { filter:drop-shadow(0 0 4px rgba(255,200,87,.6)); }
+  /* 阵营色(指挥键) */
+  .pb.faction-ally { color:var(--ally); }
+  .pb.faction-ally .disc { box-shadow:inset 0 0 0 1.5px rgba(224,82,71,.5); }
+  .pb.faction-ally svg { filter:drop-shadow(0 0 6px rgba(224,82,71,.5)); }
+  .pb.faction-foe { color:var(--foe); }
+  .pb.faction-foe .disc { box-shadow:inset 0 0 0 1.5px rgba(95,151,232,.5); }
+  .pb.faction-foe svg { filter:drop-shadow(0 0 6px rgba(95,151,232,.5)); }
+  .pb.faction-ally.lit .disc, .pb.faction-foe.lit .disc { box-shadow:inset 0 0 0 2px currentColor, 0 0 18px var(--bloom); }
+  /* 方形角括号按钮(菜单/直升机子键) */
+  .pbx { /* ★同上:定位只许来自 .tbtn,此处禁 position(直升机子键由 .tbtn.theli-sub 置 static 进网格) */
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px;
+    border:none; background:rgba(10,18,8,.20); color:var(--ph); cursor:pointer;
+    -webkit-tap-highlight-color:transparent; user-select:none; touch-action:manipulation; transition:transform .06s, background .12s; }
+  .pbx::before { content:''; position:absolute; inset:0;
+    background:
+      linear-gradient(var(--ring-hi),var(--ring-hi)) 0 0/13px 2px no-repeat,
+      linear-gradient(var(--ring-hi),var(--ring-hi)) 0 0/2px 13px no-repeat,
+      linear-gradient(var(--ring-hi),var(--ring-hi)) 100% 0/13px 2px no-repeat,
+      linear-gradient(var(--ring-hi),var(--ring-hi)) 100% 0/2px 13px no-repeat,
+      linear-gradient(var(--ring-hi),var(--ring-hi)) 0 100%/13px 2px no-repeat,
+      linear-gradient(var(--ring-hi),var(--ring-hi)) 0 100%/2px 13px no-repeat,
+      linear-gradient(var(--ring-hi),var(--ring-hi)) 100% 100%/13px 2px no-repeat,
+      linear-gradient(var(--ring-hi),var(--ring-hi)) 100% 100%/2px 13px no-repeat;
+    opacity:.55; transition:opacity .12s; }
+  .pbx svg { position:relative; width:54%; height:54%; filter:drop-shadow(0 0 5px var(--glow)); }
+  .pbx .lab { position:relative; font-size:10px; letter-spacing:.18em; color:var(--phd); line-height:1; }
+  .tbtn.pbx.pressed { transform:scale(var(--ts,1)) scale(.93); background:rgba(14,22,10,.5); }
+  .tbtn.pbx.pressed::before { opacity:1; }
+  .tbtn.pbx.pressed svg { color:var(--phb); filter:drop-shadow(0 0 9px var(--glow)); }
+  .pbx.lit { color:var(--sig); }
+  .pbx.lit::before { opacity:1; background:
+      linear-gradient(var(--sig),var(--sig)) 0 0/13px 2px no-repeat,
+      linear-gradient(var(--sig),var(--sig)) 0 0/2px 13px no-repeat,
+      linear-gradient(var(--sig),var(--sig)) 100% 0/13px 2px no-repeat,
+      linear-gradient(var(--sig),var(--sig)) 100% 0/2px 13px no-repeat,
+      linear-gradient(var(--sig),var(--sig)) 0 100%/13px 2px no-repeat,
+      linear-gradient(var(--sig),var(--sig)) 0 100%/2px 13px no-repeat,
+      linear-gradient(var(--sig),var(--sig)) 100% 100%/13px 2px no-repeat,
+      linear-gradient(var(--sig),var(--sig)) 100% 100%/2px 13px no-repeat; }
+  .pbx.lit svg { filter:drop-shadow(0 0 7px var(--sig-glow)); }
+  .pbx.lit .lab { color:var(--sig); }
+  /* 尺寸档(与 CTL_W 一致):开火 84 / 功能 64 / 菜单·激光 52 */
+  .s84 { width:84px; height:84px; } .s64 { width:64px; height:64px; } .s52 { width:52px; height:52px; }
+  .s52 .lab { display:none; }
+  /* 驾驶摇杆:底盘细环+内虚线+八向刻度,杆头亮环+十字刻度+中心辉点,无填充 */
   #tjoy { position:fixed; width:124px; height:124px; border-radius:50%; z-index:150;
-    border:2px solid var(--tch-edge); background:rgba(217,167,46,.14);
-    box-shadow:inset 0 0 18px rgba(0,0,0,.5); transform:translate(-50%,-50%);
+    background:radial-gradient(circle at 50% 46%, rgba(10,18,8,.08) 40%, rgba(10,18,8,.30) 100%);
+    box-shadow:inset 0 0 0 1.5px var(--ring); transform:translate(-50%,-50%);
     pointer-events:none; touch-action:none; }
+  #tjoy::before { content:''; position:absolute; inset:16px; border-radius:50%; border:1px dashed var(--dash); }
+  #tjoy::after { content:''; position:absolute; inset:0; border-radius:50%;
+    background:
+      linear-gradient(var(--tick),var(--tick)) 50% 2px/2px 8px no-repeat,
+      linear-gradient(var(--tick),var(--tick)) 50% calc(100% - 2px)/2px 8px no-repeat,
+      linear-gradient(var(--tick),var(--tick)) 2px 50%/8px 2px no-repeat,
+      linear-gradient(var(--tick),var(--tick)) calc(100% - 2px) 50%/8px 2px no-repeat,
+      linear-gradient(var(--dash),var(--dash)) 15% 15%/2px 6px no-repeat,
+      linear-gradient(var(--dash),var(--dash)) 85% 15%/2px 6px no-repeat,
+      linear-gradient(var(--dash),var(--dash)) 15% 85%/2px 6px no-repeat,
+      linear-gradient(var(--dash),var(--dash)) 85% 85%/2px 6px no-repeat; }
   #tjoyknob { position:absolute; left:50%; top:50%; width:54px; height:54px; border-radius:50%;
-    background:radial-gradient(circle at 35% 30%, var(--tch-edge), var(--tch-edge-dim)); border:2px solid var(--tch-edge);
-    box-shadow:0 0 10px rgba(217,167,46,.45); transform:translate(-50%,-50%); }
-  /* 右侧四键田字格(开火/炮镜 下排,夜视/指挥模式键 上排;水平 16px+垂直 14px 间隙零重叠) */
-  #tfire { right:22px; bottom:88px; width:84px; height:84px; border-radius:50%; border-width:4px;
-    transform:rotate(-6deg) scale(var(--ts,1)); }
-  #tfire.pressed { transform:rotate(-6deg) scale(calc(var(--ts,1)*.9)); }
-  #tscope { right:122px; bottom:98px; width:64px; height:64px; border-radius:50%; }
-  #tnv { right:122px; bottom:186px; width:64px; height:64px; border-radius:50%; }
-  #tsqb { right:32px; bottom:186px; width:64px; height:64px; border-radius:50%; }
+    transform:translate(-50%,-50%);
+    background:radial-gradient(circle at 50% 44%, rgba(157,255,168,.05), rgba(10,18,8,.40));
+    box-shadow:inset 0 0 0 1.5px var(--ring-hi), 0 0 14px rgba(0,0,0,.35);
+    transition:transform .15s; }
+  #tjoyknob::before { content:''; position:absolute; inset:0; border-radius:50%;
+    background:
+      linear-gradient(var(--tick),var(--tick)) 50% 4px/2px 7px no-repeat,
+      linear-gradient(var(--tick),var(--tick)) 50% calc(100% - 4px)/2px 7px no-repeat,
+      linear-gradient(var(--tick),var(--tick)) 4px 50%/7px 2px no-repeat,
+      linear-gradient(var(--tick),var(--tick)) calc(100% - 4px) 50%/7px 2px no-repeat; }
+  #tjoyknob::after { content:''; position:absolute; left:50%; top:50%; width:5px; height:5px; border-radius:50%;
+    transform:translate(-50%,-50%); background:var(--phb); box-shadow:0 0 8px var(--glow); }
+  /* 右下键区(开火/炮镜 下排,夜视/指挥 上排,热像/弃车 三排,激光在弃车上方;列心对齐,键隙零重叠) */
+  #tfire { right:22px; bottom:88px; width:84px; height:84px; }
+  #tscope { right:122px; bottom:98px; width:64px; height:64px; }
+  #tnv { right:122px; bottom:186px; width:64px; height:64px; }
+  #tsqb { right:32px; bottom:186px; width:64px; height:64px; }
   /* 指挥指令键(占领/跟随):左上角并排(tmenu 正下方);仅指挥模式显示(自定义编辑器内恒显) */
-  #tcap { left:16px; top:84px; width:64px; height:64px; border-radius:50%; }
-  #tfol { left:88px; top:84px; width:64px; height:64px; border-radius:50%; }
-  /* 右下键区三行两列(列心距右 154/64,行心距底 130/218/306;开火 84 仅尺寸例外,列心对齐):
-     行3 热成像|弃车 · 行2 夜视|指挥模式键 · 行1 炮镜|开火 */
-  #tth { right:122px; bottom:274px; width:64px; height:64px; border-radius:50%; }
-  /* 摇杆感应圈:仅自定义界面可见(虚线墨圈+淡黄晕);运行期隐形纯逻辑判定,pointer-events 恒无 */
-  #tsense { position:fixed; z-index:149; border:3px dashed var(--tch-edge-dim); border-radius:50%;
-    background:rgba(217,167,46,.10); transform:translate(-50%,-50%); pointer-events:none; touch-action:none; }
-  #tquit { right:32px; bottom:274px; width:64px; height:64px; border-radius:50%; border-color:#c81e12; }
-  #tquit.pressed { background:#b0442f; color:#f5e9d0; }
-  #tmenu { left:16px; top:16px; width:52px; height:52px; border-radius:12px; }   /* 正方形纯图标(文字撤) */
+  #tcap { left:16px; top:84px; width:64px; height:64px; }
+  #tfol { left:88px; top:84px; width:64px; height:64px; }
+  /* 行3 热成像|弃车 · 行2 夜视|指挥模式键 · 行1 炮镜|开火 · 激光压制(仅99式)在弃车正上方 */
+  #tth { right:122px; bottom:274px; width:64px; height:64px; }
+  /* 摇杆感应圈:仅自定义界面可见(22% 透明度虚线圈,无填充);运行期隐形纯逻辑判定,pointer-events 恒无 */
+  #tsense { position:fixed; z-index:149; border:2px dashed rgba(157,255,168,.22); border-radius:50%;
+    background:transparent; transform:translate(-50%,-50%); pointer-events:none; touch-action:none; }
+  #tquit { right:32px; bottom:274px; width:64px; height:64px; }
+  #tlas { right:32px; bottom:332px; width:52px; height:52px; }   /* 激光压制键(仅99式):弃车正上方,右列顶 */
+  #tmenu { left:16px; top:16px; width:52px; height:52px; }
   /* 直升机双十字键(H1/H2;与摇杆互斥显示;编辑器可拖/缩;竖屏上下/横屏并排) */
   #theliu, #thelid { position:fixed; z-index:150; display:grid; grid-template-columns:repeat(3,46px); grid-template-rows:repeat(3,46px); gap:4px;
     transform:scale(var(--ts,1)); transform-origin:center; touch-action:none; user-select:none; -webkit-user-select:none; -webkit-tap-highlight-color:transparent; }
   #thelid { left:24px; bottom:88px; }   /* 下十字=姿态:摇杆原位 */
   #theliu { left:24px; top:160px; }     /* 上十字=总距/偏航:竖屏在指令键下方 */
   @media (orientation:landscape) { #theliu { left:186px; top:auto; bottom:88px; } }   /* 横屏:双键并排(下左上右) */
-  .tbtn.theli-sub { position:static; border-radius:10px; font-size:19px; font-weight:900; transform:none; }
+  .hsub { width:46px; height:46px; }
+  .hsub svg { width:20px; height:20px; }
+  .tbtn.theli-sub { position:static; transform:none; }
   .tbtn.theli-sub.pressed { transform:none; }
-  .theli-core { display:flex; align-items:center; justify-content:center; border:1px dashed var(--tch-edge-dim);
-    border-radius:10px; background:rgba(20,22,17,.7); color:var(--tch-dim); font-size:11px; letter-spacing:1px; }
+  .hcore, .theli-core { display:flex; align-items:center; justify-content:center; border:1px dashed var(--dash);
+    background:rgba(10,18,8,.35); color:var(--phd); font-size:13px; letter-spacing:2px;
+    font-family:"ZCOOL QingKe HuangYou","Noto Sans SC",sans-serif; }
   /* ===== 自定义按钮布局界面(flow.js 触控区段驱动;墨色半透底+顶部提示+底部中间双按钮) ===== */
   #tcustomov { position:fixed; inset:0; z-index:149; background:rgba(20,20,20,.42); }
   #tchint { position:absolute; top:18px; left:50%; transform:translateX(-50%);
-    background:linear-gradient(180deg,#232720,#141610); border:2px solid var(--tch-edge); box-shadow:2px 3px 0 rgba(0,0,0,.55);
-    padding:8px 16px; font:700 14px/1.4 system-ui,sans-serif; color:var(--tch-txt); white-space:nowrap; }
+    background:rgba(10,18,8,.85); border:1px solid var(--line);
+    padding:8px 16px; font:700 14px/1.4 system-ui,sans-serif; color:var(--ph); white-space:nowrap; }
   #tcrow { position:absolute; bottom:26px; left:50%; transform:translateX(-50%); display:flex; gap:14px; }
   #crtfx { position:fixed; inset:0; pointer-events:none; z-index:200; display:none;
     background:
@@ -769,24 +907,8 @@
      (tap-highlight 已并入文件首的全局重置) */
   button { -webkit-appearance: none; appearance: none; touch-action: manipulation; }
   button:focus, input:focus, select:focus, a:focus, button:focus-visible { outline: none; }
-  /* 按压特效覆盖层(ui.js 触屏区段驱动):三层多边形常驻预建,按压只切 opacity/visibility(合成器级) */
-  #btnfx { position:fixed; z-index:60; pointer-events:none; opacity:0; visibility:hidden;
-    transform:rotate(-2deg) skew(-2deg) scale(1.07);
-    display:flex; align-items:center; justify-content:center; }
-  #btnfx.on { opacity:1; visibility:visible; }
-  #btnfx i { position:absolute; inset:-8px; }
-  #btnfx .f0 { background:rgba(0,0,0,.45); transform:translate(6px,6px);
-    clip-path:polygon(1.5% 8%, 96.6% 0%, 100% 86%, 3.8% 100%); }
-  #btnfx .f1 { background:#141414; clip-path:polygon(1.5% 8%, 96.6% 0%, 100% 86%, 3.8% 100%); }
-  #btnfx .f2 { clip-path:polygon(3.6% 14.5%, 94.2% 5.8%, 97.6% 81.2%, 6.2% 94.4%);
-    background:
-      radial-gradient(ellipse at 50% 50%, #fff 33%, rgba(255,255,255,0) 65%),
-      repeating-conic-gradient(from 3deg at 50% 50%, #141414 0deg 1.5deg, rgba(0,0,0,0) 1.5deg 10deg),
-      #fff; }
-  #btnfx span { position:relative; color:#141414; font-weight:bold; font-family:inherit; white-space:nowrap;
-    text-shadow:0 0 5px #fff, 0 0 3px #fff; }
-  #btnfx.big span { font-size:20px; letter-spacing:6px; }
-  #btnfx.opt span { font-size:13px; letter-spacing:1px; }
+  /* 旧版触屏按压覆盖层 #btnfx(三层漫画多边形+集中线)样式已删除——
+     触屏按压反馈与桌面统一由下方 .bigbtn:active / .optbtn:active 的提亮规则提供。 */
   /* 副标题:墨底白字色带+反向微倾斜 */
   .overlay h2 { font-size:16px; color:#fbf7ec; letter-spacing:4px; margin-bottom:26px; font-weight:bold;
     background:#141414; padding:4px 22px; transform:rotate(1deg); box-shadow:3px 3px 0 rgba(255,217,59,.65); }
@@ -844,8 +966,8 @@
        按压期由上方 :active !important 接管显示 */
     .bigbtn:hover:not(:disabled)::before, .bigbtn:hover:not(:disabled)::after,
     .optbtn:hover:not(:disabled):not(.dim)::before, .optbtn:hover:not(:disabled):not(.dim)::after { display:none; }
-    /* 按压特效由 ui.js 的 #btnfx 覆盖层统一驱动,避免外壳过渡与伪元素跨帧错拍。 */
-    .fxhide { visibility:hidden !important; }
+    /* #btnfx 覆盖层删除后，不再需要隐藏原按钮的 .fxhide 规则；
+       按压反馈由上方 :active 提亮统一承担（触屏与桌面同款）。 */
   }
   /* v12：遭遇战崎岖度恢复 range，并与游戏设置滑块统一使用荧光绿强调色。
      设置面板后段 #settingssub input[type=range] 也是 #9dffa8；不再保留孤立红色规则。 */
@@ -871,6 +993,11 @@
   @media (pointer: coarse) {
     .manual-pc { display:none; }
     .manual-touch { display:block; }
+  }
+  /* 安卓端游戏设置里的按钮说明(操作控制指南)整段删除:触屏版图例仍是旧按钮美术,
+     与新磷光键对不上,留着误导;桌面端原样保留(同一文件,媒体查询隔离)。 */
+  @media (pointer: coarse) {
+    #manualsec { display:none; }
   }
   /* 手册按钮图例:统一尺寸迷你实键复刻(46px 圆纸底墨边,一行一键) */
   .mrow { display:flex; align-items:center; gap:12px; margin:7px auto; max-width:360px; text-align:left; }
@@ -1364,4 +1491,17 @@
 #respawnov.overlay h1, #possessov.overlay h1, #endov.overlay h1,
 #respawnov.overlay h2, #possessov.overlay h2, #endov.overlay h2 { display: none !important; }
 #game-boot-loader.hidden-loader { display: none !important; }
+
+/* ============================================================
+   移动端性能:触屏端去掉 backdrop-filter
+   这两处(.hwp-item 武器切换栏 / #log div 战斗日志)在桌面上几乎免费,
+   在 Android WebView 上却很贵:合成器要为每一个这样的元素额外开一张离屏表面、
+   把它背后的内容读回来再模糊;而背后的 WebGL canvas 每帧都在变,
+   于是"每帧都要重做一遍模糊"——而且日志可以同时存在多条,是数量最多的一类。
+   底色本就是 rgba(6,12,5,.92)(92% 不透明),去掉模糊后视觉损失几乎看不出来。
+   桌面端(index 精确指针)保持原样,不做任何改动。
+   ============================================================ */
+@media (pointer: coarse) {
+  .hwp-item, #log div { backdrop-filter: none; }
+}
 

@@ -15,7 +15,7 @@ var el = {};
 function grabEls() {
   ['hud','fps','allies','enemies','kills','respawns','abandonring','abandontxt','ring','hitm','flash','log','aimdot',
    'startov','pauseov','endov','endtitle','endsub','endstats',
-   'lockhint','ch','scope','rangeinfo','lwsring','scopedial','sigfps','impact','impactRkL','impactRkR','chRkL','chRkR','poola','poole','nvd','nvn','artyring','artyringtxt','aimhint','helipitchinfo','helimissileinfol','helimissileinfor','boundwarn','heliweaponbar','heliradarlock','rwr-warning','rwr-tag','maws-edge-flash','maws-hud-layer','lwr-hud-layer',
+   'lockhint','ch','scope','rangeinfo','lwsring','tlas','scopedial','sigfps','impact','impactRkL','impactRkR','chRkL','chRkR','poola','poole','nvd','nvn','artyring','artyringtxt','aimhint','helipitchinfo','helimissileinfol','helimissileinfor','boundwarn','heliweaponbar','heliradarlock','rwr-warning','rwr-tag','maws-edge-flash','maws-hud-layer','lwr-hud-layer',
    'respawnov','rhqrow','rkindrow','rconfirm','skrow','stylerow','siderow',
    'timeinput','timeval','leninput','widinput','timeremain','roughinput','roughval','sizeinput','bdinput_tank','bdinput_arty','bdinput_heli',
    'hourinput','hourval',                                        // 时间拖动条(小时 0~24)
@@ -78,60 +78,17 @@ function makeMainMenuBtn(container, opts) {
    仅文本/点击行为/附加样式不同(消灭 HTML 静态重复 + 分散的 addEventListener)。
    opts: { id: 元素id, cls: 附加class(如 hidden), style: {css属性:值} }
    ============================================================ */
-/* 触屏按压特效使用独立常驻的 #btnfx 覆盖层。
-   按压只更新 transform 和 opacity;原按钮同步隐藏,移动超过 12px 时按滚动手势撤销。 */
-(function () {
-  var TOUCH = (window.matchMedia && matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in window;
-  if (!TOUCH) return;
-  var fx = null, lab = null, cur = null, curId = null, sx = 0, sy = 0;
-  function ensure() { fx = fx || document.getElementById('btnfx'); lab = lab || document.getElementById('btnfxlab'); return fx && lab; }
-  function btnOf(n) {
-    while (n && n !== document.body) {
-      if (n.classList && (n.classList.contains('bigbtn') || n.classList.contains('optbtn')) &&
-          !n.disabled && !n.classList.contains('dim')) return n;
-      n = n.parentNode;
-    }
-    return null;
-  }
-  function fxHide() {
-    if (!cur) return;
-    fx.classList.remove('on');
-    cur.classList.remove('fxhide');
-    cur = null; curId = null;
-  }
-  document.addEventListener('touchstart', function (e) {
-    if (!ensure() || cur) return;
-    var b = btnOf(e.target);
-    if (!b) return;
-    var t = e.changedTouches[0], r = b.getBoundingClientRect();
-    curId = t.identifier; sx = t.clientX; sy = t.clientY;
-    fx.style.left = r.left + 'px'; fx.style.top = r.top + 'px';
-    fx.style.width = r.width + 'px'; fx.style.height = r.height + 'px';
-    lab.textContent = b.textContent;
-    fx.className = (b.classList.contains('bigbtn') ? 'big' : 'opt') + ' on';
-    b.classList.add('fxhide');
-    cur = b;
-  }, { passive: true });
-  document.addEventListener('touchmove', function (e) {
-    if (!cur) return;
-    for (var i = 0; i < e.changedTouches.length; i++) {
-      var t = e.changedTouches[i];
-      if (t.identifier === curId && Math.hypot(t.clientX - sx, t.clientY - sy) > 12) { fxHide(); return; }   // 滚动手势:撤特效(浏览器同步抑制 click)
-    }
-  }, { passive: true });
-  document.addEventListener('touchend', fxHide, { passive: true });
-  document.addEventListener('touchcancel', fxHide, { passive: true });
-})();
-
-/* 触屏:菜单大按钮点击特效(按住集中框)先行,动作延迟片刻再生效;桌面 0=原行为 */
-var MENU_BTN_DELAY = ((window.matchMedia && matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in window) ? 48 : 0;
+/* 旧版"触屏漫画按压覆盖层(#btnfx)"已整体删除。
+   触屏与桌面现在统一走 .bigbtn:active / .optbtn:active 的 filter:brightness() 按压反馈,
+   不再有独立的漫画集中框分支;既然特效不需要"先亮一下再生效",原先专为它让路的
+   48ms 动作延迟(MENU_BTN_DELAY)也一并去掉,点击即时生效,与桌面完全一致。 */
 function createMenuButton(container, text, onClick, opts) {
   var b = document.createElement('button');
   b.className = 'bigbtn' + (opts && opts.cls ? ' ' + opts.cls : '');
   b.textContent = text;
   if (opts && opts.id) b.id = opts.id;
   if (opts && opts.style) for (var sk in opts.style) b.style[sk] = opts.style[sk];
-  b.addEventListener('click', MENU_BTN_DELAY ? function (ev) { setTimeout(function () { onClick(ev); }, MENU_BTN_DELAY); } : onClick);
+  b.addEventListener('click', onClick);
   if (container && container.appendChild) container.appendChild(b);
   return b;
 }
@@ -255,6 +212,11 @@ function buildMenuButtons() {
     if (typeof sfxUiDi === 'function') sfxUiDi(2);
     updateLockHint();
     attemptLock();
+    /* ★修复(暂停返回后触控键全灭,摇杆除外):gameOver/startGame 两处入口都直挂 _touchUISync,
+       唯独两个"回到战场"没挂 —— 触屏点按走 touchstart/touchend,click 兜底(120ms)常被
+       preventDefault 吞掉而永不触发,按钮就停在结算时的 hidden 里;摇杆是触摸时
+       base.classList.remove('hidden') 强制抬起的,所以看起来"只剩摇杆"。此处直接同步。 */
+    if (typeof window !== 'undefined' && window._touchUISync) window._touchUISync();
   }, { id: 'resumebtn' });
   el.mainmenubtn = createMenuButton(pauseBtns, '返回车库', returnToMenu, { id: 'mainmenubtn', cls: 'alt' });
   el.continuebtn = createMenuButton(el.endov, '回到战场', function () {
@@ -267,6 +229,9 @@ function buildMenuButtons() {
       respawnT = 1.6;
     }
     updateLockHint();
+    /* ★修复(对局结束后回到战场,除摇杆外 UI 全灭):同上,结算屏的"回到战场"同样直挂同步。
+       (根因见 resumebtn 处注释;摇杆独活是因为 touchstart 感应圈分支强制 remove hidden。) */
+    if (typeof window !== 'undefined' && window._touchUISync) window._touchUISync();
   }, { id: 'continuebtn', cls: 'hidden' });
   el.restartbtn = createMenuButton(el.endov, '返回车库', returnToMenu, { id: 'restartbtn', cls: 'alt' });
   el.rconfirm = createMenuButton(el.respawnov, '重新部署', function () {
@@ -818,6 +783,7 @@ function updateLwr(dt) {
 }
 /* ===== 07 99式激光压制系统: 2KM 可见目标, 持续照射1s生效, 启用必跑4s发射, 冷却30s ===== */
 var _rmbHeld = false;
+var _tlasFire = false, _tlasCool = false;   // 触屏激光键 firing/cooling 类边沿缓存(免每帧写 class)
 var LWS_EMIT = 4.0, LWS_CD = 30.0, LWS_LOCK = 1.0, LWS_RANGE = 2000.0;
 var _lwP2 = new THREE.Vector3(), _lwE = new THREE.Vector3(), _lwO = new THREE.Vector3();
 function lwsOf(t) { return t._lws || (t._lws = { phase: 'ready', t: 0, illum: 0, illumTgt: null, sup: null }); }
@@ -1078,6 +1044,28 @@ function hudUpdate(dt) {
       if (_st9.phase === 'emit') ringConic(el.lwsring, '#7fd2ff', clamp(_st9.t / LWS_EMIT, 0, 1));
       else if (_st9.phase === 'cool') ringConic(el.lwsring, '#ffd76e', clamp(1 - _st9.t / LWS_CD, 0, 1));
       else ringConic(el.lwsring, '#7fd2ff', 0);
+    }
+  }
+  /* 激光压制键进度环(仅99式触屏键 #tlas):与 HUD #lwsring 同语义,同源 lwsOf 状态 ——
+     发射期蓝弧 4s 充满 / 冷却期琥珀弧 30s 退去 / 就绪空环;显隐门在 flow.js uiSync,
+     这里只驱动 firing/cooling 类与环进度(边沿写,不变不写 DOM)。 */
+  if (el.tlas) {
+    if (!el.tlasPrfg && el.tlas.querySelector) el.tlasPrfg = el.tlas.querySelector('.prfg');   // 进度弧首帧惰性缓存
+    var _lasShow = !!(player && player.alive && player.kind === '99' && gameState === 'playing');
+    if (_lasShow) {
+      var _stL = lwsOf(player), _C = 2 * Math.PI * 47;
+      if (_stL.phase === 'emit') {
+        if (!_tlasFire) { _tlasFire = true; _tlasCool = false; el.tlas.classList.add('firing'); el.tlas.classList.remove('cooling'); }
+        if (el.tlasPrfg) { el.tlasPrfg.style.stroke = '#5f97e8'; el.tlasPrfg.style.strokeDasharray = _C; el.tlasPrfg.style.strokeDashoffset = _C * (1 - clamp(_stL.t / LWS_EMIT, 0, 1)); }
+      } else if (_stL.phase === 'cool') {
+        if (!_tlasCool) { _tlasCool = true; _tlasFire = false; el.tlas.classList.remove('firing'); el.tlas.classList.add('cooling'); }
+        if (el.tlasPrfg) { el.tlasPrfg.style.stroke = '#ffc857'; el.tlasPrfg.style.strokeDasharray = _C; el.tlasPrfg.style.strokeDashoffset = _C * clamp(_stL.t / LWS_CD, 0, 1); }
+      } else if (_tlasFire || _tlasCool) {
+        _tlasFire = false; _tlasCool = false; el.tlas.classList.remove('firing'); el.tlas.classList.remove('cooling');
+        if (el.tlasPrfg) el.tlasPrfg.style.strokeDashoffset = _C;
+      }
+    } else if (_tlasFire || _tlasCool) {
+      _tlasFire = false; _tlasCool = false; el.tlas.classList.remove('firing'); el.tlas.classList.remove('cooling');
     }
   }
   if (el.artyring) {                                   // 火箭炮炮镜镜心环 = 第三人称 #ring 同款(同一 ringCol/frac:就绪绿满环/装填黄倒计时/齐射橙计数;射击计数走圆环)

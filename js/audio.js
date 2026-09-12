@@ -645,8 +645,24 @@ var _fireDuckT = -99, _fireDuckV = 0;             // 方案A:开火声优先—�
 function sfxFire(vol, distM, arty) { _fireDuckT = gameT; _fireDuckV = vol; playShot(arty ? artyFireBuf : cannonBuf, vol, distM || 0, null, gunBus); }
 // 高爆爆炸:烘焙 7 层;响度按爆炸规模 scale 分级(火箭弹 1.05→1.42 / 车毁 1.5→2.03 / 残骸 1.7→2.30 / 殉爆 2.1→2.84,全低于贴脸主炮 FIRE_VOL=5)
 function sfxExplode(p, scale) { playShot(boomBuf, volAt(p, 1.35 * (scale || 1)), distToPlayer(p), null, boomBus); }
-/* 火箭/导弹战斗部:锚点 dmg=60。peak∝√k, 听距∝k^0.45, vol×4; playShot 单发封顶 4.0。 */
+/* 火箭/导弹战斗部:锚点 dmg=60。peak∝√k, 听距∝k^0.45, vol×4; playShot 单发封顶 4.0。
+   ★E2-3(附录 B):同点位合并节流。齐射/链式殉爆时同一小片区域会在几十 ms 内连续起爆十几次,
+   每次都建 BufferSource+Gain(+远距 BiquadFilter) 播一段 2.2s 的 boomBuf —— 节点数与音频线程
+   负载线性上涨,且叠相后听感是糊成一坨而非"滚奏"。做法与 sfxRocketWhoosh 的分源节流完全同构
+   (40m 世界格 + 65ms 窗口 + 256 格封顶整表清),不同爆点仍各自发声,只压同格同拍的重复。
+   惰性读档:audio.js 在 index.html 里排在 scene.js **之前**,模块顶层读不到 GFX。 */
+var _boomT = {}, _boomN = 0, _boomMerge = null;
+function _boomMergeOn() {
+  if (_boomMerge === null) _boomMerge = (typeof gfxFx === 'function') ? !!gfxFx('fxSfxMerge', false) : false;
+  return _boomMerge;
+}
 function sfxExplodeByDamage(p, dmg) {
+  if (_boomMergeOn() && p && typeof gameT === 'number') {
+    var bk = ((p.x / 40) | 0) + ':' + ((p.z / 40) | 0);
+    if (gameT - (_boomT[bk] == null ? -99 : _boomT[bk]) < 0.065) return;
+    if (!Object.prototype.hasOwnProperty.call(_boomT, bk)) { if (++_boomN > 256) { _boomT = {}; _boomN = 1; } }
+    _boomT[bk] = gameT;
+  }
   dmg = Math.max(8, +dmg || 60);
   var k = dmg / 60;
   var peak = 1.85 + 1.55 * Math.sqrt(k);             // 40伤≈3.11 / 60伤=3.40 / 80伤≈3.64, clamp 到 playShot 4.0

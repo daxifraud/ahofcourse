@@ -220,23 +220,29 @@ function cameraUpdate(dt) {
 
   /* ===== 火箭炮俯视火控:光标地面点反解(每帧)+ 地面战术标记 =====
      自由光标 NDC → 反投影射线 × laserRange(车体/目标网格+地形,点到车=装定到车);
-     无交(极端贴边)保持上一次值;装定点钳在战场边界内。 */
-  if (player.kind === 'arty' && player.alive) {
-    if (scopeT > 0.5) {
-      camera.updateMatrixWorld();
-      _topRV.set(artTopNX, artTopNY, 0.5).unproject(camera).sub(camera.position).normalize();
-      var dCast = laserRange(camera.position, _topRV);
-      if (isFinite(dCast) && dCast > 1 && dCast < 12000) {
-        var hbX = CONF.boundsX != null ? CONF.boundsX : CONF.bounds, hbZ = CONF.boundsZ != null ? CONF.boundsZ : CONF.bounds;
-        var hxT = clamp(camera.position.x + _topRV.x * dCast, -hbX, hbX);
-        var hzT = clamp(camera.position.z + _topRV.z * dCast, -hbZ, hbZ);
-        if (!player._topHover) player._topHover = { x: hxT, y: 0, z: hzT };
-        else { player._topHover.x = hxT; player._topHover.z = hzT; }
-        player._topHover.y = terrainH(hxT, hzT);
-      }
-      artyTopMarkersUpdate();
-    } else artyTopMarkersHide();
-  }
+     无交(极端贴边)保持上一次值;装定点钳在战场边界内。
+     ★修复(火箭炮黄框跨局残留): 关闭动作必须走到 else 里无条件执行,不能把它锁在
+     「当前开的是火箭炮」这个条件内部。旧写法是
+         if (kind==='arty' && alive) { if (scopeT>0.5) show(); else hide(); }
+     ——一旦玩家在炮镜里退出对局/换了别的车(此后 kind 不再是 arty,或 player 置空),
+     整个 if 块被跳过,就没有任何人负责关闭 _artyTopGrp.visible,它会永久停在上一局的
+     true,于是黄色火力覆盖框(连同装定点红环与射击线)留在新对局的战场地面上。
+     场景对象只在启动时建一次(initScene 只被调用一次),对局之间复用同一个 scene,
+     所以这个 visible 残留不会被任何"重建场景"顺带清掉,必须自己关。 */
+  if (player && player.alive && player.kind === 'arty' && scopeT > 0.5) {
+    camera.updateMatrixWorld();
+    _topRV.set(artTopNX, artTopNY, 0.5).unproject(camera).sub(camera.position).normalize();
+    var dCast = laserRange(camera.position, _topRV);
+    if (isFinite(dCast) && dCast > 1 && dCast < 12000) {
+      var hbX = CONF.boundsX != null ? CONF.boundsX : CONF.bounds, hbZ = CONF.boundsZ != null ? CONF.boundsZ : CONF.bounds;
+      var hxT = clamp(camera.position.x + _topRV.x * dCast, -hbX, hbX);
+      var hzT = clamp(camera.position.z + _topRV.z * dCast, -hbZ, hbZ);
+      if (!player._topHover) player._topHover = { x: hxT, y: 0, z: hzT };
+      else { player._topHover.x = hxT; player._topHover.z = hzT; }
+      player._topHover.y = terrainH(hxT, hzT);
+    }
+    artyTopMarkersUpdate();
+  } else artyTopMarkersHide();
 
   /* ===== 阴影视锥动态跟随(阴影常开,不再有开镜关阴影路径)——
      第三人称:视锥中心=玩家 ±70m(近场清晰);

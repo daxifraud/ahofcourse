@@ -4007,14 +4007,34 @@ function buildHangarRearLineArt(g) {
     window.addEventListener('resize', resize);
   }
 
+  /* ===== 模型质量档适配(T2-2):车库是第三个活跃 GL 上下文,按模型质量档降配;桌面高档逐参数不变 ----
+     · antialias:与炮塔 HUD 同一开关(modAA),低/中档关掉 MSAA 4×(全屏小画布,收益直接);
+     · 像素比:modPR(高 2 / 中 1.5 / 低 1.0);
+     · 阴影:高档 2048²+PCFSoft;中/低档 1024²+PCF。
+     ★2026-09-13:由模型质量档驱动(原取 GFX.hudAA/maxPixelRatio,三档行为逐位不变)。
+     进对局(pause)时把阴影贴图降到 512 并 dispose 释放显存——rAF 已停,这段时间本来就不渲染;
+     回车库(resume)恢复档位尺寸。GL 资源不释放的话,一张 2048² 阴影贴图+整个机库几何/纹理
+     会全程占着显存(本项目 MainActivity 已因渲染进程 OOM 做过重建兜底,说明真发生过)。 ==== */
+  var _hgLow = modQ('modAA', true) === false;
+  var _hgShadowSize = modQ('modShadow', 2048);
+  var _hgShadowDropped = false;
+  function hgShadowApply(size) {
+    if (!dirLight || !dirLight.shadow) return;
+    dirLight.shadow.mapSize.set(size, size);
+    if (dirLight.shadow.map) {          // 已建贴图才需要释放;置 null 后下次渲染按新尺寸自动重建
+      dirLight.shadow.map.dispose();
+      dirLight.shadow.map = null;
+    }
+  }
+
   function init() {
     canvas = document.getElementById('hangar-canvas');
     if (!canvas) return;
 
-    renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: !_hgLow, alpha: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, modQ('modPR', 2)));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = modQ('modShadowSoft', true) ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
     if (typeof vehMaskSetMode === 'function') vehMaskSetMode(false);   // 车库直渲:载具材质 alpha 归 1
 
     scene = new THREE.Scene();
@@ -4029,8 +4049,8 @@ function buildHangarRearLineArt(g) {
     dirLight = new THREE.DirectionalLight(0xfffaed, 0.98);
     dirLight.position.set(10, 20, 14);
     dirLight.castShadow = true;
-    dirLight.shadow.mapSize.width = 2048;
-    dirLight.shadow.mapSize.height = 2048;
+    dirLight.shadow.mapSize.width = _hgShadowSize;    // 高档 2048(原值) / 中低档 1024
+    dirLight.shadow.mapSize.height = _hgShadowSize;
     dirLight.shadow.camera.near = 1.0;
     dirLight.shadow.camera.far = 60.0;
     var d = 14;
@@ -4072,6 +4092,8 @@ function buildHangarRearLineArt(g) {
       cancelAnimationFrame(animId);
       animId = null;
     }
+    // T2-2 温和版:进对局释放 1024² 阴影贴图、改按 512² 预留(仅中/低档;高档零改动)
+    if (_hgLow && !_hgShadowDropped) { hgShadowApply(512); _hgShadowDropped = true; }
   }
 
   function resume() {
@@ -4079,6 +4101,7 @@ function buildHangarRearLineArt(g) {
       running = true;
       if (typeof vehMaskSetMode === 'function') vehMaskSetMode(false);   // 回车库:alpha 归 1
       lastUserInteractTime = Date.now();
+      if (_hgShadowDropped) { hgShadowApply(_hgShadowSize); _hgShadowDropped = false; }  // 恢复档位阴影尺寸
       resize();
       render();
     }

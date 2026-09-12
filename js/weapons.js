@@ -928,12 +928,16 @@ function resolveMissileHit(s, tk, hitKey, hitPoint, hitNormal, penOk) {
 
   // 2. 命中火花、音效与漫画爆炸/地面弹坑
   //    未击穿: 白闪已由闸门发出, 此处跳过'pen'火花; 起爆视效(战斗部碰甲仍炸)照常
+  //    ★E1-4(附录 B §B.1.3): 命中载具 = 只出殉爆蘑菇云(explosion→comicBurstFX, 6 层),
+  //      不再叠一张爆点卡(comicArtyBurst, 3 层)——两者位置重合、层层混合, 是导弹爆炸卡顿的直接来源。
+  //      触屏档(fxBurstDedup)生效; 桌面高档保持原双卡行为, 零回归。
+  var _fxDedup = gfxFx('fxBurstDedup', false);
   var norm = hitNormal || _v1.copy(s.vel).normalize().multiplyScalar(-1);
   if (!bounced && typeof hitSpark === 'function') hitSpark(hitPoint, norm, _v1.copy(s.vel).normalize(), 'pen');
   if (typeof explosion === 'function') explosion(hitPoint, 1.8, { noSfx: true });
   if (typeof sfxExplodeByDamage === 'function') sfxExplodeByDamage(hitPoint, s.dmg || 60);
   else if (typeof sfxExplode === 'function') sfxExplode(hitPoint, 1.3);
-  if (typeof comicArtyBurst === 'function') comicArtyBurst(hitPoint, 20.0);
+  if (!_fxDedup && typeof comicArtyBurst === 'function') comicArtyBurst(hitPoint, 20.0);
   if (typeof comicGroundDust === 'function') comicGroundDust(hitPoint.x, hitPoint.y, hitPoint.z, true);
   if (typeof queueCrater === 'function' && typeof terrainH === 'function' && hitPoint.y - terrainH(hitPoint.x, hitPoint.z) < 2.0) {
     queueCrater(hitPoint.x, hitPoint.z, 20.0);
@@ -1026,9 +1030,12 @@ function findMissileAutonomousOpticalTarget(s) {
   return bestTgt;
 }
 
-/* 直升机导弹哑爆/脱靶公用包: 爆燃视觉+音效+漫画爆尘+玩家脱靶语音 (stepShells 五处触发点共用) */
+/* 直升机导弹哑爆/脱靶公用包: 爆燃视觉+音效+漫画爆尘+玩家脱靶语音 (stepShells 五处触发点共用)
+   ★E1-4(附录 B §B.1.3): 命中地面/障碍/热源诱偏 = 只出爆点卡(comicArtyBurst, 3 层),
+   殉爆蘑菇云(6 层)由 noCard 关掉 —— 爆闪/震屏/热源/战况雾仍由 explosion 照常给出。 */
 function heliMissileMissBurst(s, pos) {
-  explosion(pos, 1.8, { noSfx: true });
+  var _fxDedup = gfxFx('fxBurstDedup', false);
+  explosion(pos, 1.8, { noSfx: true, noCard: _fxDedup });
   if (typeof sfxExplodeByDamage === 'function') sfxExplodeByDamage(pos, s.dmg || 60);
   else sfxExplode(pos, 1.3);
   if (typeof comicArtyBurst === 'function') comicArtyBurst(pos, 20.0);
@@ -1224,8 +1231,21 @@ function heliGuidedFlightStep(s, spec, dt, tX, tY, tZ, distTgt) {
 
 var _treesSegBrush = (typeof treesSegBrush === 'function') ? treesSegBrush : null;   // ★审查A8: 加载期一次绑定(原版每弹每步 2 次 typeof 全局查找; map.js 先于本文件加载, 函数声明已就位)
 var _grassSegShake = (typeof grassSegShake === 'function') ? grassSegShake : null;
+var _gfxTrailAdapt = gfxFx('fxTrailAdapt', false);   // ★E2-2 档位快照(weapons.js 在 scene.js 之后加载,GFX 已就位)
 function stepShells(dt) {
   _updateBattlefieldHeatSources(dt);
+  /* ★E2-2(附录 B):齐射期尾迹自适应降频。尾迹卡按模拟时间定距登记(见下方 s.trailT),
+     40 发齐射时 40×60Hz = 2400 卡/s 灌进 CRT_CAP=1200 的池子,池压到顶后新卡被丢、
+     旧卡仍在渲染 —— 既没省下填充,又让尾迹忽疏忽密。按在飞火箭数分三档拉大间距:
+     ≤8 发保持 60Hz(单机点射观感不变)、>8 发 30Hz、>16 发 20Hz。
+     只改视觉登记频率,弹道/命中/落点预报全在 rocketUStep 与 move 段,零影响。
+     高档 fxTrailAdapt=false ⇒ 恒 0.017,与改动前逐位一致(桌面零回归)。 */
+  var _rkTrailDt = 0.017;
+  if (_gfxTrailAdapt) {
+    var _nRk = 0;
+    for (var _ri = 0; _ri < shells.length; _ri++) if (shells[_ri].arty) _nRk++;
+    _rkTrailDt = _nRk > 16 ? 0.05 : (_nRk > 8 ? 0.033 : 0.017);
+  }
   for (var si = shells.length - 1; si >= 0; si--) {
     var s = shells[si];
     s.life -= dt;
@@ -1459,7 +1479,7 @@ function stepShells(dt) {
         /* 全航程尾迹:由模拟时间定距登记整张烟卡;不做相机/距离/炮镜逐次检测,不调用粒子。 */
         /* 全程烟链:助推/惯性段统一 60Hz。惯性段 355m/s 巡航下旧 30Hz 会拉出 ~12m 空洞(烟卡仅 ~4m),
            视觉上"只有发射段有烟"——定频 0.017s 后间距 ≤6m,配合膨胀/湍流即全程连续烟柱。 */
-        s.trailT = 0.017;
+        s.trailT = _rkTrailDt;
         if (typeof comicRocketTrailSpawn === 'function') comicRocketTrailSpawn(tx, ty, tz, _v3, burn2);
       }
     }

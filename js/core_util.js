@@ -14,6 +14,114 @@ var clamp = function (v, a, b) { return v < a ? a : (v > b ? b : v); };
    0=偶格(反对角线 qc–qb),1=奇格(主对角线 qa–qd);调用方只传非负格索引。 */
 function groundCellParity(ix, iz) { return (ix + iz) & 1; }
 
+/* 画质档字段读取器(爆炸特效专项 E1/E2 的唯一取值入口,见 docs/安卓端性能优化方案.md 附录 B)。
+   为什么要这个函数而不是各处直接写 GFX.xxx:
+     ① 加载顺序——audio.js / weapons.js 在 index.html 里排在 scene.js **之前**,
+        它们的模块顶层读不到 GFX;但它们的函数是对局中才调用的,那时 GFX 早已就位。
+        统一走惰性读取,就不必为"谁先加载"操心,也杜绝了"某处忘了取档位"的散落字面量。
+     ② 无头/回归环境没有 GFX(sandbox 只注入被测符号),必须有兜底默认值。
+   约定:dflt 一律填**高档(优化前)原值** ⇒ 取不到档位时行为与改动前逐参数一致。 */
+function gfxFx(key, dflt) {
+  if (typeof FXQ !== 'undefined' && FXQ && FXQ[key] !== undefined) return FXQ[key];   // 爆炸独立档优先:画质档不再影响爆炸质量
+  if (typeof GFX !== 'undefined' && GFX && GFX[key] !== undefined) return GFX[key];
+  return dflt;
+}
+
+/* ============================================================
+   爆炸效果独立档(FXQ)——与画质档(GFX)完全解耦(2026-09-13 用户需求)。
+   · 三档:high = 原画质"中"的爆炸质量;mid = 原画质"低"的爆炸质量(2026-09-13 由旧"低"改名,
+     数值逐项相等);low = 新增救急档(见下)。
+     high/mid 数值逐项抄自 scene.js GFX_PRESETS.mid/low 的 fx* 字段,两处必须一致,
+     由 android/tools/verify_fx_perf.js 逐项钉死,改一处不改另一处立刻红。
+   · 判定优先级:?fxq=high|mid|low 查询串 > localStorage.prefFxQuality > 迁移默认。
+     迁移默认:已存画质偏好是 low 则默认 mid(保持旧低档体验=新中);旧存档 'low' 首次加载
+     改写为 'mid'。其余:触屏(安卓)默认 low,桌面默认 high(★2026-09-13 安卓默认爆炸低)。
+   · 重启生效:爆炸贴图在加载期一次烘焙(CB_BIG_TEX),池并发上限在模块加载期快照,
+     与画质档同理,不做运行中热切换(热切要重建全部特效池+重传纹理,不值得)。
+   · GFX 表里的 fx* 字段保留不动:① 无头/回归 sandbox 里 FXQ 不存在时仍是兜底;
+     ② 桌面高画质原来的"完整爆炸质量"数值仍在表里留档(运行时不再到达,
+     见 docs/安卓端性能优化方案.md 附录 B.11)。
+   ============================================================ */
+var FXQ_PRESETS = {
+  high: { fxDistMax: 1.8, fxYieldMax: 1.4, fxGroundLight: false, fxSatHi: 5,  fxSatLo: 3, fxHardMax: 10,
+          fxWreckSmoke: 48, fxSmokeR: 420, fxBigTex: 512, fxTrailAdapt: true, fxBurstMerge: 3, fxBurstDedup: true, fxSfxMerge: true },
+  mid:  { fxDistMax: 1.5, fxYieldMax: 1.2, fxGroundLight: false, fxSatHi: 3,  fxSatLo: 2, fxHardMax: 6,
+          fxWreckSmoke: 24, fxSmokeR: 300, fxBigTex: 512, fxTrailAdapt: true, fxBurstMerge: 2, fxBurstDedup: true, fxSfxMerge: true },
+  low:  { fxDistMax: 1.2, fxYieldMax: 1.0, fxGroundLight: false, fxSatHi: 2,  fxSatLo: 1, fxHardMax: 4,
+          fxWreckSmoke: 12, fxSmokeR: 220, fxBigTex: 256, fxTrailAdapt: true, fxBurstMerge: 1, fxBurstDedup: true, fxSfxMerge: true }
+};
+/* ★2026-09-13 改三档:旧"低"改名"中"(数值逐项相等),新增更低的"低"(救急档)。
+   新低每项都比中更紧:距离放大 1.5→1.2(单卡面积 ×0.64)、当量上限 1.2→1.0(M142
+   贴图不再放大)、并发 3/2→2/1、硬顶 6→4、残骸烟 24→12 柱/半径 300→220m、
+   贴图 512²→256²(显存 6MB→1.5MB,火球边缘明显糊,救急档接受)、同帧殉爆 2→1。
+   峰值混合层面积相对原高完整≈1.4%(高≈8%,中≈3%),中→低再降一半。
+   旧存档语义迁移:已存 'low' == 新"中",首次加载时一次性改写为 'mid'(写失败则
+   每次读时映射,见下),存量用户体验零变化;?fxq=low 从此指新低档。 */
+var FXQ_PROFILE = (function () {
+  var qs = (typeof window !== 'undefined' && window.location) ? (window.location.search || '') : '';
+  var m = /[?&]fxq=(high|mid|low)\b/.exec(qs);
+  if (m) return m[1];
+  try {
+    var s = localStorage.getItem('prefFxQuality');
+    if (s === 'low') { try { localStorage.setItem('prefFxQuality', 'mid'); } catch (e2) {} return 'mid'; }
+    if (FXQ_PRESETS[s]) return s;
+    if (localStorage.getItem('prefGfxProfile') === 'low') return 'mid';   // 迁移默认:画质救急档用户保持旧低档体验(=新中)
+  } catch (e) {}
+  var touch = false;
+  try { touch = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in window; } catch (e3) {}
+  return touch ? 'low' : 'high';   // ★2026-09-13:安卓(触屏)默认爆炸低,桌面默认高
+})();
+var FXQ = FXQ_PRESETS[FXQ_PROFILE];
+
+/* ============================================================
+   模型质量独立档(MODQ)——从画质档(GFX)里分离出来(2026-09-13 用户需求)。
+   管辖范围:两个 3D 模型预览器(整备机库展示 + 炮塔 HUD 迷你窗)的质量旋钮,
+   即原画质三档里与"模型"有关的那几项;像素比/阴影/模板/后处理等其余画质内容不动,
+   仍归画质档。
+   三档取值 = 原画质三档的模型精度(逐项照搬,见下表;由 verify_android_fixes.js M 组钉死):
+     高: 机库 MSAA 开 + 像素比≤2 + 阴影 2048²PCFSoft;炮塔小窗 MSAA 开 + 漫画后处理开
+     中: 机库 MSAA 关 + 像素比≤1.5 + 阴影 1024²PCF;炮塔小窗 MSAA 关 + 后处理关
+     低: 机库 MSAA 关 + 像素比≤1.0 + 阴影 1024²PCF;炮塔小窗 MSAA 关 + 后处理关
+     (中/低在小窗侧本来就无差别——原版即如此,此处照搬不发明;差异只在机库像素比。
+      详见 docs/安卓端性能优化方案.md 附录 B.12。)
+   判定优先级:?modq=high|mid|low 查询串 > localStorage.prefModQuality > 迁移默认。
+   迁移默认:已存画质偏好是 low 则默认 low(同 FXQ 的理由,保最弱机器);否则一律默认
+   high(★2026-09-13 起安卓默认模型高,不再按设备区分)。
+   重启生效:机库/PHUD 渲染器都是一次性创建的(创建期读档),与画质档同理不做热切换。
+   GFX 表里的 hudAA/hudPost 原样保留:① sandbox 无 MODQ 时的兜底语义不变;
+   ② 万一漏改某处消费方,行为回落到改动前而不是崩(改动前后对照见 M 组)。
+   ============================================================ */
+var MODQ_PRESETS = {
+  high: { modAA: true,  modPost: true,  modPR: 2,   modShadow: 2048, modShadowSoft: true,
+          modSunMap: 1024, modSunSoft: true },
+  mid:  { modAA: false, modPost: false, modPR: 1.5, modShadow: 1024, modShadowSoft: false,
+          modSunMap: 512,  modSunSoft: false },
+  low:  { modAA: false, modPost: false, modPR: 1.0, modShadow: 1024, modShadowSoft: false,
+          modSunMap: 512,  modSunSoft: false }
+};
+/* ★2026-09-13 追加:主场景太阳阴影(modSunMap/modSunSoft)也归模型质量档——
+   对局内载具质感(自投影/接地)几乎全看这盏灯的阴影,而几何本就没有分档,
+   "模型质量不管对局内载具"就只剩机库自嗨。原值:高 1024²PCFSoft / 中低 512²PCF,
+   三档行为逐位不变;画质档保留像素比/模板。GFX 表的 shadowMapSize/shadowSoft
+   原样保留作 sandbox 兜底与数值留档,运行时不再被读。 */
+var MODQ_PROFILE = (function () {
+  var qs = (typeof window !== 'undefined' && window.location) ? (window.location.search || '') : '';
+  var m = /[?&]modq=(high|mid|low)\b/.exec(qs);
+  if (m) return m[1];
+  try {
+    var s = localStorage.getItem('prefModQuality');
+    if (MODQ_PRESETS[s]) return s;
+    if (localStorage.getItem('prefGfxProfile') === 'low') return 'low';   // 迁移默认:画质救急档用户不被默认抬档
+  } catch (e) {}
+  return 'high';   // ★2026-09-13:安卓默认模型高,桌面默认高,两端收敛(触屏不再默认中)
+})();
+var MODQ = MODQ_PRESETS[MODQ_PROFILE];
+/* 模型质量取值器(gfxFx 同构:惰性读取,无头/sandbox 无 MODQ 时回落默认值=高档原值)。 */
+function modQ(key, dflt) {
+  if (typeof MODQ !== 'undefined' && MODQ && MODQ[key] !== undefined) return MODQ[key];
+  return dflt;
+}
+
 /* 2D 画布创建的统一入口(全部程序化贴图共用)。
    一处收口三件事:无 DOM 环境(SSR / 无头自检)返回 null、getContext 不可用返回 null、尺寸设定。
    返回 { cv, g };调用方只需判一次 null。 */

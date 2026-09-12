@@ -147,6 +147,24 @@ var emberMesh = null, emberMat = null;
 var emberList = [];                   // 槽位账本 {x,y,z,t,on,kind}:仅覆盖抹除用,无任何时间/容量回收(JS 侧,不进 GPU)
 var emberFree = [];                   // 空闲槽位栈
 var emberBuckets = new Map();         // 12m 桶 → [槽号...](弹坑生效只查邻桶,替代全 16k 槽线性扫)
+/* ★E1-7(附录 B §B.3):余烬缓冲增量上传。
+   原实现在 emberCrater 末尾只置 needsUpdate 而未设 updateRange —— three r128 的 updateRange.count
+   默认 -1 = **整个 buffer 重传**,所以那句"仅弹坑生效帧上传(≤2.3KB+3KB)"的注释与实现不符:
+     槽位 1536(开局) → 每批 172KB;6144(中期) → 688KB;16384(硬顶) → 1.84MB。
+   弹坑批次每 0.3s 一次(main.js),齐射期持续触发 ⇒ 稳态 0.6~6MB/s 的无效上传。
+   现改为「记脏槽区间 + updateRange」,与本工程既有范式同构(弹道线 _rklMark/_comicRocketLineFlush、
+   CSM/CGD 各池的 updateRange 写法)。区间制(min..max)而非逐槽列表:一次弹坑的槽位天然聚簇
+   (emberSpot 连续取栈顶),区间几乎就是紧致集;实现简单且无分配。 */
+var _embDMin = Infinity, _embDMax = -1;
+function _embMark(s) { if (s < _embDMin) _embDMin = s; if (s > _embDMax) _embDMax = s; }
+function emberFlush() {                        // 把本批脏槽区间一次上传(无脏=零开销早退)
+  if (!emberMesh || _embDMax < _embDMin) return;
+  var g = emberMesh.geometry.attributes, v0 = _embDMin * 4, nV = (_embDMax - _embDMin + 1) * 4;
+  g.position.updateRange.offset = v0 * 3; g.position.updateRange.count = nV * 3;
+  g.aData.updateRange.offset = v0 * 4; g.aData.updateRange.count = nV * 4;
+  g.position.needsUpdate = true; g.aData.needsUpdate = true;
+  _embDMin = Infinity; _embDMax = -1;
+}
 function _emberBucketKey(x, z) { return (Math.floor(x / 12) + 96) * 192 + (Math.floor(z / 12) + 96); }
 function initEmberFx() {
   var geo = new THREE.BufferGeometry();
@@ -247,6 +265,7 @@ function emberKill(s) {                        // 尺寸归零 + 顶点坍缩同
     var p3 = (s * 4 + i) * 3;
     pA[p3] = L.x; pA[p3 + 1] = L.y; pA[p3 + 2] = L.z;
   }
+  _embMark(s);                                 // ★E1-7:槽位入脏区(上传由 emberFlush 合批)
   emberFree.push(s);
 }
 function emberOldest() {                     // 硬顶回收——找最老活槽(FIFO)抹除腾位,新坑必有火星
@@ -313,6 +332,7 @@ function emberSpot(x, z, radius, hot) {        // 一枚贴地燃烧块(内含 3
     pA[p3] = wx; pA[p3 + 1] = terrainH(wx, wz) + 0.06; pA[p3 + 2] = wz;
     dA[d4] = radius; dA[d4 + 1] = seed; dA[d4 + 2] = hot; dA[d4 + 3] = 0;
   }
+  _embMark(s);                                    // ★E1-7:新生槽入脏区
 }
 function emberCrater(cx, cz, R, rInf) {        // 弹坑生效回调(flushCraters 逐坑调用,R=7)
   if (!emberMesh) return;
@@ -337,6 +357,7 @@ function emberCrater(cx, cz, R, rInf) {        // 弹坑生效回调(flushCrater
           pA0[p3 + 1] = terrainH(pA0[p3], pA0[p3 + 2]) + 0.06;
         }
         L0.y = terrainH(L0.x, L0.z) + 0.06;            // 池灯挂点同步
+        _embMark(i);                                   // ★E1-7:重锚槽入脏区
       }
     }
   }
@@ -355,8 +376,7 @@ function emberCrater(cx, cz, R, rInf) {        // 弹坑生效回调(flushCrater
     var a3 = Math.random() * TAU, r3 = R * rand(1.25, 2.1);
     emberSpot(cx + Math.sin(a3) * r3, cz + Math.cos(a3) * r3, rand(0.16, 0.26), rand(0.12, 0.30));
   }
-  emberMesh.geometry.attributes.position.needsUpdate = true;       // 仅弹坑生效帧上传(≤2.3KB+3KB)
-  emberMesh.geometry.attributes.aData.needsUpdate = true;
+  emberFlush();                                // ★E1-7:仅上传本批脏槽区间(原为整 buffer 重传,见 emberFlush 注)
 }
 
 /* ===== 全局闪光与战场环境热源 ===== */
@@ -384,8 +404,11 @@ function doFlash(p, intensity, colorHex, decay, dist) {
 
 function explosion(p, scale, opts) {
   /* 载具殉爆(2.1)/燃爆(1.5)漫画蘑菇云:宽瓣云冠+窄高爆燃柱+贴地锈红冲击裙+载具碎块,
-     由 comic.js 独立程序贴图/共享合并几何/固定池实现(opts 保留签名兼容,漫画爆点不消费)。 */
-  if (typeof comicBurstFX === 'function') comicBurstFX(p, scale);
+     由 comic.js 独立程序贴图/共享合并几何/固定池实现(opts 保留签名兼容,漫画爆点不消费)。
+     ★E1-4(附录 B §B.1.3)opts.noCard:只要爆炸的"物理表现"(爆闪/震屏/热源/战况雾/音效),
+     不要殉爆蘑菇云卡。用于导弹命中地面/障碍的路径 —— 那里已经出了一张爆点卡(comicArtyBurst),
+     两套卡在空间上几乎完全重叠 = 单次爆炸 9 层透明,是"导弹爆炸尤其卡"的直接原因。 */
+  if (!(opts && opts.noCard) && typeof comicBurstFX === 'function') comicBurstFX(p, scale);
   doFlash(p, 5 * scale, 0xff9a40, 5);
   _addBattlefieldHeatSource(p.x, p.y, p.z, 1800.0 * (scale || 1.0), 2.0);
   var d = player ? p.distanceTo(player.group.position) : 999;
@@ -429,6 +452,7 @@ function fxBattleClear() {
       var act = [];
       for (var i = 0; i < emberList.length; i++) if (emberList[i] && emberList[i].on) act.push(i);
       for (var a = 0; a < act.length; a++) { try { emberKill(act[a]); } catch (ek) {} }
+      emberFlush();                              // ★E1-7:拆场抹除也要落盘(否则脏区留到下一局首个弹坑才传)
     }
     if (typeof emberBuckets !== 'undefined' && emberBuckets) emberBuckets.clear();
   } catch (e1) {}
@@ -449,5 +473,8 @@ function fxBattleClear() {
 function fxPrewarm() {
   try { if (typeof _wspEnsure === 'function') _wspEnsure(); } catch (e) { /* 无头环境无 document 跳过 */ }
 }
+/* ★E1-6(附录 B):fx 侧贴图清单(残骸/履带飞溅火星卡),与 comicFxTextures 一并在加载期上传。 */
+function fxTextures() { return [_wspTex]; }
+window.fxTextures = fxTextures;
 window.fxPrewarm = fxPrewarm;
 window.fxBattleClear = fxBattleClear;

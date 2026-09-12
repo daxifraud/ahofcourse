@@ -454,6 +454,11 @@ function clearBattleEntities() {
   try { if (typeof _wreckMoveQueue !== 'undefined' && _wreckMoveQueue) _wreckMoveQueue.length = 0; } catch (eWM) {}
   try { if (typeof sqCmdReset === 'function') sqCmdReset(); } catch (eS2) {}
   try { if (typeof heliABGClear === 'function') heliABGClear(); } catch (eB2) {}
+  /* ★修复(火箭炮黄框跨局残留): 世界层那处 hide 只在渲染帧里跑,而它在退出对局后
+     会因为 player 置空/换车而整个被跳过;这里作为对局级清理再显式关一次,
+     保证「在火箭炮炮镜里直接退出对局」也不会把黄色火力覆盖框带进下一局。
+     startGame 开头也会走本函数,所以新对局开始必然经过这道关。 */
+  try { if (typeof artyTopMarkersHide === 'function') artyTopMarkersHide(); } catch (eAT) {}
   try { player = null; } catch (eP) {}
   try {
     if (typeof shells !== 'undefined' && shells) {
@@ -654,6 +659,29 @@ function sqCmdOrderOccupyAtCursor() {
   if (!isFinite(d) || d < 8 || d > 1990) { if (typeof aimHint === 'function') aimHint('无法标定落点'); return; }
   sqCmdOrderSet('occupy', camera.position.x + _sqOrdV.x * d, camera.position.z + _sqOrdV.z * d);
 }
+/* ===== 触屏"幽灵鼠标"过滤 =====
+   安卓等触屏环境里,浏览器会为触摸手势额外合成一整套兼容鼠标事件
+   (mousedown → mousemove → mouseup),前提是那次 touchstart 没有被 preventDefault。
+   本作恰好就是这种情况:点触 HUD 里的"点击型控件"(武器切换栏 #heliweaponbar 及其选项)
+   时 uiTarget() 放行、**故意不 preventDefault**(否则浏览器合成的 click 会被一起吞掉、
+   控件就点不动了),于是浏览器紧接着合成鼠标事件 ——
+   · mousemove 落到下面未门控的瞄准监听上,而它按 clientX 差分算增量:
+     基准 aimPX 还停在上一处位置,一次点击立刻变成几十度的视角跳转
+     —— 这就是"点武器栏切换武器会把视角转走"的根因;
+   · mousedown 还会置 mouseDown = true(误开火)并尝试申请指针锁定。
+   过滤方式:优先用 Chrome 的 e.sourceCapabilities.firesTouchEvents(合成事件的精确标记),
+   退化为"刚刚有触摸事件"的时间窗 —— 合成的鼠标事件紧跟在 touchend 之后同批次派发,
+   400ms 窗口远大于其间隔,又不至于误伤触摸屏笔记本上"点一下再立刻动鼠标"的真实操作。
+   真鼠标/触控板不受影响(firesTouchEvents 为 false,且不会触发 markTouchInput)。 ===== */
+var _lastTouchAt = -1e9;
+function markTouchInput() {
+  _lastTouchAt = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+}
+function isGhostMouse(e) {
+  if (e && e.sourceCapabilities && e.sourceCapabilities.firesTouchEvents) return true;   // Chrome:合成事件自带标记
+  var now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  return (now - _lastTouchAt) < 400;                                                     // 兜底:刚有触摸=必是合成
+}
 function initInput() {
 
   addEventListener('keydown', function (e) {
@@ -734,6 +762,7 @@ function initInput() {
     _rmbHeld = false;
   });
   addEventListener('mousedown', function (e) {
+    if (isGhostMouse(e)) return;   // 触屏合成的兼容鼠标事件:否则点一次 HUD 控件就会误开火 + 误申请指针锁定
     // 复活/接管界面开着时点按钮绝不再锁指针(防光标被吃掉,选钮无需先按 ESC)
     if (gameState === 'playing' && !respawnUiOpen && !possessUiOpen) {
       if (e.button === 0) {
@@ -794,6 +823,7 @@ function initInput() {
   // 鼠标瞄准——视野(FPS 式,黄点钉死屏心)先吃增量,真实炮塔在主循环里按炮塔转速限幅追踪。
   // 指针锁定吃 movementX/Y 无限增量;兼容模式(沙箱拒锁)按 clientX 差分(屏幕边缘会顶死,属已知退化)。
   addEventListener('mousemove', function (e) {
+    if (isGhostMouse(e)) return;    // 触屏合成事件不是鼠标:放行会让"点一下"变成大幅转视角(见上面的根因注释)
     if (gameState !== 'playing' || !player || !player.alive) return;
     if (artyTopActive()) {                             // 火箭炮俯视火控:自由光标装定,不吃视角增量
       artTopNX = e.clientX / innerWidth * 2 - 1;
@@ -915,7 +945,11 @@ function updateLockHint() {
   var capB = document.getElementById('tcap'), folB = document.getElementById('tfol');   // 指挥指令键(占领/跟随,仅指挥模式显示)
   var nvB = document.getElementById('tnv'), sense = document.getElementById('tsense');
   var thB = document.getElementById('tth');
+  var lasB = document.getElementById('tlas');   // 激光压制键(仅99式;PC 右键长按 _rmbHeld 同源)
   var heliU = document.getElementById('theliu'), heliD = document.getElementById('thelid');   // H1:直升机双十字键容器
+  /* 战术雷达 MFD(直升机 / 红方 PGZ-95 车载搜索雷达)与它的宿主 #hud:
+     MFD 本身由 player.js 的 renderHeliRadarMFD 每帧驱动显隐,这里只负责它在编辑器里的位置/大小。 */
+  var mfdB = document.getElementById('heliradarmfd'), hudRoot = document.getElementById('hud');
   var JOY_R0 = 62;                               // 摇杆行程半径基准 px(=底盘半径,knob 顶到缘=满舵;×自定义缩放)
   /* ===== 自定义布局:{id:{fx,fy,s}}=视口分数中心坐标+缩放;无条目=CSS 默认位(零回归) ===== */
   var tlay = {};
@@ -933,15 +967,25 @@ function updateLockHint() {
   var CTL_W = { tfire: { w: 84, h: 84 }, tscope: { w: 64, h: 64 }, tquit: { w: 64, h: 64 },
                 tmenu: { w: 52, h: 52 }, tsqb: { w: 64, h: 64 }, tnv: { w: 64, h: 64 },
                 tth: { w: 64, h: 64 }, tcap: { w: 64, h: 64 }, tfol: { w: 64, h: 64 },
-                theliu: { w: 146, h: 146 }, thelid: { w: 146, h: 146 } };   // CSS 基准宽高(transform scale 不改布局盒,居中定位用;弃车/热成像与其余同 64,仅开火 84)
+                tlas: { w: 52, h: 52 },
+                theliu: { w: 146, h: 146 }, thelid: { w: 146, h: 146 }, heliradarmfd: { w: 200, h: 251 } };
+  /* CSS 基准宽高(transform scale 不改布局盒,居中定位用;弃车/热成像与其余同 64,仅开火 84)。
+     heliradarmfd 高 251 是 CSS 推算值(2 边框 + 6 内边距)×2 + 顶栏 17.2 + 显示区 180 + 底栏 30 + 2×4 间距;
+     它只作"元素隐藏时"的兜底,可见时一律用下面的 ctlBox 实测,所以不受字体渲染差异影响。 */
+  function ctlBox(id, el2) {                     // 元素布局盒尺寸:offsetWidth/Height 不含 transform:scale,缩放后仍是基准盒
+    var w = el2.offsetWidth, h = el2.offsetHeight, c = CTL_W[id];
+    if (!w || !h) { w = c ? c.w : 0; h = c ? c.h : 0; }   // display:none(offset 全 0)时回落 CSS 基准表
+    return { w: w, h: h };
+  }
   function layApply() {                          // 布局落地(事件级:进出编辑/拖动/缩放/转屏时调)
-    var L = curLay(), m = { tfire: fire, tscope: scpBtn, tquit: quitBtn, tmenu: menuB, tsqb: cmdB, tnv: nvB, tth: thB, tcap: capB, tfol: folB, theliu: heliU, thelid: heliD }, id, el2, e3;
+    var L = curLay(), m = { tfire: fire, tscope: scpBtn, tquit: quitBtn, tmenu: menuB, tsqb: cmdB, tnv: nvB, tth: thB, tcap: capB, tfol: folB, tlas: lasB, theliu: heliU, thelid: heliD, heliradarmfd: mfdB }, id, el2, e3, bx;
     for (id in m) {
       el2 = m[id]; if (!el2) continue;
       e3 = L[id];
       if (e3) {
-        el2.style.left = (e3.fx * innerWidth - CTL_W[id].w / 2) + 'px';
-        el2.style.top = (e3.fy * innerHeight - CTL_W[id].h / 2) + 'px';
+        bx = ctlBox(id, el2);                    // 用实测盒尺寸居中:MFD 高度由内容撑开(非固定值),硬编码会偏
+        el2.style.left = (e3.fx * innerWidth - bx.w / 2) + 'px';
+        el2.style.top = (e3.fy * innerHeight - bx.h / 2) + 'px';
         el2.style.right = 'auto'; el2.style.bottom = 'auto'; el2.style.marginTop = '0';
         el2.style.setProperty('--ts', e3.s || 1);
       } else {
@@ -964,7 +1008,18 @@ function updateLockHint() {
   var aimId = null, aimLX = 0, aimLY = 0;        // 瞄准触点 id 与上次坐标
   var p2Id = null, p2X = 0, p2Y = 0;             // 缩放第二指
   var pinchD0 = 0, pinchZ0 = 1;                  // 捏合基准距离/基准倍率(虚拟倍率:未开镜=1)
-  var fireId = null, quitId = null;   // 开火/弃车触点 id(松手复位)
+  var fireId = null, quitId = null, lasId = null;   // 开火/弃车/激光触点 id(松手复位)
+  /* ===== 开火键兼任瞄准摇杆(H2:边开火边瞄准)=====
+     按住 #tfire 期间手指在屏幕上滑动即转动视角(与右半屏滑动共用 aimApplyDelta 单一实现),
+     于是开火与瞄准可以同时进行,不必把手指从开火键上挪开 —— 这就是"开火键当摇杆用"。
+     手感三条:
+     · 死区 FIRE_AIM_DZ:按下后前 8px 视为手抖,不转视角 —— 纯点按开火不会带偏准星;
+     · 越过死区的那一帧只"起算"(把基准重置到当前位置),不把死区内的位移补成增量,
+       否则会重演"一点就大幅转视角"的老问题;
+     · 起算之后按增量累加,灵敏度/倍率补偿/俯视火控分支全部与屏幕滑动同源。
+     仅触屏层挂载(桌面无监听器);开火语义(mouseDown)完全不变。 */
+  var FIRE_AIM_DZ = 8;                          // 开火键瞄准死区(px)
+  var fireAimX = 0, fireAimY = 0, fireAimOn = false;   // 瞄准基准点/是否已越过死区
 
   function playing() { return gameState === 'playing' && player && player.alive && !respawnUiOpen && !possessUiOpen; }
   function uiSync() {                            // 事件驱动显隐(开战/结算/切模式时调;无逐帧检查)
@@ -981,6 +1036,14 @@ function updateLockHint() {
     if (thB) {
       thB.classList.toggle('hidden', !on || (typeof playerHasTH !== 'undefined' && !playerHasTH));   // 座车无热成像(99式/M1A1 外)=隐藏;编辑器内由 custShow 全量显示
       if (on) thB.classList.toggle('lit', typeof thermalOn !== 'undefined' && !!thermalOn);   // 点亮态跟随热像开关记忆(任意视角)
+    }
+    if (lasB) {   // 激光压制键:仅99式座车显示(与 PC 右键长按 _rmbHeld 同源;炮镜门在 updateLws,不在此)
+      var lasOn = on && player && player.alive && player.kind === '99';
+      lasB.classList.toggle('hidden', !lasOn);
+      if (!lasOn) {   // 藏键=照射必停:防换车/结算瞬间手指还按着导致 _rmbHeld 幽灵常真
+        lasB.classList.remove('pressed', 'firing', 'cooling');
+        if (lasId != null) { lasId = null; _rmbHeld = false; }
+      }
     }
     if (sense && !custOn) sense.classList.add('hidden');   // 感应圈:运行期恒隐形(纯逻辑判定,仅编辑器可视)
     if (cmdB) {
@@ -1030,6 +1093,45 @@ function updateLockHint() {
     if (typeof heliHandleWheel !== 'function') return;
     heliHandleWheel(dir === 'uu' ? -100 : 100, !!coarse);
   }
+  /* 子键方向解析:从触点目标逐级向上找最近的 [data-hd](按钮本体或其内部 SVG/路径)。
+     禁用"按类名 closest 反查"那套旧写法——旧按钮是纯文字(target 恒为 button 本体),
+     新线稿按钮内部是 svg/path;部分 Android WebView 的 SVG 元素没有 closest,
+     届时守卫直接判空=双垫按键全灭/错乱。parentNode 链在任何 DOM 实现里都可用,
+     与旧写法一致处行为逐位相同(探针见 Temp/opencode/closestprobe.html,已清理)。
+     (2026-09-13 双垫按键错乱事故根因;回归见 verify_heli_dpad.js E 组) */
+  function heliDirFromTarget(tgt) {
+    var n = tgt;
+    while (n) {
+      if (n.getAttribute) {
+        var d = n.getAttribute('data-hd');
+        if (d) return d;
+      }
+      n = n.parentNode;
+    }
+    return null;
+  }
+  /* 十字键方向解析·坐标制(2026-09-13 双垫"按哪都是下"事故后升为主路径):
+     触点坐标相对垫容器矩形按 3×3 九宫格归位,与 DOM 目标/closest/svg 实现全脱钩——
+      * 老 WebView 的 SVG 无 closest;
+     * 任何"目标错位"(错垫/串键/落点漂移)都不可能发生:坐标即真理。
+     布局保证:垫容器恒为 3×3 等分网格(行列 46px+4px 间隙,见 CSS #theliu/#thelid),
+     自定义编辑器只整体移动/缩放容器,格占比恒为三分之一;变换后的 rect 与
+     clientX/Y 同为视口坐标,直接可比。核心格与垫外一律 null(不误触)。
+     DOM 步查 heliDirFromTarget 降为回落(矩形不可用时)。 */
+  function heliDirFromPoint(hostId, cx, cy) {
+    var host = hostId === 'theliu' ? heliU : heliD;
+    if (!host || !host.getBoundingClientRect) return null;
+    var r = host.getBoundingClientRect();
+    if (!r || !(r.right > r.left) || !(r.bottom > r.top)) return null;
+    if (cx < r.left || cx > r.right || cy < r.top || cy > r.bottom) return null;
+    var cw = (r.right - r.left) / 3, ch = (r.bottom - r.top) / 3;
+    var col = ((cx - r.left) / cw) | 0, row = ((cy - r.top) / ch) | 0;
+    if (col < 0) col = 0; else if (col > 2) col = 2;
+    if (row < 0) row = 0; else if (row > 2) row = 2;
+    var idx = row * 3 + col;
+    if (hostId === 'theliu') return idx === 1 ? 'uu' : idx === 3 ? 'ul' : idx === 5 ? 'ur' : idx === 7 ? 'ud' : null;
+    return idx === 1 ? 'du' : idx === 3 ? 'dl' : idx === 5 ? 'dr' : idx === 7 ? 'dd' : null;
+  }
   function heliSubEl(dir) {
     var host = (dir === 'uu' || dir === 'ud' || dir === 'ul' || dir === 'ur') ? heliU : heliD;
     if (!host || !host.querySelector) return null;
@@ -1041,6 +1143,7 @@ function updateLockHint() {
     heliTouch[dir] = { tid: tid, el: sub };
     if (sub) sub.classList.add('pressed');
     if (dir === 'uu' || dir === 'ud') {
+      if (heliRep[dir]) { clearInterval(heliRep[dir]); heliRep[dir] = null; }   // 防御:同向旧 interval 残留即泄漏为"一直在下压/上提";正常路径到不了这里
       heliStep(dir, false);
       (function (d) { heliRep[d] = setInterval(function () { heliStep(d, true); }, 180); })(dir);
     } else {
@@ -1060,10 +1163,23 @@ function updateLockHint() {
   function heliReleaseByTid(tid) { for (var dir in heliTouch) if (heliTouch[dir].tid === tid) heliRelease(dir); }
   function heliHasTid(tid) { for (var dir in heliTouch) if (heliTouch[dir].tid === tid) return true; return false; }
   function heliReleaseAll() { for (var dir in heliTouch) heliRelease(dir); }
-  var TCTL_IDS = ['tfire', 'tscope', 'tquit', 'tmenu', 'tsqb', 'tnv', 'tth', 'tcap', 'tfol', 'theliu', 'thelid'];   // 触控层自有键 ID 表(uiTarget/ctrlOf 共用单一出处)
+  var TCTL_IDS = ['tfire', 'tscope', 'tquit', 'tmenu', 'tsqb', 'tnv', 'tth', 'tcap', 'tfol', 'tlas', 'theliu', 'thelid'];   // 触控层自有键 ID 表(uiTarget/ctrlOf 共用单一出处;tlas=99式激光压制)
+  /* ===== 触屏上靠"浏览器合成 click"驱动的 HUD 控件(div 结构,非 <button>) =====
+     武器切换栏 #heliweaponbar 及其三个选项。这些控件不是触控层操控键(不参与按压语义),
+     但同样必须放行合成 click —— 否则会掉进本段末尾那句 e.preventDefault(),
+     合成 click 被一起吞掉,表现就是「安卓端点它毫无反应、桌面鼠标却一切正常」。
+     注意:hwp 选项是 div,不会命中下面的 BUTTON/INPUT/A/SELECT 标签放行规则,
+     所以必须在这里按 id 显式登记。新增同类 HUD 控件时记得一并加进来。 */
+  var TAP_UI_IDS = ['heliweaponbar', 'hwp-1', 'hwp-2', 'hwp-3'];
   function uiTarget(t) {                         // 菜单/按钮/滑杆触摸不拦截(浏览器合成 click 接管);触控层自有键除外
     var n = t; while (n && n !== document.body) {
       if (TCTL_IDS.indexOf(n.id) >= 0) return false;   // 触控层自有键走触摸处理(button 标签不得被菜单放行规则吞掉)
+      /* 十字键子键(.theli-sub)无 id,单靠上面的 id 表认不出:它在同一层就撞上下面的 BUTTON 分支,
+         被误判成"菜单按钮"放行给浏览器合成 click,触摸永远到不了 heliPress —— 这就是十字键整体失效的根因。
+         触控层自有按钮统一带 .tbtn 基类(class 判定与 id 判定同层,顺序必须在标签名判定之前),
+         故此处按类归位为触控层元素;其余菜单按钮用 .optbtn/.bigbtn/.mm-*,不受影响。 */
+      if (n.classList && n.classList.contains('tbtn')) return false;
+      if (TAP_UI_IDS.indexOf(n.id) >= 0) return true;  // 点击型 HUD 控件:放行合成 click(div 结构,标签规则认不出)
       if (n.tagName === 'BUTTON' || n.tagName === 'INPUT' || n.tagName === 'A' || n.tagName === 'SELECT') return true;
       n = n.parentNode;
     }
@@ -1078,6 +1194,7 @@ function updateLockHint() {
   }
 
   document.addEventListener('touchstart', function (e) {
+    markTouchInput();                                        // 幽灵鼠标过滤基准:本次触摸之后 400ms 内合成的鼠标事件一律丢弃
     if (custOn) { edStart(e); return; }                      // 自定义布局编辑模式:触摸全交编辑器
     if (uiSyncQ) { uiSyncQ = false; uiSync(); }              // 状态迁移后的惰性同步点
     if (gameState === 'playing' && ctrlOf(e.target) === 'tmenu') {   // 返回菜单键置 playing() 门前:复活/接管界面开着同样可用
@@ -1092,6 +1209,7 @@ function updateLockHint() {
       cid = ctrlOf(t.target);
       if (cid === 'tfire') {                                   // 开火键:按下=持续开火(mouseDown 同位)
         fireId = t.identifier; mouseDown = true; fire.classList.add('pressed');
+        fireAimX = t.clientX; fireAimY = t.clientY; fireAimOn = false;   // 同时就位为瞄准摇杆(越过死区才真正生效)
       } else if (cid === 'tscope') {                           // 炮镜键:点按开关(Shift 同一实现)
         scopeToggle(); scpBtn.classList.toggle('lit', scopeMode);
       } else if (cid === 'tquit') {                            // 弃车键:长按 3s(KeyJ 同位,倒数/红环/松手复位全链复用)
@@ -1106,9 +1224,10 @@ function updateLockHint() {
         sqCmdOrderOccupyAtCursor();
       } else if (cid === 'tfol') {                             // 跟随键:撤销占领收旗回跟随(进模式默认);X 同入口
         if (typeof sqCmd !== 'undefined' && sqCmd.active) sqCmdOrderSet('follow', 0, 0);
-      } else if (cid === 'theliu' || cid === 'thelid') {           // H3:直升机十字键(容器命中,方向由子键 data-hd 判定)
-        var hd = t.target && t.target.closest ? t.target.closest('.theli-sub') : null;
-        if (hd) heliPress(hd.getAttribute('data-hd'), t.identifier);
+      } else if (cid === 'theliu' || cid === 'thelid') {           // H3:直升机十字键(容器命中,方向由触点坐标九宫格判定)
+        var hdir = heliDirFromPoint(cid, t.clientX, t.clientY);   // 主路径:坐标制(与 DOM/closest 无关)
+        if (hdir == null) hdir = heliDirFromTarget(t.target);     // 回落:矩形不可用时 DOM 步查
+        heliPress(hdir, t.identifier);
       } else if (cid === 'tnv') {                              // 夜视仪键:任意视角开关(KeyN 同语义;设备门=座车装备缓存;阵亡/换装自动失效由 nvActive 兜底)
         if ((typeof playerHasNV === 'undefined' || playerHasNV) && player && player.alive && typeof nvSync === 'function') {
           nvOn = !nvOn; nvSync(); nvB.classList.toggle('lit', nvOn);
@@ -1118,6 +1237,10 @@ function updateLockHint() {
         if ((typeof playerHasTH === 'undefined' || playerHasTH) && player && player.alive && typeof thermalSync === 'function') {
           thermalOn = !thermalOn; thermalSync(); thB.classList.toggle('lit', thermalOn);
           if (nvB) nvB.classList.toggle('lit', typeof nvOn !== 'undefined' && !!nvOn);             // 互斥后夜视灯随动
+        }
+      } else if (cid === 'tlas') {                           // 激光压制键(仅99式):按住=照射,松手=停(PC 右键长按 _rmbHeld 同源;炮镜/距离/冷却门全在 updateLws)
+        if (player && player.alive && player.kind === '99') {
+          lasId = t.identifier; _rmbHeld = true; if (lasB) lasB.classList.add('pressed');
         }
       } else if (!isHeliMode() && joyId == null && inSense(t.clientX, t.clientY)) {
         /* 摇杆:感应圈内按下(圈外左半屏落瞄准分支) */
@@ -1152,13 +1275,34 @@ function updateLockHint() {
     baseTo(joyCX, joyCY, dx, dy);
   }
 
+  /* 开火键滑动=瞄准(死区外生效)。返回前不改变开火语义:mouseDown 恒为按下状态。
+     起算帧的"重置基准而不补位移"是防瞬转的关键 —— 与幽灵鼠标那次修的其实是同一类错误:
+     把"两处无关坐标之差"当成输入增量。 */
+  function fireAimMove(t) {
+    var adx = t.clientX - fireAimX, ady = t.clientY - fireAimY;
+    if (!fireAimOn) {
+      if (Math.hypot(adx, ady) < FIRE_AIM_DZ) return;      // 死区内:只开火,不动准星
+      fireAimOn = true; fireAimX = t.clientX; fireAimY = t.clientY;   // 越过死区:只起算,不把死区位移补成增量
+      return;
+    }
+    fireAimX = t.clientX; fireAimY = t.clientY;
+    if (!playing()) return;
+    if (p2Id != null) return;                              // 另一指已进入捏合缩放:让位给缩放,避免双输入打架
+    if (artyTopActive()) {                                 // 火箭炮俯视火控:与单指滑动同口径=移动装定光标
+      artTopNX = t.clientX / innerWidth * 2 - 1;
+      artTopNY = -(t.clientY / innerHeight * 2 - 1);
+    } else aimApplyDelta(adx, ady);                        // 余下与屏幕滑动共用同一实现(灵敏度/倍率补偿)
+  }
+
   document.addEventListener('touchmove', function (e) {
+    markTouchInput();                                        // 触摸期间持续刷新窗口:滑动中合成的鼠标事件同样要丢
     if (custOn) { edMove(e); return; }
     if (joyId == null && aimId == null && fireId == null) return;
     var i, t;
     for (i = 0; i < e.changedTouches.length; i++) {
       t = e.changedTouches[i];
       if (t.identifier === joyId) joyVec(t.clientX, t.clientY);
+      else if (t.identifier === fireId) fireAimMove(t);       // 开火键按住期间滑动=转视角(边打边瞄)
       else if (t.identifier === aimId || t.identifier === p2Id) {
         if (t.identifier === aimId) { var adx = t.clientX - aimLX, ady = t.clientY - aimLY; aimLX = t.clientX; aimLY = t.clientY; }
         else { p2X = t.clientX; p2Y = t.clientY; }
@@ -1180,13 +1324,15 @@ function updateLockHint() {
   }, { passive: false });
 
   function touchDone(e) {
+    markTouchInput();                                        // 合成鼠标事件紧跟 touchend 派发,这里刷新窗口正是最关键的时机
     if (custOn) { edEnd(e); return; }
     var i, t;
     for (i = 0; i < e.changedTouches.length; i++) {
       t = e.changedTouches[i];
       if (t.identifier === joyId) joyDrop();
-      else if (t.identifier === fireId) { fireId = null; mouseDown = false; if (fire) fire.classList.remove('pressed'); }
+      else if (t.identifier === fireId) { fireId = null; mouseDown = false; fireAimOn = false; if (fire) fire.classList.remove('pressed'); }
       else if (t.identifier === quitId) { quitId = null; keys.KeyJ = false; if (quitBtn) quitBtn.classList.remove('pressed'); }
+      else if (t.identifier === lasId) { lasId = null; _rmbHeld = false; if (lasB) lasB.classList.remove('pressed'); }
       else if (heliHasTid(t.identifier)) heliReleaseByTid(t.identifier);
       else if (t.identifier === aimId || t.identifier === p2Id) pinchDrop(t.identifier);
     }
@@ -1199,10 +1345,21 @@ function updateLockHint() {
      tjoy 条目=摇杆杆位/大小。全事件驱动。 ===== */
   var custOv = document.getElementById('tcustomov');
   var edId = null, edCtl = null, edX = 0, edY = 0, edP2 = null, edD0 = 1, edS0 = 1;
-  function custCtls() { return { tjoy: base, tfire: fire, tscope: scpBtn, tquit: quitBtn, tmenu: menuB, tsqb: cmdB, tnv: nvB, tth: thB, tcap: capB, tfol: folB, theliu: heliU, thelid: heliD, tsense: sense }; }
+  function custCtls() { return { tjoy: base, tfire: fire, tscope: scpBtn, tquit: quitBtn, tmenu: menuB, tsqb: cmdB, tnv: nvB, tth: thB, tcap: capB, tfol: folB, tlas: lasB, theliu: heliU, thelid: heliD, heliradarmfd: mfdB, tsense: sense }; }
   function custShow(on) {
     custOn = on;
+    /* 跨 IIFE 通知:player.js 的 renderHeliRadarMFD 每帧驱动 MFD 显隐,编辑期间必须让路——
+       否则"不在直升机上 / 已回菜单"时它会把 MFD 重新 hidden,编辑器里根本看不见、也就调不了。 */
+    window._touchLayoutEditing = !!on;
     if (custOv) custOv.classList.toggle('hidden', !on);
+    /* ★雷达 MFD 的层叠问题:#hud 是 position:fixed + z-index:10,自成层叠上下文,
+       MFD 自身 z-index 无论多高都盖不过编辑器遮罩(149),更够不到触控键(150)——会被压暗且叠在底层。
+       编辑期间临时把它挂到 body 下(与其它触控键同层),退出时放回 #hud。
+       CSS 对 #heliradarmfd 用 id 选择器、不依赖父级,JS 侧一律 getElementById,故搬动 DOM 安全。 */
+    if (mfdB && hudRoot) {
+      var wantHost = on ? document.body : hudRoot;
+      if (mfdB.parentNode !== wantHost) wantHost.appendChild(mfdB);
+    }
     var m = custCtls(), id;
     for (id in m) if (m[id]) m[id].classList.toggle('hidden', on ? false : (id === 'tsense' ? true : gameState !== 'playing'));   // 感应圈:仅编辑器可视
     if (!on) { edId = edCtl = edP2 = null; }
@@ -1218,7 +1375,7 @@ function updateLockHint() {
     custShow(false);
   });
   function hitCtl(x, y) {                        // 手动命中检测(tjoy pointer-events:none 收不到 target;事件时一次矩形查询)
-    var m = custCtls(), order = ['tmenu', 'tquit', 'tsqb', 'tcap', 'tfol', 'tscope', 'tnv', 'tth', 'tfire', 'theliu', 'thelid', 'tjoy', 'tsense'], i, el2, r;   // tsense 最大置末(内圈优先命中)
+    var m = custCtls(), order = ['tmenu', 'tquit', 'tlas', 'tsqb', 'tcap', 'tfol', 'tscope', 'tnv', 'tth', 'tfire', 'heliradarmfd', 'theliu', 'thelid', 'tjoy', 'tsense'], i, el2, r;   // tsense 最大置末(内圈优先命中);heliradarmfd 右上角,与右下键区不重叠,顺序仅影响重叠时的归属;tlas 在弃车正上方,与键区无重叠
     for (i = 0; i < order.length; i++) {
       el2 = m[order[i]]; if (!el2) continue;
       r = el2.getBoundingClientRect();
