@@ -527,7 +527,7 @@ function startGame() {
   gameState = 'playing';
   /* ★P2-⑧ 开局 DRS 回满+重热身:新一局场景/着色器重建,上一局的降采样档位与驻留计时全部失效 */
   if (typeof drsScale !== 'undefined') {
-    drsScale = 1.0; _drsHotT = _drsCoolT = _drsDeepT = 0; _drsWarmT = -1;
+    drsScale = 1.0; _drsHotT = _drsCoolT = _drsDeepT = 0; _drsWarmT = -1; _drsSettleT = 0;   // 开战重置含稳定窗(直升机批次)
     if (_drsFxDeep && typeof WRSMOKE_AMT !== 'undefined') WRSMOKE_AMT = 1.0;
     _drsFxDeep = false;
     if (typeof drsApply === 'function') drsApply();

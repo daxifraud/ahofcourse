@@ -197,6 +197,17 @@ var _stumpMesh = null, _stumpGeo = null, _stumpMat = null, _stumpTex = null, _st
 
 // 纸板花草丛(仅爆炸可摧毁;仅玩家的炮击/碾压/直升机低掠使其抖动)
 var _GRASS_CAP = 4000, _GRASS_RING = 700, _GRASS_FADE = 90;   // 草丛小且量爆炸,拉到中程 700m(视锥内)即可铺满近中景
+/* ★直升机专项 A1(性能优化报告 §六):高空视角广告牌海收缩——
+   地面视角视锥近水平,视锥内树/草本就有限;直升机升高后视锥罩住脚下整个圆盘,
+   树(4200)/草(4000)实例与全表扫描双双打满=直升机独有负载悬崖。
+   按相机离地高度收缩有效渲染环与实例上限:高空远树投影≈几像素(雾+缩没带掩盖切边),
+   地面视角(树 alt<150 / 草 alt<60)逐位不变。★A4:实例上限再乘画质档系数(见 GFX_PRESETS.fxSpriteCap)。 */
+function _spriteCapK() {                 // 画质档实例上限系数(惰性一次读;探针/无头无 gfxFx 时兜 1.0)
+  var k = (typeof gfxFx === 'function') ? gfxFx('fxSpriteCap', 1.0) : 1.0;
+  _spriteCapK = function () { return k; };
+  return k;
+}
+var _grassRingEff = _GRASS_RING;         // grassUpdate→_grassCompose 的当帧有效环(渐隐带同步收缩,免硬切边)
 var _GRASS_FULL = 260, _GRASS_FARKEEP = 0.5;   // 距离抽稀:≤260m 全渲,→700m 抽到 50%(封顶实例数)
 var _GRASS_MAX = 40000, _grassCELL = 16;   // 覆盖 ±3200 中央战场无截断(实测约 2.4 万株)
 var _grass = [];                           // {x,z,y,h,w,cell,phase,sway,swsp,state(0/1没中/2没),vt,shk,shph,shdir}
@@ -718,18 +729,27 @@ function treesUpdate(dt) {
   if (!_treeMesh || !camera) return;
   _billboardFogSync(_treeMat);                                       // 雾同步(随 NV/热成像/黄昏变化)
   _spriteFrustumUpdate();                                            // 刷新共用视锥(每帧一次)
-  var camX = camera.position.x, camZ = camera.position.z, ring2 = _TREE_RING * _TREE_RING, out = 0;
+  var camX = camera.position.x, camZ = camera.position.z;
+  /* ★直升机专项 A1:高空收环+缩实例(地面视角 alt<150 逐位不变;渐隐带随环收缩,切边软过渡) */
+  var _camAltT = camera.position.y - terrainH(camX, camZ);
+  var _treeRingEff = _TREE_RING, _capKT = _spriteCapK();
+  if (_camAltT > 150) {
+    _treeRingEff = Math.min(_TREE_RING, Math.max(1200, _camAltT * 5));
+    _capKT *= (_camAltT > 350 ? 0.35 : 0.6);
+  }
+  var _treeCapEff = Math.round(_TREE_CAP * _capKT);
+  var ring2 = _treeRingEff * _treeRingEff, out = 0;
   for (var i = 0; i < _trees.length; i++) {
     var tr = _trees[i];
     if (tr.state === 2) continue;
     if (tr.state === 1) { tr.ft += dt / 0.62; if (tr.ft >= 1) { tr.state = 2; if (tr.stump) { _spawnStump(tr); if (tr.sid != null) _stumpSids.add(tr.sid); } if (tr.sid != null && _spriteDelta) _spriteDelta.tree.set(tr.sid, { gone: 1, stump: tr.stump ? 1 : 0 }); if (typeof bsMarkDirty === 'function') bsMarkDirty('tree'); continue; } }  // 全表推进,离环外也倒完;倒完→记账本(卸载后回来仍为空/桩)+树影事件级重烘焙
-    if (out >= _TREE_CAP) continue;
+    if (out >= _treeCapEff) continue;
     var dx = tr.x - camX, dz = tr.z - camZ, d2 = dx * dx + dz * dz;
     if (d2 > ring2) continue;
     var d = Math.sqrt(d2);
-    if (!_spriteThin(i, d, _TREE_FULL, _TREE_RING, _TREE_FARKEEP)) continue;   // 远处按距离抽稀(封顶实例数)
+    if (!_spriteThin(i, d, _TREE_FULL, _treeRingEff, _TREE_FARKEEP)) continue;   // 远处按距离抽稀(封顶实例数)
     if (!_spriteInView(tr.x, tr.y + tr.h * 0.5, tr.z, tr.h * 0.6)) continue;   // 视锥剔除:只渲画面内的树
-    var lod = d > _TREE_RING - _TREE_FADE ? (1 - (d - (_TREE_RING - _TREE_FADE)) / _TREE_FADE) : 1;
+    var lod = d > _treeRingEff - _TREE_FADE ? (1 - (d - (_treeRingEff - _TREE_FADE)) / _TREE_FADE) : 1;
     if (lod <= 0.02) continue;
     var tilt, sc = 1;
     if (tr.state === 1) {
@@ -1081,7 +1101,7 @@ function _grassCompose(gr, camX, camZ, dt, out) {
   }
   if (gr.state === 1) { tilt += gr.shdir * (1.2 * gr.vt); sy = 1 - 0.85 * gr.vt; sx = 1 + 0.3 * gr.vt; }   // 爆炸压没
   var dx2 = gr.x - camX, dz2 = gr.z - camZ, d = Math.sqrt(dx2 * dx2 + dz2 * dz2);
-  var lod = d > _GRASS_RING - _GRASS_FADE ? (1 - (d - (_GRASS_RING - _GRASS_FADE)) / _GRASS_FADE) : 1;
+  var lod = d > _grassRingEff - _GRASS_FADE ? (1 - (d - (_grassRingEff - _GRASS_FADE)) / _GRASS_FADE) : 1;   // ★A1:渐隐带随有效环收缩(高空收环时软切边)
   if (lod <= 0.02) return false;
   var yaw = Math.atan2(camX - gr.x, camZ - gr.z);
   _tEuler.set(tilt, yaw, 0, 'YXZ'); _tQuat.setFromEuler(_tEuler);
@@ -1103,19 +1123,29 @@ function grassUpdate(dt) {
     }
   }
   _spriteFrustumUpdate();                                            // 刷新共用视锥(每帧一次;与树共用同一份)
-  var camX = camera.position.x, camZ = camera.position.z, ring2 = _GRASS_RING * _GRASS_RING, out = 0;
+  var camX = camera.position.x, camZ = camera.position.z;
+  /* ★直升机专项 A1:高空收草环+缩实例(草在高空投影≈亚像素;地面视角 alt<60 逐位不变) */
+  var _camAltG = camera.position.y - terrainH(camX, camZ);
+  _grassRingEff = _GRASS_RING;
+  var _capKG = _spriteCapK();
+  if (_camAltG > 60) {
+    _grassRingEff = Math.max(250, Math.round(_GRASS_RING * (1 - (_camAltG - 60) / 500)));
+    if (_camAltG > 200) _capKG *= 0.5;
+  }
+  var _grassCapEff = Math.round(_GRASS_CAP * _capKG);
+  var ring2 = _grassRingEff * _grassRingEff, out = 0;
   // 空间哈希:只遍历相机所在环内的格,避免逐帧扫描数万株
-  var nn = Math.ceil(_GRASS_RING / _grassCELL), ccx = Math.floor(camX / _grassCELL), ccz = Math.floor(camZ / _grassCELL);
-  for (var ix = ccx - nn; ix <= ccx + nn && out < _GRASS_CAP; ix++) {
-    for (var iz = ccz - nn; iz <= ccz + nn && out < _GRASS_CAP; iz++) {
+  var nn = Math.ceil(_grassRingEff / _grassCELL), ccx = Math.floor(camX / _grassCELL), ccz = Math.floor(camZ / _grassCELL);
+  for (var ix = ccx - nn; ix <= ccx + nn && out < _grassCapEff; ix++) {
+    for (var iz = ccz - nn; iz <= ccz + nn && out < _grassCapEff; iz++) {
       var b = _grassGrid.get(_treeKey(ix, iz)); if (!b) continue;
-      for (var j = 0; j < b.length && out < _GRASS_CAP; j++) {
+      for (var j = 0; j < b.length && out < _grassCapEff; j++) {
         var gi = b[j], gr = _grass[gi];
         if (!gr || gr.state === 2) continue;
         if (gr.shk > 0) gr.shk = Math.max(0, gr.shk - dt / 0.9);                             // 抖动衰减(0.9s,弹性回弹更长更软)
         var dx = gr.x - camX, dz = gr.z - camZ, d2 = dx * dx + dz * dz; if (d2 > ring2) continue;
         var d = Math.sqrt(d2);
-        if (!_spriteThin(gi, d, _GRASS_FULL, _GRASS_RING, _GRASS_FARKEEP)) continue;         // 远处按距离抽稀
+        if (!_spriteThin(gi, d, _GRASS_FULL, _grassRingEff, _GRASS_FARKEEP)) continue;       // 远处按距离抽稀
         if (!_spriteInView(gr.x, gr.y + gr.h * 0.5, gr.z, gr.h * 0.7)) continue;             // 视锥剔除:只渲画面内的草
         if (_grassCompose(gr, camX, camZ, dt, out)) out++;
       }

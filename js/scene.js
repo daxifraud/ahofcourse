@@ -49,13 +49,13 @@ var GFX_TOUCH = (window.matchMedia && matchMedia('(pointer: coarse)').matches) |
 var GFX_PRESETS = {
   high: { maxPixelRatio: 2,   shadowMapSize: 1024, shadowSoft: true,  noStencil: false, hudAA: true,  hudPost: true,
           fxDistMax: 3.4, fxYieldMax: 2.0, fxGroundLight: true,  fxSatHi: 12, fxSatLo: 8, fxHardMax: 24,
-          fxWreckSmoke: 999, fxSmokeR: 0,   fxBigTex: 1024, fxTrailAdapt: false, fxBurstMerge: 0, fxBurstDedup: false, fxSfxMerge: false },
+          fxWreckSmoke: 999, fxSmokeR: 0,   fxBigTex: 1024, fxTrailAdapt: false, fxBurstMerge: 0, fxBurstDedup: false, fxSfxMerge: false, fxSpriteCap: 1.0 },
   mid:  { maxPixelRatio: 1.5, shadowMapSize: 512,  shadowSoft: false, noStencil: true,  hudAA: false, hudPost: false,
           fxDistMax: 1.8, fxYieldMax: 1.4, fxGroundLight: false, fxSatHi: 5,  fxSatLo: 3, fxHardMax: 10,
-          fxWreckSmoke: 48,  fxSmokeR: 420, fxBigTex: 512,  fxTrailAdapt: true,  fxBurstMerge: 3, fxBurstDedup: true,  fxSfxMerge: true },
+          fxWreckSmoke: 48,  fxSmokeR: 420, fxBigTex: 512,  fxTrailAdapt: true,  fxBurstMerge: 3, fxBurstDedup: true,  fxSfxMerge: true,  fxSpriteCap: 0.6 },
   low:  { maxPixelRatio: 1.0, shadowMapSize: 512,  shadowSoft: false, noStencil: true,  hudAA: false, hudPost: false,
           fxDistMax: 1.5, fxYieldMax: 1.2, fxGroundLight: false, fxSatHi: 3,  fxSatLo: 2, fxHardMax: 6,
-          fxWreckSmoke: 24,  fxSmokeR: 300, fxBigTex: 512,  fxTrailAdapt: true,  fxBurstMerge: 2, fxBurstDedup: true,  fxSfxMerge: true }
+          fxWreckSmoke: 24,  fxSmokeR: 300, fxBigTex: 512,  fxTrailAdapt: true,  fxBurstMerge: 2, fxBurstDedup: true,  fxSfxMerge: true,  fxSpriteCap: 0.4 }
 };
 var GFX_PROFILE = (function () {
   var m = /[?&]gfx=(high|mid|low)\b/.exec(window.location.search || '');
