@@ -94,19 +94,20 @@ function applyScopePerf(on, zoom) {
   // ① 动态分辨率缩放(按倍率分档:倍率越高画面细节越少,低分辨率越不可感知)
   var z = on ? (zoom || 1) : 0;
   var ratio = !on ? 1 : (z <= 1 ? 0.55 : (z <= 2 ? 0.5 : (z <= 3 ? 0.45 : 0.4)));
-  var targetPr = _basePixelRatio * ratio;
+  /* ★P2-⑧:像素比落笔统一走 drsApply(=基准×全局DRS×开镜档);无 drsApply(模块序异常/探针)时保留原直写兜底 */
+  var _apply = (typeof drsApply === 'function') ? drsApply : function () {
+    renderer.setPixelRatio(Math.max(0.35, _basePixelRatio * _scopeResRatio));
+    renderer.setSize(innerWidth, innerHeight, false);
+  };
   if (on && !_scopeResHi) {
     _scopeResHi = true; _scopeResRatio = ratio;
-    renderer.setPixelRatio(Math.max(0.35, targetPr));
-    renderer.setSize(innerWidth, innerHeight, false);       // 保持 CSS 尺寸,仅缩渲染缓冲
+    _apply();                                              // 保持 CSS 尺寸,仅缩渲染缓冲
   } else if (on && Math.abs(ratio - _scopeResRatio) > 0.001) {   // 倍率档位变化时更新
     _scopeResRatio = ratio;
-    renderer.setPixelRatio(Math.max(0.35, targetPr));
-    renderer.setSize(innerWidth, innerHeight, false);
+    _apply();
   } else if (!on && _scopeResHi) {
     _scopeResHi = false; _scopeResRatio = 1;
-    renderer.setPixelRatio(_basePixelRatio);
-    renderer.setSize(innerWidth, innerHeight, false);
+    _apply();
   }
   /* 阴影常开,视锥由 cameraUpdate 动态接管 */
 }

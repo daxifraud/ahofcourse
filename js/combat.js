@@ -453,6 +453,7 @@ function wckNoteMoved(t) {
    0.5s 回收扫描:被推残骸静止后不再有事件标脏,独行窗口(1s)过期须由扫描重新标脏回烘。 */
 var _wckSweepT = -99;
 function wckFlush() {
+  wreckSweep();                        // ★P2-⑨:残骸生命周期回收(内部 1Hz 自节流,零尖峰)
   if (gameT - _wckSweepT >= 0.5) {
     _wckSweepT = gameT;
     wckChunks.forEach(function (ch) {
@@ -517,6 +518,91 @@ function wckClear() {
   wckChunks.clear(); _wckDirty.length = 0;
   _wckBakeQ.length = 0;             // 延迟队列随清场同清(防消费端把已移除车辆烘焙成幽灵残骸)
 }
+
+/* P2-WRECK-START ★P2-⑨ 残骸生命周期(性能优化报告:“TTL 或总量硬顶,超限回收最远/最旧”,
+   与 fxSmokeR 距离裁剪同一哲学)——残骸原为永久实体,消耗战后期数百具持续累积
+   (节点数/碰撞对/LOS 候选/烟柱随场次单调上涨=“越打越卡”的结构性成分)。
+   策略:总量硬顶 + 寿命双闸,从最旧开始回收;玩家 400m 豁免圈内的残骸不回收
+   (视野内凭空消失=穿帮),圈外无声移除(雾/远处,玩家不可感知);
+   被推中/下落中的残骸跳过(物理一致性)。每 1s 一拍、每拍 ≤2 具,成本摊平无尖峰。 */
+var WRECK_CAP = 48;                    // 在场残骸硬顶(超出即从最旧开始回收)
+var WRECK_TTL = 240;                   // 残骸寿命(秒):超龄且位于豁免圈外即回收
+var WRECK_SAFE_R2 = 400 * 400;         // 玩家豁免半径²(圈内残骸不回收,防视野内消失穿帮)
+var _wreckSweepT = -99;
+function retireWreck(t) {              // 残骸全量退场:九大登记面逐一摘除,幂等
+  if (!t || t._wreckRetired || t.alive || t._heliFalling) return false;
+  t._wreckRetired = true;
+  var i, k, arr;
+  /* ① 残骸总表(追加序=死亡序;AI 密度/烟柱/配对扫描共读) */
+  var wi = wreckList.indexOf(t); if (wi >= 0) wreckList.splice(wi, 1);
+  /* ② 碰撞网格(wreckGrid 20m:avoidSteer/车-残骸碰撞/叠堆配对/地形重锚共用) */
+  if (t._wreckGridRegistered && t._wgKey != null) {
+    arr = wreckGrid.get(t._wgKey);
+    if (arr) { k = arr.indexOf(t); if (k >= 0) arr.splice(k, 1); if (!arr.length) wreckGrid.delete(t._wgKey); }
+    t._wreckGridRegistered = false; t._wgKey = null;
+  }
+  /* ③ 静态遮挡(LOS/挡弹/掩体):代理与 8 壳都尝试剔除——hitGridStaticRemoveTankMesh 幂等,
+     按 _sHg* 记账格精确出表并 bump hitGridStaticVersion(AI LOS 缓存即时失效) */
+  if (t._occMesh) hitGridStaticRemoveTankMesh(t, t._occMesh);
+  if (t.modMeshes) for (i = 0; i < t.modMeshes.length; i++) hitGridStaticRemoveTankMesh(t, t.modMeshes[i]);
+  /* ④ 残骸区合批:摘册+旧区标脏重绘(烘焙集少一本,防旧位幽灵) */
+  if (t._wckRec) {
+    var rec = t._wckRec, ch = wckChunks.get(rec.chunkKey);
+    if (ch) {
+      var ci = ch.items.indexOf(rec); if (ci >= 0) ch.items.splice(ci, 1);
+      ch.stale = true; ch.force = true; _wckMarkDirty(ch);
+    }
+    t._wckRec = null;
+  }
+  /* ⑤ 瞬态队列:烘焙延迟队/障碍复查队 */
+  k = _wckBakeQ.indexOf(t); if (k >= 0) _wckBakeQ.splice(k, 1);
+  t._wMove = false;
+  for (i = _wreckMoveQueue.length - 1; i >= 0; i--) if (_wreckMoveQueue[i] === t) _wreckMoveQueue.splice(i, 1);
+  /* ⑥ 长驻烟柱(与注册同表逆向) */
+  if (typeof wreckSmokeUnregister === 'function') wreckSmokeUnregister(t);
+  /* ⑦ 命中候选表(与预览车逆向摘除同口径):防离场景网格滞留 targetsList */
+  if (t.modMeshes) for (i = 0; i < t.modMeshes.length; i++) {
+    var ti = targetsList.indexOf(t.modMeshes[i]); if (ti >= 0) targetsList.splice(ti, 1);
+  }
+  /* ⑧ 场景退场+显存回收(仅销毁独占几何:合并网格/遮挡代理;模板共享几何禁动,同 mergeWreckMeshes 口径) */
+  if (t._wreckMesh && t._wreckMesh.geometry && t._wreckMesh.geometry.dispose) t._wreckMesh.geometry.dispose();
+  if (t._occMesh) { if (t._occMesh.geometry && t._occMesh.geometry.dispose) t._occMesh.geometry.dispose(); t._occMesh = null; }
+  if (t.group) scene.remove(t.group);
+  t._battleCleared = true;             // 与 flow.rmGroup 同旗:后续清场幂等跳过
+  t.gDirty = false;
+  /* ⑨ 世界缓存失效:残骸簇 + 漫画天线稳定线(事件驱动重建) */
+  if (typeof wclBump === 'function') wclBump();
+  if (typeof comicAntennaWreckDirty === 'function') comicAntennaWreckDirty();
+  return true;
+}
+function wreckSweep() {                // 1Hz:超顶/超龄回收(最旧优先,豁免圈/被推/下落跳过)
+  if (gameT - _wreckSweepT < 1.0) return;
+  _wreckSweepT = gameT;
+  var n = wreckList.length;
+  if (!n) return;
+  var overCap = n - WRECK_CAP, ttlBreach = false, oi, w0;
+  for (oi = 0; oi < n; oi++) {         // 表头=最旧;找到首个超龄即存在寿命违约
+    w0 = wreckList[oi];
+    if (w0 && gameT - (w0._wreckBornT || 0) > WRECK_TTL) { ttlBreach = true; break; }
+  }
+  if (overCap <= 0 && !ttlBreach) return;
+  var px = (player && player.group) ? player.group.position.x : 0;
+  var pz = (player && player.group) ? player.group.position.z : 0;
+  var budget = overCap > 8 ? 2 : 1;    // 大幅超顶(连环殉爆)每拍收 2 具追赶
+  var retired = 0;
+  for (oi = 0; oi < wreckList.length && retired < budget; oi++) {
+    var w = wreckList[oi];
+    if (!w || w._wreckRetired) continue;
+    var age = gameT - (w._wreckBornT || 0);
+    if (overCap <= 0 && age <= WRECK_TTL) break;        // 追加序:表头未违约 → 后面更新,整拍无事
+    if (w._heliFalling || w._wMove) continue;           // 下落中/正被推:物理一致优先
+    if (gameT - (w._wMovedT || -99) < 5) continue;      // 5s 内被推醒过:可能仍在玩家互动域
+    var dxw = w.group.position.x - px, dzw = w.group.position.z - pz;
+    if (dxw * dxw + dzw * dzw < WRECK_SAFE_R2) continue;   // 豁免圈:宁超顶不穿帮(下拍再议)
+    if (retireWreck(w)) retired++;
+  }
+}
+/* P2-WRECK-END */
 
 /* ===== 静态遮挡代理:每残骸烘焙 1 个世界系合并代理,
    替代 8 个命中壳注册进 hitGridStatic——LOS/掩体/弹道/测距宽相位候选 ÷8。
@@ -671,6 +757,7 @@ function killTank(t, cause) {
   cmdLeave(t);                       // 死亡离组;空组注销
   if (typeof sqCmdNotifyDeath === 'function') sqCmdNotifyDeath(t);   // 指挥模式钩子:玩家阵亡/接管小队全灭→自动退出(事件驱动)
   wreckCount++;
+  t._wreckBornT = gameT;               // ★P2-⑨:残骸诞生时刻(寿命闸;追加序表头=最旧)
   wreckList.push(t);if(typeof wreckSmokeRegister==='function')wreckSmokeRegister(t);   // B2:残骸长驻黑烟柱(事件级注册,上限999柱最旧优先熄灭)
   if (typeof wclBump === 'function') wclBump();   // 新残骸入世=簇缓存失效
   if (typeof comicAntennaWreckDirty === 'function') comicAntennaWreckDirty();   // 残骸天线稳定线重建(事件驱动)

@@ -525,6 +525,13 @@ function startGame() {
   if (typeof window.clearBattleEntities === 'function') window.clearBattleEntities();
   setupMapWorld(startSeed, startRough, startMapLen, startMat, startMapWid); spawnTeams(); applyTimeOfDay(startHour);   // 每局重建世界,禁止沿用上一局 player
   gameState = 'playing';
+  /* ★P2-⑧ 开局 DRS 回满+重热身:新一局场景/着色器重建,上一局的降采样档位与驻留计时全部失效 */
+  if (typeof drsScale !== 'undefined') {
+    drsScale = 1.0; _drsHotT = _drsCoolT = _drsDeepT = 0; _drsWarmT = -1;
+    if (_drsFxDeep && typeof WRSMOKE_AMT !== 'undefined') WRSMOKE_AMT = 1.0;
+    _drsFxDeep = false;
+    if (typeof drsApply === 'function') drsApply();
+  }
   window._pointerPauseArmed = false;
   startT = gameT;
   el.hud.classList.remove('hidden');

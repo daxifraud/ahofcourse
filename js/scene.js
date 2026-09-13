@@ -147,7 +147,8 @@ function initScene() {
     var pr = gfxMaxPr();
     if (Math.abs(pr - _basePixelRatio) > 0.001) {
       _basePixelRatio = pr;
-      renderer.setPixelRatio(_scopeResHi ? Math.max(0.35, pr * _scopeResRatio) : pr);
+      if (typeof drsApply === 'function') drsApply();      // ★P2-⑧:统一落笔(基准×全局DRS×开镜档)
+      else renderer.setPixelRatio(_scopeResHi ? Math.max(0.35, pr * _scopeResRatio) : pr);
     }
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();

@@ -1476,7 +1476,7 @@ var tanks = [], shells = [], wreckList = [];
 var airborneMissiles = [];                    // 在空导弹子列表(发射登记, removeShell 收割)——免 6 处全 shells 扫描/步
 var airborneGuidedRockets = [];               // 在空【制导】火箭子列表(仅 guidance 弹登记, Hydra-70 无制导不入)——供火力分配计数,口径同 airborneMissiles
 var aliveList = [];            // 活车紧凑表(生成追加/阵亡摘除,顺序与 tanks 一致)——供全表扫描类热点免扫永久残骸
-var wreckCount = 0;            // 残骸累计计数(killTank 时 +1,残骸永久不移除;替代每帧全表扫描计数)
+var wreckCount = 0;            // 残骸累计计数(本场击毁总数,只增不减;在场数读 wreckList.length——★P2-⑨ 起残骸有生命周期,超顶/超龄由战斗段回收)
 var wreckGrid = new Map();     // 残骸空间网格(20m 格,与 collGrid 同构;事件驱动;avoidSteer/resolveCollisions 共用)
 function wreckGridInsert(t) {  // 残骸入格,仅在死亡或跨格时登记。
   if (t._wreckGridRegistered) return;

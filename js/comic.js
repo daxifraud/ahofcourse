@@ -1532,6 +1532,9 @@ function wreckSmokeRegister(t){
   var now=(typeof _csmClock!=='undefined')?_csmClock:0;
   _wreckSmokeList.push({t:t,born:now,seed:Math.random(),ph:Math.random(),sj:_sfxJit()});
 }
+function wreckSmokeUnregister(t){        // ★P2-⑨:残骸生命周期回收时同步熄灭烟柱(与注册同表逆向)
+  for(var i=_wreckSmokeList.length-1;i>=0;i--)if(_wreckSmokeList[i].t===t)_wreckSmokeList.splice(i,1);
+}
 function wreckSmokeClear(){_wreckSmokeList.length=0;}
 function _wreckSmokeWrite(){
   if(WRSMOKE_AMT<=0||!_wreckSmokeList.length)return;
