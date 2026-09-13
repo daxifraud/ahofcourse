@@ -454,43 +454,88 @@ function flankWP(t, i, tgt) {
 // 视线遮挡物定位:若炮口→目标的射线被"完整残骸"挡住,返回该残骸(拆毁清障决策用)
 var _pkTop = [null, null, null], _pkTopD = [Infinity, Infinity, Infinity];
 var _pkTopF = [null, null, null], _pkTopFD = [Infinity, Infinity, Infinity];   // 前半球堆(pickTarget 单趟双维护用)
-function pickTarget(t) {
-  if (typeof PERF_BASE !== 'undefined') PERF_BASE.targetPick++;
-  var A = t.ai, p = t.group.position, i;
-  var roster = aiTeamRoster[t.team === 'ally' ? 'enemy' : 'ally'];
-  // 零分配重构:单趟扫描 + 双三槽最小维护(全向/前半球),替代旧两趟扫描(每次 think 减半三角函数+距离计算)
-  var nFront = 0, nAll = 0;
-  _pkTopD[0] = _pkTopD[1] = _pkTopD[2] = Infinity;
-  _pkTopFD[0] = _pkTopFD[1] = _pkTopFD[2] = Infinity;
-  for (i = 0; i < roster.length; i++) {
-    var o = roster[i];
-    if (o.team === t.team) continue;
-    var dx = o.group.position.x - p.x, dz = o.group.position.z - p.z;
-    nAll++;
-    var d2 = dx * dx + dz * dz;
-    // 优先采用前半球电台接触;但前方为空时必须保留全向“行军目标”,否则 targetO=null 会触发 aiUpdate 刹停并永久发呆。
-    var isFront = Math.abs(normAng(Math.atan2(dx, dz) - t.yaw)) <= 1.45;
-    if (isFront) {
-      nFront++;
-      for (var kf = 0; kf < 3; kf++) {                 // 前向三槽最小扫描:严格小于才移位,相等保持先入序(与稳定排序等价)
-        if (d2 < _pkTopFD[kf]) {
-          for (var mf = 2; mf > kf; mf--) { _pkTopFD[mf] = _pkTopFD[mf - 1]; _pkTopF[mf] = _pkTopF[mf - 1]; }
-          _pkTopFD[kf] = d2; _pkTopF[kf] = o;
-          break;
-        }
-      }
-    }
-    for (var k = 0; k < 3; k++) {                      // 全向三槽最小扫描(useFront=false 时的兜底堆)
-      if (d2 < _pkTopD[k]) {
-        for (var m = 2; m > k; m--) { _pkTopD[m] = _pkTopD[m - 1]; _pkTop[m] = _pkTop[m - 1]; }
-        _pkTopD[k] = d2; _pkTop[k] = o;
+var _pkThrScratch = [];               // pickThreat 九宫格候选暂存(复用,零分配)
+var _pkNAll = 0, _pkNFront = 0;               // pickTarget 单趟计数(环形扫描/名册扫描共用暂存)
+function _pkConsider(t, o, px, pz) {          // 单个候选入双堆(全向/前半球各一组三槽最小堆;严格小于才移位,并列保先入序)
+  var dx = o.group.position.x - px, dz = o.group.position.z - pz;
+  var d2 = dx * dx + dz * dz, k, kf, m, mf;
+  _pkNAll++;
+  var isFront = Math.abs(normAng(Math.atan2(dx, dz) - t.yaw)) <= 1.45;
+  if (isFront) {
+    _pkNFront++;
+    for (kf = 0; kf < 3; kf++) {
+      if (d2 < _pkTopFD[kf]) {
+        for (mf = 2; mf > kf; mf--) { _pkTopFD[mf] = _pkTopFD[mf - 1]; _pkTopF[mf] = _pkTopF[mf - 1]; }
+        _pkTopFD[kf] = d2; _pkTopF[kf] = o;
         break;
       }
     }
   }
-  if (!nAll) { A.targetO = null; return; } // 全场确实无活敌才允许停
-  var useFront = nFront > 0;
-  var topN = Math.min(3, useFront ? nFront : nAll);   // 与旧 slice(0,min(3,len)) 同义
+  for (k = 0; k < 3; k++) {
+    if (d2 < _pkTopD[k]) {
+      for (m = 2; m > k; m--) { _pkTopD[m] = _pkTopD[m - 1]; _pkTop[m] = _pkTop[m - 1]; }
+      _pkTopD[k] = d2; _pkTop[k] = o;
+      break;
+    }
+  }
+}
+function _pkCellScan(ix, iz, t, foeTeam, p, budget) {   // 单格扫描(环带扩张用;预算计数防稀疏战场退化)
+  var a = aiGrid.get(ix * 4096 + iz);
+  budget.n++;
+  if (!a) return;
+  for (var j = 0; j < a.length; j++) {
+    var o = a[j];
+    if (o.team === t.team || !o.alive) continue;          // aiGrid 含双方:只收活敌(玩家属 ally 队,敌方 AI 扫到自然入列,与旧 roster 口径一致)
+    _pkConsider(t, o, p.x, p.z);
+  }
+}
+function pickTarget(t) {
+  if (typeof PERF_BASE !== 'undefined') PERF_BASE.targetPick++;
+  var A = t.ai, p = t.group.position, i;
+  var foeTeam = t.team === 'ally' ? 'enemy' : 'ally';
+  var roster = aiTeamRoster[foeTeam];
+  if (!roster.length) { A.targetO = null; return; }       // 全场确实无活敌(与网格同源 0.25s 重建,O(1) 短路,免环形展开)
+  _pkTopD[0] = _pkTopD[1] = _pkTopD[2] = Infinity;
+  _pkTopFD[0] = _pkTopFD[1] = _pkTopFD[2] = Infinity;
+  _pkTop[0] = _pkTop[1] = _pkTop[2] = null;               // 对象槽必须与距离槽同步清空:否则上一调用残留的陈旧对象
+  _pkTopF[0] = _pkTopF[1] = _pkTopF[2] = null;            // 会被移位操作带进未满堆,随机取目标时可能选到死车
+  _pkNAll = 0; _pkNFront = 0;
+  /* ★P1-⑤ 候选收集两条路径,选出的 top-3 逐位一致:
+     ① 九宫格环带扩张(默认):以本车格心逐环收敌、即时维护双堆;正确性下界=未探环候选
+        必距本车 ≥ k×格宽,双堆前三都比它近时即可停——典型交战密度 1~3 环(100~300m)收工。
+     ② 预算护栏:访问格数超过 名册长度×2 仍未收敛(稀疏残局/敌全在后半球)→ 中止扩张,
+        回退旧名册全扫并重置双堆——最坏成本 ≤ 3×名册长度,永不劣于改动前。 */
+  var done = false;
+  if (typeof aiGrid !== 'undefined' && aiGrid.size > 0) {
+    var cx = Math.floor(p.x / AI_GRID_CELL), cz = Math.floor(p.z / AI_GRID_CELL);
+    var maxK = Math.ceil(((MAP.side || 2000) * 1.5) / AI_GRID_CELL) + 1;   // 环带上界(覆盖地图对角)
+    var budget = { n: 0 }, cap = Math.max(64, roster.length * 2);
+    for (var k = 0; k <= maxK; k++) {
+      if (k === 0) _pkCellScan(cx, cz, t, foeTeam, p, budget);
+      else {
+        for (var ix = cx - k; ix <= cx + k; ix++) { _pkCellScan(ix, cz - k, t, foeTeam, p, budget); _pkCellScan(ix, cz + k, t, foeTeam, p, budget); }
+        for (var iz = cz - k + 1; iz <= cz + k - 1; iz++) { _pkCellScan(cx - k, iz, t, foeTeam, p, budget); _pkCellScan(cx + k, iz, t, foeTeam, p, budget); }
+      }
+      if (budget.n > cap) { done = false; break; }        // 预算耗尽 → 下方名册回退
+      var lb2 = k * AI_GRID_CELL * k * AI_GRID_CELL;      // 未探环最小距离下界²
+      if (_pkNAll >= 3 && lb2 >= _pkTopD[2] && lb2 >= _pkTopFD[2]) { done = true; break; }   // 环外必不进前三 → 停
+    }
+  }
+  if (!done) {                                             // 网格不可用/预算耗尽:旧名册全扫(重置双堆重算)
+    _pkTopD[0] = _pkTopD[1] = _pkTopD[2] = Infinity;
+    _pkTopFD[0] = _pkTopFD[1] = _pkTopFD[2] = Infinity;
+    _pkTop[0] = _pkTop[1] = _pkTop[2] = null;
+    _pkTopF[0] = _pkTopF[1] = _pkTopF[2] = null;
+    _pkNAll = 0; _pkNFront = 0;
+    for (i = 0; i < roster.length; i++) {
+      var o = roster[i];
+      if (o.team === t.team) continue;
+      _pkConsider(t, o, p.x, p.z);
+    }
+  }
+  if (!_pkNAll) { A.targetO = null; return; } // 全场确实无活敌才允许停(名册非空但网格过期残项时同样成立)
+  var useFront = _pkNFront > 0;
+  var topN = Math.min(3, useFront ? _pkNFront : _pkNAll);   // 与旧 slice(0,min(3,len)) 同义
   A.targetO = (useFront ? _pkTopF : _pkTop)[Math.floor(Math.random() * topN)];
   A.destT = 0;                                      // 新行军目标立即重算路线,不沿用原地 hold 点
   A.thinkT = 0;                                     // 即使目标在两个思考节拍之间阵亡,也在本帧生成新路线
@@ -570,10 +615,26 @@ function pickThreat(t) {
   if (typeof PERF_BASE !== 'undefined') PERF_BASE.targetScan++;
   var best = null, bestS = -1, curS = -1;
   var _vr = aiVisRange(t) * (isNightOf(timeHour) ? NIGHT_BLUR.vis : 1), _vr2 = _vr * _vr;   // 视距平方早拒
-  // 大视距(坦克800/M1A1 1200/TD89 1500m)相对 2km 地图几乎全覆盖,空间预筛失效;
-  // 改直接用敌方 roster(与 aiGrid 同帧同源 0.25s 重建,陈旧度/成员逐位一致)——免 289~961 次 Map.get 大范围遍历 + 免双队候选/team 过滤;
-  // alertFoe/bumpFoe 本就在 roster(活敌),由下方 d2 过滤的 o!==alertFoe/bumpFoe 豁免 + isNoticed 警觉 return true 兜住。
-  var nearby = aiTeamRoster[t.team === 'ally' ? 'enemy' : 'ally'];
+  /* ★P1-⑤ 候选集九宫格化:aiGrid(100m 格)半径=视距邻域收集,再并入 alertFoe/bumpFoe
+     (警觉/碰撞目标不受视距约束,与旧 roster 全表里的 d2 豁免语义逐位一致)。
+     2km 小图上视距≈全场时候选=全表(无损失);6~12km 大图上候选集从 80+ 缩到交战带局部,
+     全扫周期间的三角函数/距离计算随地图边长平方恶化被截断。网格不可用回退旧敌方 roster。 */
+  var nearby = _pkThrScratch;
+  var _foeRosterPk = aiTeamRoster[t.team === 'ally' ? 'enemy' : 'ally'];
+  var _cellN = 2 * Math.ceil(_vr / AI_GRID_CELL) + 1;
+  if (typeof aiGrid !== 'undefined' && aiGrid.size > 0 && _cellN * _cellN <= _foeRosterPk.length * 4) {
+    collectAiNearby(p.x, p.z, _vr, nearby);
+    var _pn = nearby.length, _wi2 = 0;
+    for (i = 0; i < _pn; i++) {                          // 就地压缩:只留敌车(网格含双方;0.25s 陈旧死车保旧口径)
+      var _co = nearby[i];
+      if (_co.team !== t.team) nearby[_wi2++] = _co;
+    }
+    nearby.length = _wi2;
+    if (A.alertFoe && A.alertFoe.alive && A.alertFoe.team !== t.team && nearby.indexOf(A.alertFoe) < 0) nearby.push(A.alertFoe);
+    if (A.bumpFoe && A.bumpFoe.alive && A.bumpFoe.team !== t.team && nearby.indexOf(A.bumpFoe) < 0) nearby.push(A.bumpFoe);
+  } else {
+    nearby = aiTeamRoster[t.team === 'ally' ? 'enemy' : 'ally'];
+  }
   for (i = 0; i < nearby.length; i++) {
     var o = nearby[i];
     if (o.team === t.team) continue;
@@ -1862,9 +1923,16 @@ function calcHeliMissileHitRate(shooter, tgt, dist) {
    终末段: 垂直破近炸(净空足则俯冲否则急爬) + 水平 beam(横向速度 = ω_msl×R, 破坏比例导引 LOS 率);
    预防段: 贴地隐蔽 + 垂直于弹目视线周期变向; 经制导层平滑注入 vDes/altDes, 规避期间火控照常。 */
 function heliThreatEvade(t, prm, vMaxNow) {
-  if (t._evT != null && gameT - t._evT <= 0.10) return;
-  t._evT = gameT;
   var p = t.group.position;
+  /* ★P1-⑤:距玩家 1.5km 之外的直升机(屏外/远端)来袭规避扫描由 10Hz 降为 5Hz——
+     远机规避机动玩家不可见,半频反应足够;近场维持 10Hz 逐位不变。 */
+  var _evThr = 0.10;
+  if (player && player.alive && player.group) {
+    var _ehdx = p.x - player.group.position.x, _ehdz = p.z - player.group.position.z;
+    if (_ehdx * _ehdx + _ehdz * _ehdz > 2250000) _evThr = 0.20;
+  }
+  if (t._evT != null && gameT - t._evT <= _evThr) return;
+  t._evT = gameT;
   var evPx = p.x, evPz = p.z;
 
   // 1. 统一威胁扫描(取拦截时间最近者): 直升机导弹 + 制导火箭 + 火箭炮/直升机火箭/常规坦克炮弹,
@@ -1965,6 +2033,63 @@ function heliThreatEvade(t, prm, vMaxNow) {
     t._evadeVZ = ( lx / ll) * flip * vEvMag2;
   }
 }
+
+/* AI-FLARE-BLOCK-START ★AI 直升机诱饵弹对抗决策(用户 2026-09-13;无头探针按本标记对提取验证)
+   ------------------------------------------------------------
+   感知:与 heliThreatEvade 同判据的来袭导弹扫描,但只认红外导引头导弹(airborneMissiles)——
+   制导火箭(数据链外导)/火箭弹/炮弹不吃诱饵,不参与决策。
+   可诱性闸门(与玩家口径完全同源):
+     ① 母机雷达仍锁定本机 → 雷达数据链在导态,诱饵无效 → 跳过(不浪费弹药);
+     ② 已进入 450m 末端捕获走廊 → 物理层免疫,放了也白放 → 跳过;
+     ③ 导弹已咬上诱饵(_autoOptTarget=活热源) → 已诱偏成功 → 停发(节约);
+     ④ 复仇者类无雷达母机/母机战损丢锁 → 离架即可诱。
+   纪律:5Hz 节流扫描 + 持续侦测 0.25s 反应延迟(=MAWS 告警+乘员反应,非超人瞬反);
+   威胁持续期间按 0.5s 齐射节拍续放(防抖在 triggerHeliFlares 内),诱偏成功/威胁消失即停。
+   弹药经济:单次交战典型 1~2 次齐射(4~8 发),20 发备弹≈3~4 次对抗,打空 60s 装填
+   (装填钟由 aiHeliUpdate 里的 updateHeliWeapons 与玩家同套驱动)。 */
+var AI_FLARE_RANGE_MAX = 1200;    // 侦测半径:更远不急于对抗(留反应与散开时间)
+var AI_FLARE_RANGE_MIN = 450;     // 末端捕获走廊边界(与制导层同口径):入廊后诱饵无效
+var AI_FLARE_REACT = 0.25;        // 侦测→释放反应延迟
+function aiHeliFlareThink(t) {
+  if (t._aiFlareT != null && gameT - t._aiFlareT <= 0.2) return;   // 5Hz 节流
+  t._aiFlareT = gameT;
+  if (!t.alive) return;
+  var fLeft = t._heliFlareLeft != null ? t._heliFlareLeft : HELI_FLARE_MAX;
+  if (fLeft <= 0 || t._heliFlareReloadT > 0) { t._aiFlareDetectT = null; return; }   // 无弹/装填中:整轮免扫
+  var p = t.group.position;
+  var threatR = 1e9, found = false;
+  for (var i = 0; i < airborneMissiles.length; i++) {
+    var s = airborneMissiles[i];
+    if (!s || !s.pos || !s.vel || !s.owner || s.owner.team === t.team) continue;
+    if (s.target && s.target !== t) continue;                       // 指定打别人 → 非本机威胁
+    var rx = s.pos.x - p.x, ry = s.pos.y - p.y, rz = s.pos.z - p.z;
+    var R2 = rx * rx + ry * ry + rz * rz;
+    if (R2 > AI_FLARE_RANGE_MAX * AI_FLARE_RANGE_MAX) continue;
+    var R = Math.sqrt(R2) || 1;
+    if (R < AI_FLARE_RANGE_MIN) continue;                           // 已入末端走廊:诱饵无效,不浪费
+    var closing = -(rx * s.vel.x + ry * s.vel.y + rz * s.vel.z) / R;
+    if (closing <= 1) continue;                                     // 非接近弹(横越/远离)不处置
+    if (s._autoOptTarget && s._autoOptTarget.isHeatSource &&
+        s._autoOptTarget.heatObj && s._autoOptTarget.heatObj.life > 0) continue;   // 已咬诱饵:停发节约
+    // 雷达在导门:母机雷达仍锁定本机 → 数据链引导态,诱饵无效(复仇者无雷达/母机战损自动过门)
+    var radarGuided = false;
+    if (s.owner.alive && s.owner._heliRadarActive && s.owner._heliRadarTracks) {
+      for (var tr = 0; tr < s.owner._heliRadarTracks.length; tr++) {
+        var tk = s.owner._heliRadarTracks[tr];
+        if (tk && tk.isLocked && tk.tank && (tk.tank === t || (t.id != null && tk.tank.id === t.id))) { radarGuided = true; break; }
+      }
+    }
+    if (radarGuided) continue;
+    if (R < threatR) threatR = R;
+    found = true;
+  }
+  if (!found) { t._aiFlareDetectT = null; return; }
+  // 持续侦测反应延迟(等价 MAWS 告警→乘员反应):首次发现只记账,满 0.25s 才开始释放
+  if (t._aiFlareDetectT == null) { t._aiFlareDetectT = gameT; return; }
+  if (gameT - t._aiFlareDetectT < AI_FLARE_REACT) return;
+  triggerHeliFlares(t);
+}
+/* AI-FLARE-BLOCK-END */
 
 /* 制导反解层: 期望速度矢量/期望高度 → 姿态角指令 + 总距指令 (全部物理反解,无场景常数):
    水平: 速度误差/τ → 机体加速度 → atan(a/g_eff) 姿态反解(协调压坡度转弯自动涌现);
@@ -2072,6 +2197,7 @@ function aiHeliUpdate(t, dt) {
   var A = t.ai;
   if (!A) return;
   updateHeliWeapons(t, dt); // 同步驱动 AI 直升机装填时钟、独立导弹计时与武器冷却
+  aiHeliFlareThink(t);      // 诱饵弹对抗决策(5Hz 节流内聚;来袭红外导弹+可诱性闸门+反应延迟,见函数注)
 
   // 1. 目标锁定滞后与防频繁切换:如果当前已有有效活体目标,且目标在 2.5s 视界记忆窗内,维持当前目标,不盲目全场重扫
   var tgt = A.targetO;
@@ -2642,7 +2768,18 @@ function aiUpdate(t, dt) {
 
   var _tThk2 = (window._dbgPerfOn && window.__PERF) ? performance.now() : 0;   // aiCore 子段探针:think 目的地重算
   if (didThink && A.thinkT <= 0) {
-    A.thinkT = (tgt && dist < 500) ? rand(0.3, 0.5) : rand(0.6, 0.9);   // 相关性分频(RTS relevance tiering)——无接触/远距半频 think,交战维持原频
+    /* ★P1-⑤ 距离分级节流(报告 §三P1⑤):距玩家 1.5km 之外、未接敌未挨揍的 AI
+       决策节拍降到 ~1Hz——屏外远端单位的目的地重算/射线/选点对玩家零可见收益,
+       交战域(<500m)与警觉目标维持原频,玩家体验逐位不变。 */
+    var _farGate = false;
+    if (player && player.alive && player.group) {
+      var _fgdx = tp.x - player.group.position.x, _fgdz = tp.z - player.group.position.z;
+      _farGate = _fgdx * _fgdx + _fgdz * _fgdz > 2250000 &&
+                 !(tgt && dist < 500) &&
+                 gameT - (t.lastHitT || -99) > 4 &&
+                 !(A.alertFoe && gameT - A.alertFoeT < AI_ALERT_T);
+    }
+    A.thinkT = _farGate ? rand(0.95, 1.2) : ((tgt && dist < 500) ? rand(0.3, 0.5) : rand(0.6, 0.9));   // 相关性分频(RTS relevance tiering)——无接触/远距半频 think,交战维持原频;1.5km 外 1Hz
     A.destT -= 0.4;
     A.acc = aiBaseDispersion(t, dist);                // 与 fireShell 同源散布(分平台数值)
     // 反偷懒看门狗:行军段(敌>型号射程)有腿有车却持续 ≈0 速 → 强制重选目的地(豁免拥挤约束一次);

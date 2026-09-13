@@ -1011,6 +1011,22 @@ function findMissileAutonomousOpticalTarget(s) {
     }
   }
 
+  // 2b. 探测 30° 视锥内的诱饵弹 (移动高亮热源,HELI_FLARE_HEAT;与爆炸火球同公式纯对比度竞争——
+  //     无外部雷达引导的导引头物理诱偏入口;命中终止走 stepShells 热源哑爆分支)
+  if (_flares.length > 0) {
+    for (var fli = 0; fli < _flares.length; fli++) {
+      var fl = _flares[fli];
+      if (fl.life <= 0) continue;
+      var dSqF = _seekerGate(fl.pos.x - mPos.x, fl.pos.y - mPos.y, fl.pos.z - mPos.z, mDir, cosHalfFov, _msSp.seekerAltMax);
+      if (dSqF < 0) continue;
+      var contrastF = HELI_FLARE_HEAT / (dSqF + 25.0);
+      if (contrastF > maxThermalContrast) {
+        maxThermalContrast = contrastF;
+        bestTgt = { isHeatSource: true, heatObj: fl, pos: fl.pos, alive: true };   // pos 直持引用:移动热源逐帧跟随,零分配
+      }
+    }
+  }
+
   // 3. 探测 30° 视锥内的敌军真实热源目标 (坦克/歼击车/直升机,光电制导不受地面杂波影响)
   for (var i = 0; i < roster.length; i++) {
     var tgt = roster[i];
@@ -1046,6 +1062,116 @@ function heliMissileMissBurst(s, pos) {
 function heliMissileGroundSplash(s, pos) {
   if (pos.y - terrainH(pos.x, pos.z) < 2.0) queueCrater(pos.x, pos.z, 20.0);
   applySplash(pos, 16.0, (s.dmg || 0) * 0.5, s.owner);
+}
+
+/* ============================================================
+   直升机对抗诱饵弹系统 (IR 干扰弹 / Flare Dispenser)
+   ------------------------------------------------------------
+   口径(用户定 2026-09-13):备弹 20 个,每次释放 4 个(左前/左后/右前/右后),
+   快捷键 F 长按连续释放(齐射间隔 0.5s);安卓端直接按住武器栏第 4 槽按钮,不新增按钮。
+   打空后整包 60s 装填(与火箭弹"打空才装填"同范式)。
+
+   诱偏机制 = 纯物理判定(无随机骰子),完全复用光电导引头热源对比度管线:
+   ① 状态门:仅「无外部雷达引导」的导弹吃诱饵——雷达数据链在导期间(母机直升机雷达/
+      防空车雷达仍锁定)与 <450m 末端捕获走廊内,导弹稳固追踪原目标,诱饵无效;
+      母机丢锁/战损 → 导弹降级光电自主寻的 → 可被诱偏。复仇者导弹离架即自搜索,全程可诱。
+   ② 对比度竞争:诱饵 = 移动高亮热源(HELI_FLARE_HEAT=800 ≈ 直升机 260 的 3 倍),
+      与真目标/太阳/爆炸火球同公式 heat/(dSq+25) 竞争;导引头每 0.08s 重扫,
+      诱饵在视锥内(30°/±1000m 高程窗)时下一次重扫即捕获(≤80ms)。
+   ③ 终止:导弹追至热源 ≤10m → heliMissileMissBurst 哑爆(既有诱偏结算路径),
+      爆点再登记 1800 级热源,可对邻近导弹形成链式诱偏(物理真实)。
+   ④ 诱饵 3s 寿命耗尽而导弹仍在飞 → 导引头重新捕获真机;诱饵落地即熄。
+
+   性能:固定步长纯弹道积分(重力+线性阻尼,无射线/无碰撞);渲染走 fx.js 固定槽
+   InstancedMesh(+1 draw call);导引头扫描开销=诱饵数并入既有热源循环(0.08s 节流)。
+   实体天然有界(20 备弹×3s 寿命⇒同时在飞 ≤20),无任务24 式实体风暴风险。
+   ★诱饵单列 _flares 动态列表,不复用 _battlefieldHeatSources(32 条静态上限,
+   且 shift() 回收会挤掉爆炸热源)。 ============================================================ */
+var HELI_FLARE_MAX = 20;          // 备弹总量(单发计)
+var HELI_FLARE_RELOAD = 60.0;     // 打空后整包装填时长
+var HELI_FLARE_SALVO = 4;         // 每次释放 4 发(左前/左后/右前/右后)
+var HELI_FLARE_INTERVAL = 0.5;    // 长按连续释放齐射间隔
+var HELI_FLARE_LIFE = 3.0;        // 单发燃烧寿命
+var HELI_FLARE_HEAT = 800.0;      // 红外热特征(直升机≈260/地面车≈160;3 倍余量保证等距碾压)
+var HELI_FLARE_V0 = 15.0;         // 抛撒初速(机身惯性速度另叠加)
+var HELI_FLARE_DRAG = 0.45;       // 线性气动阻尼(抛撒速快衰,终末沉降速度≈g/k≈22m/s)
+var HELI_FLARE_CAP = 64;          // 在飞硬顶(玩家极限 20;为未来 AI 使用留余量)
+
+var _flares = [];                 // 在飞诱饵弹(动态热源):{ pos, vel, life }
+
+/* 四向抛撒方向(机身系: +X=左 / +Z=前 / -Y=下):[横向, 纵向] 归一前系数;
+   实际方向 = 归一(±0.83, -0.42, ±0.55) —— 外下抛,与真实干扰弹投放架同姿态逻辑 */
+var _flareDirs = [ [0.83, 0.55], [0.83, -0.55], [-0.83, 0.55], [-0.83, -0.55] ];   // 左前/左后/右前/右后
+var _flareQ = new THREE.Quaternion(), _flareV = new THREE.Vector3(), _flareO = new THREE.Vector3();
+
+/* 诱饵弹释放音效:程序合成气动抛撒声(短促带通噪声+高频喷气尾),不占烘焙资产 */
+function sfxFlareDispense() {
+  try {
+    if (typeof playNoise === 'function' && typeof AC !== 'undefined' && AC) {
+      playNoise(0.20, 2600, 0.14, 'bandpass', 520);
+      playNoise(0.09, 5200, 0.08, 'highpass', 1900);
+    }
+  } catch (e) {}
+}
+
+/* 释放一发齐射(4 个方向):弹药/装填/防抖闸门内聚,返回是否实际释放 */
+function triggerHeliFlares(t) {
+  if (!t || !t.alive || gameState !== 'playing') return false;
+  if (typeof isHeliVehicle !== 'function' || !isHeliVehicle(t)) return false;
+  if (t._heliFlareLeft == null) t._heliFlareLeft = HELI_FLARE_MAX;
+  if (t._heliFlareReloadT > 0) {
+    if (t.isPlayer && typeof aimHint === 'function') aimHint('诱饵弹装填中 (' + t._heliFlareReloadT.toFixed(0) + 's)');
+    return false;
+  }
+  if (t._heliFlareLeft <= 0) {
+    t._heliFlareReloadT = HELI_FLARE_RELOAD;
+    if (t.isPlayer && typeof aimHint === 'function') aimHint('诱饵弹耗尽，开始装填 (' + HELI_FLARE_RELOAD.toFixed(0) + 's)');
+    return false;
+  }
+  if (t._heliFlareCooldown > 0) return false;
+  t._heliFlareCooldown = HELI_FLARE_INTERVAL;
+
+  if (_flares.length > HELI_FLARE_CAP - HELI_FLARE_SALVO) _flares.splice(0, _flares.length - (HELI_FLARE_CAP - HELI_FLARE_SALVO));
+
+  // 抛撒口 = 机身下腹四角(机身系局部坐标,经世界姿态旋转;方向随机身姿态 = 用户口径)
+  t.group.getWorldQuaternion(_flareQ);
+  var vx = t._heliVx || 0, vy = t._heliVy || 0, vz = t._heliVz || 0;
+  for (var di = 0; di < 4; di++) {
+    var dX = _flareDirs[di][0], dZ = _flareDirs[di][1];
+    _flareO.set(dX * 1.15, -1.15, dZ * 1.9);
+    t.group.localToWorld(_flareO);
+    _flareV.set(dX, -0.42, dZ).normalize().applyQuaternion(_flareQ).multiplyScalar(HELI_FLARE_V0);
+    _flares.push({
+      pos: _flareO.clone(),
+      vel: new THREE.Vector3(vx + _flareV.x, vy + _flareV.y, vz + _flareV.z),
+      life: HELI_FLARE_LIFE
+    });
+  }
+  t._heliFlareLeft = Math.max(0, t._heliFlareLeft - HELI_FLARE_SALVO);
+  if (t._heliFlareLeft <= 0) {
+    t._heliFlareReloadT = HELI_FLARE_RELOAD;
+    if (t.isPlayer && typeof aimHint === 'function') aimHint('诱饵弹释放完毕，开始装填 (' + HELI_FLARE_RELOAD.toFixed(0) + 's)');
+  }
+  sfxFlareDispense();
+  return true;
+}
+
+/* 诱饵弹物理:线性阻尼 + 全量重力自由落体;落地即熄。由 stepShells 定步长驱动。 */
+function stepFlares(dt) {
+  var i, f;
+  if (_flares.length > 0) {
+    var damp = Math.exp(-HELI_FLARE_DRAG * dt);
+    for (i = _flares.length - 1; i >= 0; i--) {
+      f = _flares[i];
+      f.life -= dt;
+      if (f.life <= 0) { _flares.splice(i, 1); continue; }
+      f.vel.x *= damp; f.vel.z *= damp; f.vel.y *= damp;
+      f.vel.y -= CONF.gravity * dt;
+      f.pos.x += f.vel.x * dt; f.pos.y += f.vel.y * dt; f.pos.z += f.vel.z * dt;
+      if (f.pos.y <= terrainH(f.pos.x, f.pos.z) + 0.25) { f.life = 0; _flares.splice(i, 1); }   // 触地自熄(归零寿命→在飞导弹下一次重扫即脱钩回捕真机)
+    }
+  }
+  if (typeof flareVisualSync === 'function') flareVisualSync();   // 固定槽实例网格同步(fx.js,+1 draw call)
 }
 /* 比例导引 (PN, 真实空空导弹导引律) 转向力: a_dem = N·Vc·λ̇ (视线旋转率 λ̇ 由前后帧单位视线差分),
    方向 = λ̇矢量 × 速度方向 (⊥速度, 指向视线漂移侧), 幅值钳至可用过载 aMax; 闭合速度钳底下限 0.2v 防零接近几何(正侧方)失控。
@@ -1234,6 +1360,7 @@ var _grassSegShake = (typeof grassSegShake === 'function') ? grassSegShake : nul
 var _gfxTrailAdapt = gfxFx('fxTrailAdapt', false);   // ★E2-2 档位快照(weapons.js 在 scene.js 之后加载,GFX 已就位)
 function stepShells(dt) {
   _updateBattlefieldHeatSources(dt);
+  stepFlares(dt);                                     // 诱饵弹:纯弹道积分+固定槽实例网格视觉同步(空表≈零开销)
   /* ★E2-2(附录 B):齐射期尾迹自适应降频。尾迹卡按模拟时间定距登记(见下方 s.trailT),
      40 发齐射时 40×60Hz = 2400 卡/s 灌进 CRT_CAP=1200 的池子,池压到顶后新卡被丢、
      旧卡仍在渲染 —— 既没省下填充,又让尾迹忽疏忽密。按在飞火箭数分三档拉大间距:

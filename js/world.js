@@ -8,6 +8,17 @@
 /* 阴影纹素对齐暂存(抗移动抖动) */
 var _sunLook = new THREE.Vector3(), _sunRight = new THREE.Vector3(), _sunUpAx = new THREE.Vector3(),
     _sunUpV = new THREE.Vector3(0, 1, 0), _sunCorr = new THREE.Vector3(), _shAim = new THREE.Vector3();
+/* ★P0-③(性能优化报告 2026-09-13):开镜阴影视圈半径上限按画质档收缩——
+   高档 420/2400 逐位不变(桌面体验不动);中档(触屏默认)第三人称 ≤160m / 火箭炮俯视 ≤260m;
+   低档 120/200。旧口径随全屏对角放大到 420~2400m,1024²/512² 贴图覆盖上千平方米:
+   纹素粗(0.4~2.3m)阴影糊,且片元侧 PCF 覆盖面积与 pass 光栅量随半径平方膨胀。
+   收缩后视圈中心(=瞄准着点)周围阴影反而更清晰;着点 160m 外的远景载具暂失阴影,
+   漫画描边风格下观感可接受(报告 §三-P0③)。未开镜恒 70m,不受本钳影响。 */
+var _shCap3rd = 420, _shCapArtyTop = 2400;
+if (typeof GFX_PROFILE !== 'undefined') {
+  if (GFX_PROFILE === 'low') { _shCap3rd = 120; _shCapArtyTop = 200; }
+  else if (GFX_PROFILE === 'mid') { _shCap3rd = 160; _shCapArtyTop = 260; }
+}
 /* ============================================================
    每帧通用更新(模块修复 / 火灾 / 烟雾)
    ============================================================ */
@@ -267,7 +278,7 @@ function cameraUpdate(dt) {
     shCX = _shAim.x; shCY = _shAim.y; shCZ = _shAim.z;
     var shFov = camera.fov * Math.PI / 180;                  // 与相机实际 fov 同源(火箭炮俯视恒 52°,不走 scopeFov)
     var shAsp = camera.aspect || (innerWidth / innerHeight);
-    shR = clamp(shD * Math.tan(shFov * 0.5) * Math.sqrt(1 + shAsp * shAsp) + 25, 40, isArtyTop ? 2400 : 420);   // 全屏对角世界半径+25m 余量(上限随对角扩)
+    shR = clamp(shD * Math.tan(shFov * 0.5) * Math.sqrt(1 + shAsp * shAsp) + 25, 40, isArtyTop ? _shCapArtyTop : _shCap3rd);   // 全屏对角世界半径+25m 余量;上限按画质档收缩(见 _shCap3rd/_shCapArtyTop 注)
     shR = Math.ceil(shR / 10) * 10;                       // 10m 量化档:测距连续变化不逐帧重投影(纹素尺寸稳定不抖)
   }
   var shCam = sunLight.shadow.camera;

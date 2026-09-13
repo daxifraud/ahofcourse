@@ -438,6 +438,79 @@ function wreckSparks(p) {
   wreckSparkCard(p); // 单张飞溅火星贴图卡
 }
 
+/* ===== 诱饵弹渲染 (IR 干扰弹:高亮白热芯+橙红外辉,加法混色自发光) =====
+   数据源 = weapons.js _flares(动态热源表,定步长积分);本模块只做视觉同步:
+   固定槽位 InstancedMesh(上限 64>玩家极限 20,为 AI 留余量),逐帧摆位+尺寸/透明度随寿命演化,
+   零分配、单 draw call、加法混色免灯光。导引头诱偏逻辑不在此(纯视觉层)。 */
+var FLR_CAP = 64, _flrMesh = null, _flrGeo = null, _flrMat = null, _flrA = null, _flrTex = null;
+var _flrM = new THREE.Matrix4(), _flrQ = new THREE.Quaternion(), _flrP = new THREE.Vector3(), _flrS = new THREE.Vector3();
+
+function _flrMakeTex() {
+  var cv = document.createElement('canvas'); cv.width = cv.height = 128;
+  var g = cv.getContext('2d');
+  var rg = g.createRadialGradient(64, 64, 2, 64, 64, 62);
+  rg.addColorStop(0.0, 'rgba(255,255,255,1)');
+  rg.addColorStop(0.22, 'rgba(255,240,190,1)');
+  rg.addColorStop(0.5, 'rgba(255,170,60,0.9)');
+  rg.addColorStop(0.78, 'rgba(255,90,20,0.45)');
+  rg.addColorStop(1.0, 'rgba(255,60,10,0)');
+  g.fillStyle = rg; g.fillRect(0, 0, 128, 128);
+  var t = new THREE.CanvasTexture(cv);
+  t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.generateMipmaps = true;
+  return t;
+}
+function _flrEnsure() {
+  if (_flrMesh || !scene) return;
+  _flrTex = _flrMakeTex();
+  _flrA = new Float32Array(FLR_CAP);
+  _flrGeo = new THREE.PlaneGeometry(1, 1);
+  _flrGeo.setAttribute('iAlpha', new THREE.InstancedBufferAttribute(_flrA, 1).setUsage(THREE.DynamicDrawUsage));
+  var vs = ['attribute float iAlpha;varying vec2 vUv;varying float vA;', '#include <common>', '#include <logdepthbuf_pars_vertex>', 'void main(){vUv=uv;vA=iAlpha;vec4 mv=modelViewMatrix*instanceMatrix*vec4(position,1.);gl_Position=projectionMatrix*mv;', '#include <logdepthbuf_vertex>', '}'].join('\n');
+  var fs = ['uniform sampler2D map;varying vec2 vUv;varying float vA;', '#include <logdepthbuf_pars_fragment>', 'void main(){', '#include <logdepthbuf_fragment>', 'vec4 t=texture2D(map,vUv);float a=t.a*vA;if(a<.01)discard;gl_FragColor=vec4(t.rgb*a,a);}', ].join('\n');
+  _flrMat = new THREE.ShaderMaterial({ uniforms: { map: { value: _flrTex } }, vertexShader: vs, fragmentShader: fs, transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, toneMapped: false, fog: false });
+  _flrMesh = new THREE.InstancedMesh(_flrGeo, _flrMat, FLR_CAP);
+  _flrMesh.count = 0; _flrMesh.visible = false; _flrMesh.frustumCulled = false; _flrMesh.renderOrder = 20;
+  _flrMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  scene.add(_flrMesh);
+}
+/* 视觉同步:读 weapons.js _flares,摆位+尺寸/透明度随寿命演化(前 12% 弹出放大,后 30% 燃烧衰减) */
+function flareVisualSync() {
+  var list = (typeof _flares !== 'undefined') ? _flares : null;
+  if (!list || list.length === 0) {
+    if (_flrMesh && _flrMesh.visible) { _flrMesh.count = 0; _flrMesh.visible = false; }
+    return;
+  }
+  _flrEnsure();
+  if (!_flrMesh) return;
+  var LIFE = (typeof HELI_FLARE_LIFE !== 'undefined') ? HELI_FLARE_LIFE : 3.0;
+  var out = 0;
+  if (camera) _flrQ.copy(camera.quaternion); else _flrQ.identity();
+  for (var i = 0; i < list.length && out < FLR_CAP; i++) {
+    var f = list[i];
+    if (!f || f.life <= 0) continue;
+    var k = f.life / LIFE;                       // 1→0 寿命比
+    var born = 1 - k;                            // 0→1 出生进度
+    var popIn = born < 0.12 ? (born / 0.12) : 1;
+    var burn = k < 0.30 ? (k / 0.30) : 1;        // 末段渐熄
+    var flick = 0.86 + 0.14 * Math.sin(gameT * 37 + i * 2.7);   // 燃烧抖动(确定性相位,不吃战斗 RNG)
+    var size = (1.5 + 2.4 * burn) * flick;
+    _flrP.copy(f.pos);
+    _flrS.set(size * popIn, size * popIn, 1);
+    _flrM.compose(_flrP, _flrQ, _flrS);
+    _flrMesh.setMatrixAt(out, _flrM);
+    _flrA[out] = Math.min(1, popIn * burn + 0.15) * flick;
+    out++;
+  }
+  _flrMesh.count = out;
+  _flrMesh.visible = out > 0;
+  if (out) {
+    var im = _flrMesh.instanceMatrix;
+    im.updateRange.offset = 0; im.updateRange.count = out * 16; im.needsUpdate = true;
+    var aa = _flrGeo.attributes.iAlpha;
+    aa.updateRange.offset = 0; aa.updateRange.count = out; aa.needsUpdate = true;
+  }
+}
+
 
 /* ============================================================
    ★对局拆场清空(flow.js clearBattleEntities 调用):
@@ -472,9 +545,10 @@ function fxBattleClear() {
    原为首次击毁爆炸才惰性构建(首爆卡顿来源之一),搬到加载期;着色器预编译见 main.js renderer.compile。 */
 function fxPrewarm() {
   try { if (typeof _wspEnsure === 'function') _wspEnsure(); } catch (e) { /* 无头环境无 document 跳过 */ }
+  try { if (typeof _flrEnsure === 'function') _flrEnsure(); } catch (e2) { /* 诱饵弹实例网格同预热(首次释放零卡顿) */ }
 }
 /* ★E1-6(附录 B):fx 侧贴图清单(残骸/履带飞溅火星卡),与 comicFxTextures 一并在加载期上传。 */
-function fxTextures() { return [_wspTex]; }
+function fxTextures() { return [_wspTex, _flrTex]; }
 window.fxTextures = fxTextures;
 window.fxPrewarm = fxPrewarm;
 window.fxBattleClear = fxBattleClear;

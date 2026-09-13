@@ -137,8 +137,29 @@ function markSel(container, attrKey, value) {
       bs[j].classList.toggle('sel', bs[j].getAttribute(attrKey) === String(value));
 }
 
+/* 诱饵弹触屏按住态(桌面端由 keys.KeyF 承担同一职责):hwp-4 按下=按住释放(长按连续),
+   抬指/滑出/失焦清零;玩家 tick 轮询该标志与 F 键同权(见 player.js 直升机分支)。 */
+var _flareBtnHeld = false;
+
 function bindHeliWeaponBarUI() {
   var w1 = document.getElementById('hwp-1'), w2 = document.getElementById('hwp-2'), w3 = document.getElementById('hwp-3');
+  var w4 = document.getElementById('hwp-4');
+  if (w4) {   // 诱饵弹槽:按住=释放(长按连续);不切换 _heliWeapon,非武器选择语义
+    var flareDown = function (ev) {
+      if (ev.cancelable) ev.preventDefault();   // 阻止触屏长按派生的 click/滚动
+      _flareBtnHeld = true;
+      if (player && player.alive && gameState === 'playing' &&
+          typeof isHeliVehicle === 'function' && isHeliVehicle(player) &&
+          typeof triggerHeliFlares === 'function') triggerHeliFlares(player);   // 按下沿即放一组(不等轮询拍)
+    };
+    var flareUp = function () { _flareBtnHeld = false; };
+    w4.addEventListener('touchstart', flareDown, { passive: false });
+    w4.addEventListener('touchend', flareUp);
+    w4.addEventListener('touchcancel', flareUp);
+    w4.addEventListener('mousedown', flareDown);
+    w4.addEventListener('mouseup', flareUp);
+    w4.addEventListener('mouseleave', flareUp);
+  }
   if (w1) w1.addEventListener('click', function() {
     if (player && (isHeliVehicle(player) || (typeof isAAVehicle === 'function' && isAAVehicle(player)))) {
       player._heliWeapon = 3;
@@ -1112,6 +1133,8 @@ function hudUpdate(dt) {
       if (_isAA) _n1 = player.team === 'ally' ? '飞弩-6' : 'FIM-92';   // 显示名=实车挂载(用户需求#3/#6;TY-90/AIM-92 仅作内部弹道规格路由)
       var _e1 = w1 ? w1.querySelector('.hwp-name') : null, _e2 = w2 ? w2.querySelector('.hwp-name') : null;
       if (w2) w2.style.display = _isAA ? 'none' : '';   // PGZ-95 只有导弹+机炮两种武器:隐藏火箭槽(用户需求#2)
+      var w4 = document.getElementById('hwp-4');
+      if (w4) w4.style.display = _isAA ? 'none' : '';   // 诱饵弹槽:仅直升机(防空车与火箭槽同隐);按住=释放,非武器选择
       if (_e1 && _e1.textContent !== _n1) _e1.textContent = _n1;
       if (_e2) { var _n2v = _isAA ? '无火箭位' : _n2; if (_e2.textContent !== _n2v) _e2.textContent = _n2v; }
       var _e3n = w3 ? w3.querySelector('.hwp-name') : null;
@@ -1133,6 +1156,12 @@ function hudUpdate(dt) {
       if (a2 && a2.textContent !== txt2) a2.textContent = txt2;
       var txt3 = player.reload > 0 ? (player.reload.toFixed(1) + 's') : '∞';
       if (a3 && a3.textContent !== txt3) a3.textContent = txt3;   // 3号位=机炮
+      var a4 = document.getElementById('hwp-ammo-4');
+      if (a4 && !_isAA) {   // 4号位=诱饵弹:备弹计数/装填倒计时(写门:值不变不写 DOM)
+        var fLeft = player._heliFlareLeft != null ? player._heliFlareLeft : HELI_FLARE_MAX;
+        var txt4 = player._heliFlareReloadT > 0 ? ('装填 ' + player._heliFlareReloadT.toFixed(0) + 's') : (fLeft + '/' + HELI_FLARE_MAX);
+        if (a4.textContent !== txt4) a4.textContent = txt4;
+      }
     } else {
       if (hwbEl._on !== false) { hwbEl._on = false; hwbEl.classList.add('hidden'); }
     }

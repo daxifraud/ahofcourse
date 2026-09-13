@@ -113,7 +113,14 @@ var MODQ_PROFILE = (function () {
     if (MODQ_PRESETS[s]) return s;
     if (localStorage.getItem('prefGfxProfile') === 'low') return 'low';   // 迁移默认:画质救急档用户不被默认抬档
   } catch (e) {}
-  return 'high';   // ★2026-09-13:安卓默认模型高,桌面默认高,两端收敛(触屏不再默认中)
+  /* ★P0-①(性能优化报告 2026-09-13):触屏设备默认降回「中」——太阳阴影 1024²PCFSoft 是
+     移动填充率头号消耗源(报告 §二A:阴影 pass 重渲全部投影体 + 全屏 9+ 采样/像素),
+     中档=512²PCF 硬阴影,漫画描边风格下观感损失近不可察;机库像素比同档回落 1.5。
+     此前「两端收敛默认高」与战场规模翻倍叠加导致触屏帧率崩塌,故设备默认回调;
+     用户显式选择(?modq= / 设置页)仍完全尊重,不被此默认覆盖。桌面默认高,逐位不变。 */
+  var _mqTouch = false;
+  try { _mqTouch = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in window; } catch (e2) {}
+  return _mqTouch ? 'mid' : 'high';
 })();
 var MODQ = MODQ_PRESETS[MODQ_PROFILE];
 /* 模型质量取值器(gfxFx 同构:惰性读取,无头/sandbox 无 MODQ 时回落默认值=高档原值)。 */
@@ -712,7 +719,9 @@ function shellTof0(dirY, v) {                      // 抛物线到时(纵速/重
   return Math.max(0.1, 2 * dirY * v / CONF.gravity);
 }
 
+var _losEmptyHits = [];                            // ★P1-⑥:零候选早退的冻结空数组(免 Raycaster 空转/排序;调用方只读)
 function losIntersect(ax, az, bx, bz, ray) {       // LOS 宽相位候选+求交核心(ray 由调用方配置 origin/dir/far)
   collectCands(ax, az, bx, bz, _candList);
+  if (!_candList.length) return _losEmptyHits;     // 开阔地带无残骸/障碍:整段 Raycaster 调用免掉(炮弹步进每步每弹一次,量最大)
   return ray.intersectObjects(_candList, false);
 }

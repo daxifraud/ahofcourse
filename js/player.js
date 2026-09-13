@@ -1102,6 +1102,16 @@ function updateHeliWeapons(p, dt) {
     p._heliMissileCooldown = Math.max(0, p._heliMissileCooldown - dt);
   }
 
+  // 诱饵弹:0.5s 齐射防抖 + 打空后 60s 整包装填(与火箭弹"打空才装填"同范式)
+  if (p._heliFlareCooldown > 0) p._heliFlareCooldown = Math.max(0, p._heliFlareCooldown - dt);
+  if (p._heliFlareReloadT > 0) {
+    p._heliFlareReloadT = Math.max(0, p._heliFlareReloadT - dt);
+    if (p._heliFlareReloadT <= 0) {
+      p._heliFlareLeft = HELI_FLARE_MAX;
+      if (p.isPlayer && typeof aimHint === 'function') aimHint('诱饵弹装填完毕 (' + HELI_FLARE_MAX + '/' + HELI_FLARE_MAX + ')');
+    }
+  }
+
   // 维护剩余可用导弹数量(两侧在筒之和)
   p._heliMissileLeft = (p._heliMslRounds[0] || 0) + (p._heliMslRounds[1] || 0);
 
@@ -1433,6 +1443,13 @@ function playerUpdate(dt) {
 
     // 直升机多武器计时与雷达锁定循环
     updateHeliWeapons(player, dt);
+
+    // 诱饵弹: F 键(桌面)/武器栏第4槽按住(安卓)连续释放——不占武器位、不切换 _heliWeapon;
+    // 弹药/装填/0.5s 齐射防抖闸门全部内聚在 triggerHeliFlares(weapons.js)
+    if (player.isPlayer && gameState === 'playing' &&
+        (keys.KeyF || (typeof _flareBtnHeld !== 'undefined' && _flareBtnHeld))) {
+      triggerHeliFlares(player);
+    }
 
     if (mouseDown && player.isPlayer) {
       triggerHeliFire(player);

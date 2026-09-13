@@ -541,6 +541,7 @@ function step(dt) {
             if (shells[cs].mesh) scene.remove(shells[cs].mesh);
           }
           shells.length = 0; airborneMissiles.length = 0; rocketThreats.length = 0; rocketScanT = 0;
+          if (typeof _flares !== 'undefined') _flares.length = 0;   // 诱饵弹同清(与在飞弹表同口径)
           rocketThreatGrid.clear();                                 // 威胁桶随预报账同清
           rocketBodies.count = 0; rocketFlames.count = 0;            // 实例化弹体/尾焰同步清零(火箭无独立网格)
         }

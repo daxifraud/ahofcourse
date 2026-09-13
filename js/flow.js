@@ -470,6 +470,7 @@ function clearBattleEntities() {
   } catch (eS) {}
   try { if (typeof airborneMissiles !== 'undefined') airborneMissiles.length = 0; } catch (eM) {}
   try { if (typeof airborneGuidedRockets !== 'undefined') airborneGuidedRockets.length = 0; } catch (eG) {}
+  try { if (typeof _flares !== 'undefined') _flares.length = 0; } catch (eFL) {}   // 诱饵弹:拆场清零(视觉同步读空表自动隐藏)
   try { if (typeof respawnQueue !== 'undefined') respawnQueue.length = 0; } catch (eQ) {}
   /* 跨局残留状态全清:待生效弹坑 / 空中坠机残骸 / 弃车观察 / 火箭落点预报 / AI 指挥官账本 */
   try { if (typeof craterQueue !== 'undefined' && craterQueue) craterQueue.length = 0; } catch (eCQ) {}
@@ -758,6 +759,7 @@ function initInput() {
   // 表现为回来后滚轮一直按 isCtrl=10 倍步进走。失焦统一清零键位与鼠标按住状态。
   addEventListener('blur', function () {
     for (var k in keys) keys[k] = false;
+    if (typeof _flareBtnHeld !== 'undefined') _flareBtnHeld = false;   // 失焦吞掉触屏抬指沿 → 诱饵长按态一并清零(与键位同治)
     mouseDown = false;
     _rmbHeld = false;
   });

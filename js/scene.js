@@ -64,6 +64,24 @@ var GFX_PROFILE = (function () {
   return GFX_TOUCH ? 'mid' : 'high';
 })();
 var GFX = GFX_PRESETS[GFX_PROFILE];
+/* ★P0-①(性能优化报告 2026-09-13):触屏性能钳——仅当画质档为「设备默认」(未被 ?gfx= 或
+   设置页显式选择)时生效:像素比上限 1.5→1.25。中档触屏上 1.5 仍要填 2.25 倍像素量,
+   与满分辨率漫画合成 RT 叠加是移动帧率第一嫌疑(报告 §二A);1.25 在省 ~44% 像素量的
+   同时保留高于 CSS 分辨率的锐度。复制一份再钳,不改预设源表(设置页高亮/?gfx= A/B
+   对照读的仍是原表语义);显式选档用户完全不受钳制。 */
+var GFX_TOUCH_CLAMP = false;
+if (GFX_TOUCH) {
+  GFX_TOUCH_CLAMP = (function () {
+    if (/[?&]gfx=(high|mid|low)\b/.test(window.location.search || '')) return false;
+    try { if (GFX_PRESETS[localStorage.getItem('prefGfxProfile')]) return false; } catch (e) {}
+    return true;
+  })();
+  if (GFX_TOUCH_CLAMP) {
+    var _gfxCopy = {}; for (var _gfxK in GFX) _gfxCopy[_gfxK] = GFX[_gfxK];
+    _gfxCopy.maxPixelRatio = Math.min(_gfxCopy.maxPixelRatio, 1.25);
+    GFX = _gfxCopy;
+  }
+}
 function gfxMaxPr() { return Math.min(window.devicePixelRatio || 1, GFX.maxPixelRatio); }
 /* ============================================================
    场景搭建

@@ -362,6 +362,12 @@
     border-color: #6f9a63;
     color: #a8e890;
   }
+  /* 诱饵弹槽:非武器位(永不 .active)——琥珀色键帽标识 + 按住高亮(触屏长按释放反馈);
+     touch-action:none 钉死长按手势,防止安卓派生滚动/缩放/上下文菜单 */
+  #hwp-4 { touch-action: none; -webkit-touch-callout: none; }
+  #hwp-4 .hwp-key { background: #1a1408; color: #ffc857; border-color: #5a481e; }
+  #hwp-4:active { border-color: #ffc857; color: #ffd76e; transform: translateY(-2px);
+    box-shadow: 0 0 14px rgba(255, 200, 87, 0.3), inset 0 0 10px rgba(255, 200, 87, 0.12), 3px 3px 0 #040704; }
   .hwp-item.active {
     background: rgba(14, 28, 12, 0.95);
     border-color: #9dffa8;

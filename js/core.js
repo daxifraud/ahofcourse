@@ -1276,7 +1276,15 @@ var BATTLE_SETUP = {
    桌面端(精确指针)完全不受影响,仍用上面的 CONF 默认编制。
    注意:本段必须放在 VEHICLE_KINDS / vehicleKindAllowed / BATTLE_SETUP 之后。 */
 var IS_TOUCH_SETUP = (window.matchMedia && matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in window;
-var TOUCH_SETUP_CAP = 40;                                  // 触屏端每阵营最大在场载具数(★2026-09-13 由 20 提到 40)
+/* ★P1-④(性能优化报告 2026-09-13):触屏编制规模与模型质量档联动分级——
+   模拟成本与在场数近似线性,弱档机器配小战场、强档机器保大战场:
+     low=20 / mid=28 / high=40(40 即 2026-09-13 提到的高规模,完整保留给显式高档)。
+   P0 已把触屏设备默认 MODQ 档回调为 mid,故触屏默认战场=每方 28 台;
+   用户显式 ?modq=high / 设置页选高档 → 恢复 40 台(显式选择完全尊重,不被默认覆盖)。
+   桌面端不走本覆盖块(精确指针,CONF 默认编制逐位不变)。编制菜单仍可在开局前手动改。 */
+var TOUCH_SETUP_CAP_BY_PROF = { low: 20, mid: 28, high: 40 };
+var TOUCH_SETUP_CAP = (typeof MODQ_PROFILE !== 'undefined' && TOUCH_SETUP_CAP_BY_PROF[MODQ_PROFILE] != null)
+  ? TOUCH_SETUP_CAP_BY_PROF[MODQ_PROFILE] : 40;            // 触屏端每阵营最大在场载具数(★2026-09-13 由 20 提到 40;P1 起按画质档分级)
 var TOUCH_SETUP_FIXED = { wz10: 2, ah64: 2, arty: 2, aa: 1 };   // 固定编成:直升机 2 / 火箭炮 2 / 防空车 1(型号不存在于该阵营时自动忽略;wz10 仅红方,ah64 仅蓝方,故每方直升机恰 2 台)
 if (IS_TOUCH_SETUP) {
   (function () {

@@ -7351,6 +7351,7 @@ function createTank(o) {
     _salvoLockYaw: null, _salvoLockPitch: null, _salvoLockV: null, // 玩家齐射首发快照(AI 留空,对象形状稳定)
     _heliWeapon: 3, _heliRocketLeft: 14,                           // 直升机多武器状态 (3:导弹[默认,多联装], 2:14枚火箭弹, 1:机炮)
     _heliMslRounds: null, _heliMslTube: null,          // 多联装挂架弹药状态(按挂架侧独立计算装填,见 updateHeliWeapons)
+    _heliFlareLeft: 20, _heliFlareReloadT: 0, _heliFlareCooldown: 0,   // 诱饵弹:20 发备弹/打空 60s 整包装填/0.5s 齐射防抖(见 weapons.js 诱饵弹系统注)
     _heliRocketReloadT: 0,
     _heliMissileReloadTL: 0, _heliMissileReloadTR: 0,              // 左右翼导弹独立 40s 装填计时
     _heliRocketCooldown: 0, _heliMissileCooldown: 0,
@@ -7622,7 +7623,14 @@ function hitGridDynamicReg(t) {              // 全量注册(首帧/换格/强�
   var p = t.group.position, r = t.radius + 1.6;
   _hgExtents(p.x, p.z, r, _hgExt);
   t._hgX0 = _hgExt[0]; t._hgX1 = _hgExt[1]; t._hgZ0 = _hgExt[2]; t._hgZ1 = _hgExt[3];
-  for (var j = 0; j < t.modMeshes.length; j++) _hgPush(hitGridDynamic, p.x, p.z, r, t.modMeshes[j]);
+  /* ★P1-⑥:活车命中壳挂共享包围圆(与静态表 _circ 同口径,半径+0.5 只宽不严)——
+     collectCands 动态分支圆预筛消费:线段不切圆 ⇒ 几何必不切线段,连三角形粗测都免。 */
+  if (!t._hgCirc) t._hgCirc = { x: p.x, z: p.z, r: r + 0.5 };
+  else { t._hgCirc.x = p.x; t._hgCirc.z = p.z; t._hgCirc.r = r + 0.5; }
+  for (var j = 0; j < t.modMeshes.length; j++) {
+    t.modMeshes[j].userData._circ = t._hgCirc;
+    _hgPush(hitGridDynamic, p.x, p.z, r, t.modMeshes[j]);
+  }
 }
 function hitGridDynamicRemove(t) {           // 从旧覆盖格剔除本车全部命中壳(阵亡/换格)
   if (t._hgX0 == null) return;               // 未注册过:免动
@@ -7639,7 +7647,8 @@ function hitGridDynamicTick() {              // 每帧:逐车换格检测(未换
   for (i = 0; i < aliveList.length; i++) {
     t = aliveList[i];
     p = t.group.position; r = t.radius + 1.6;
-    _hgExtents(p.x, p.z, r, _hgExt);
+    if (t._hgCirc) { t._hgCirc.x = p.x; t._hgCirc.z = p.z; }   // ★P1-⑥:包围圆每帧跟车——注册只随换格发生,
+    _hgExtents(p.x, p.z, r, _hgExt);                            // 格内漂移可达 ~18m ≫ 圆半径,圆心不跟车会误拒真实命中候选
     if (t._hgX0 === _hgExt[0] && t._hgX1 === _hgExt[1] && t._hgZ0 === _hgExt[2] && t._hgZ1 === _hgExt[3]) continue;
     hitGridDynamicRemove(t);
     hitGridDynamicReg(t);
@@ -7711,6 +7720,15 @@ function collectCands(ax, az, bx, bz, out, staticOnly) {
       arr = hitGridDynamic.get(key);                  // 动态表(活车)
       if (arr) for (var j2 = 0; j2 < arr.length; j2++) {
         var m2 = arr[j2];
+        if (circOn) {                                 // ★P1-⑥:动态候选同款圆预筛(注册半径+0.5 保守包络,命中壳几何必在圆内)
+          var c2 = m2.userData._circ;
+          if (c2) {
+            var t3 = ((c2.x - ax) * segDx + (c2.z - az) * segDz) / segL2;
+            if (t3 < 0) t3 = 0; else if (t3 > 1) t3 = 1;
+            var qx2 = c2.x - (ax + segDx * t3), qz2 = c2.z - (az + segDz * t3);
+            if (qx2 * qx2 + qz2 * qz2 > c2.r * c2.r) continue;
+          }
+        }
         if (m2.userData._stamp === _candStamp.v) continue;
         m2.userData._stamp = _candStamp.v;
         out.push(m2);
@@ -7989,6 +8007,7 @@ function instBuildTemplate(team, kind, partGeos) {
 function instEnsureMesh(team, kind, part, geo, mat) {
   var key = _instPartKey(team + '|' + kind, part);   // 缓存版键函数(与 instUpdateAll 共用 _tplPartKeys)
   if (INST_MESH[key]) return INST_MESH[key];
+  _instMeshVer++;                                    // ★P1-⑦:新桶=缓冲内容未知,跳写签名当帧整体失效
   var im = new THREE.InstancedMesh(geo, mat, INST_CAP);
   im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   im.frustumCulled = false;                        // 实例分布全场,逐实例剔除由 count 控制,整体剔除反而误杀
@@ -8074,6 +8093,25 @@ function _instSrcsShow(t, v) {
    计数表/键串全部复用缓存:帧内零对象分配、零字符串拼接(键首次出现时烘焙一次)。 ===== */
 var _instCounts = {}, _instShCounts = {}, _instKeys = [], _instShKeys = [];
 var _instPrevKeys = [], _instShPrevKeys = [];   // ★审查A5: 上帧写入桶名单(收尾只需扫 本帧∪上帧, 替代全表 for-in)
+/* ★P1-⑦(性能优化报告):实例流增量化——
+   ① 车辆级签名跳写:坦克类(59/99/89/M60/M1A1)的实例矩阵完全由
+      (位置/车体朝向/炮塔角/炮管俯仰/后坐时钟)决定;全静止且槽位未变时本帧矩阵
+      与缓冲内容逐位一致,整台免算免写。动态关节车(火箭炮驻锄/液压杆/直升机旋翼)
+      与防空车发射架状态机不跳,玩家不受影响(数值对等)。
+   ② 脏桶名单:只有本帧真正写过矩阵的桶才 needsUpdate(整桶全静止=零上传)。
+   _instMeshVer:任何 InstancedMesh 新建(缓冲内容重置)即自增,跳写当帧整体失效。 */
+var _instMeshVer = 0;
+var _instFrame = 0;                              // 实例流帧号(跳写前提=上帧同槽写过,防剔除/桶满回归后沿用他人槽位)
+var _instDirtyKeys = [], _instShDirtyKeys = [];   // 本帧实际写过矩阵的桶(上传名单)
+function _instDirty(list, k) { if (list.indexOf(k) < 0) list.push(k); }
+function _instSkipEligible(t, p) {
+  var kd = t.kind;
+  if (kd !== 'tank' && kd !== '99' && kd !== 'td') return false;   // 白名单:仅三类坦克(无动态关节;火箭炮/防空/直升机永不跳)
+  if (!t._isInit || t._isVer !== _instMeshVer) return false;       // 首写 / 桶网格重建过 → 必须写
+  return t._isX === p.x && t._isY === p.y && t._isZ === p.z &&
+         t._isYaw === t.yaw && t._isTurr === t.turretYaw &&
+         t._isGun === t.gunPitch && t._isRec === (t.recT || -1);
+}
 /* vcpanel-9：InstancedMesh 整体必须 frustumCulled=false，但此前因此把镜头后/屏外全场 AI 也写入
    高模视觉桶。改为入桶前逐车宽松包围球剔除；阴影代理与 AI/命中逻辑保持原路径。 */
 var _instVisFrustum = new THREE.Frustum(), _instVisPV = new THREE.Matrix4();
@@ -8093,14 +8131,18 @@ function _instPartKey(tk, part) {
   if (!k) { k = tk + '|' + part; m[part] = k; }
   return k;
 }
-function _instFinalize(map, counts, keys, prevKeys) {   // ★审查A5: 模块级(原为每帧重建的嵌套闭包)
+function _instFinalize(map, counts, keys, prevKeys, dirtyKeys) {   // ★审查A5: 模块级(原为每帧重建的嵌套闭包)
   var i, k, im, c;
-  for (i = 0; i < keys.length; i++) {                  // 本帧有写入的桶: count 回写 + 矩阵标脏
+  for (i = 0; i < keys.length; i++) {                  // 本帧有占用(写入或被跳写沿用)的桶: count 回写
     im = map[keys[i]]; if (!im) continue;
     c = counts[keys[i]] || 0;
     im.count = c;
-    if (c > 0) im.instanceMatrix.needsUpdate = true;   // count=0 时无需上传(draw range 0, 缓冲内容不可见)
   }
+  for (i = 0; i < dirtyKeys.length; i++) {             // ★P1-⑦: 仅实际写过矩阵的桶上传(全静止桶零上传;
+    im = map[dirtyKeys[i]];                            //   跳写沿用槽的缓冲内容本就逐位正确)
+    if (im && im.count > 0) im.instanceMatrix.needsUpdate = true;   // count=0 时无需上传(draw range 0, 缓冲内容不可见)
+  }
+  dirtyKeys.length = 0;
   for (i = 0; i < prevKeys.length; i++) {              // 上帧有写、本帧无写的桶: 只清 count
     k = prevKeys[i]; if (counts[k]) continue;          // (本帧也写的已在上面处理)
     im = map[k]; if (im && im.count !== 0) im.count = 0;
@@ -8109,7 +8151,8 @@ function _instFinalize(map, counts, keys, prevKeys) {   // ★审查A5: 模块�
   for (i = 0; i < keys.length; i++) prevKeys.push(keys[i]);   // 滚动移交: 本帧 keys → 下帧 prevKeys
 }
 function instUpdateAll() {
-  var i, key, t, tk, tpl, im, shim, n, sn, pk, shpk, visOK, parts;
+  var i, key, t, tk, tpl, im, shim, n, sn, pk, shpk, visOK, parts, _p, _canSkip, _vSkip, _sSkip, _m4F;
+  _instFrame++;                                    // ★P1-⑦:帧号推进(跳写的“上帧同槽写过”判据)
   _instVisCullActive = false;
   if (typeof camera !== 'undefined' && camera && camera.projectionMatrix && camera.matrixWorldInverse) {
     camera.updateMatrixWorld(true);                 // 同帧瞄准相机；Camera 会同步 matrixWorldInverse
@@ -8143,18 +8186,31 @@ function instUpdateAll() {
     if (visOK) { _wxSigN++; _wxSigH = ((_wxSigH * 31 + (i + 1) * 7 + ((t.group ? t.group.id : 0) & 0xffff)) | 0); }   // R1:可见成员签名(序相关:下标+group.id;t.id全仓无赋值恒零,改用three group.id)
     parts = visOK ? tpl : INST_SH_TPL[tk];          // 视觉流外(玩家/桶满)只走阴影模板表
     if (!parts) continue;
+    /* ★P1-⑦ 车辆级跳写判定(一次,视觉/阴影双轨共用):签名全静止且桶网格未重建 →
+       每个部件只有在本帧槽位与上帧写入槽位不同时才重算重写,否则缓冲内容逐位沿用。 */
+    _p = t.group.position;
+    _canSkip = _instSkipEligible(t, _p);
     for (key in parts) {
       if (!parts[key] || !parts[key].isBufferGeometry) continue;   // P1fix: 跳过 _ink 等非几何脏键, 防 InstancedMesh 中断 → AI count=0
-      _instMatFor(key, t, _instM4);                 // 每部件矩阵一次,双轨同写(阴影部件=视觉部件子集)
+      _m4F = false;                                 // 本部件矩阵新鲜标记(视觉写了,阴影同件直接复用)
       if (visOK) {
         pk = _instPartKey(tk, key);
         im = INST_MESH[pk];
         if (im) {
           n = _instCounts[pk] || 0;
           if (n < INST_CAP) {
-            im.setMatrixAt(n, _instM4);
-            if (key === 'hull') t._hullInstIdx = n;     // 记录 hull 实例索引(供 trackAnimUpdate 写 aInstA.xy;instUpdateAll 先于它跑=当帧新鲜)
-            if (_wxUp && typeof vehWeatherWriteInst === 'function') vehWeatherWriteInst(im, n, t, key);   // 载具风化⑧: 战损实例属性(R1:恢复纯epoch门;可见变化已并入epoch)
+            _vSkip = _canSkip && t._isSlotV && t._isSlotV[pk] === n && t._isFrV && t._isFrV[pk] === _instFrame - 1;
+            if (!_vSkip) {
+              if (!_m4F) { _instMatFor(key, t, _instM4); _m4F = true; }   // 每部件矩阵一次,双轨同写(阴影部件=视觉部件子集)
+              im.setMatrixAt(n, _instM4);
+              if (!t._isSlotV) { t._isSlotV = {}; t._isFrV = {}; }
+              t._isSlotV[pk] = n; t._isFrV[pk] = _instFrame;
+              _instDirty(_instDirtyKeys, pk);
+            } else {
+              t._isFrV[pk] = _instFrame;            // 跳写续帧戳:本帧槽位仍被本车占用且内容逐位正确,
+            }                                        // 不续戳则下帧 _isFrV≠frame-1 → 退化为隔帧重写
+            if (key === 'hull') t._hullInstIdx = n;     // 记录 hull 实例索引(供 trackAnimUpdate 写 aInstA.xy;instUpdateAll 先于它跑=当帧新鲜;跳写也占槽,索引恒有效)
+            if (_wxUp && typeof vehWeatherWriteInst === 'function') vehWeatherWriteInst(im, n, t, key);   // 载具风化⑧: 战损实例属性(与矩阵跳写正交:战损走独立属性流,epoch 门内照常写)
             if (n === 0) _instKeys.push(pk);
             _instCounts[pk] = n + 1;
           }
@@ -8165,19 +8221,32 @@ function instUpdateAll() {
       if (shim) {
         sn = _instShCounts[shpk] || 0;
         if (sn < INST_CAP) {
-          shim.setMatrixAt(sn, _instM4);
+          _sSkip = _canSkip && t._isSlotS && t._isSlotS[shpk] === sn && t._isFrS && t._isFrS[shpk] === _instFrame - 1;
+          if (!_sSkip) {
+            if (!_m4F) { _instMatFor(key, t, _instM4); _m4F = true; }
+            shim.setMatrixAt(sn, _instM4);
+            if (!t._isSlotS) { t._isSlotS = {}; t._isFrS = {}; }
+            t._isSlotS[shpk] = sn; t._isFrS[shpk] = _instFrame;
+            _instDirty(_instShDirtyKeys, shpk);
+          } else {
+            t._isFrS[shpk] = _instFrame;            // 同视觉流:跳写续帧戳,静止车连续帧免写
+          }
           if (sn === 0) _instShKeys.push(shpk);
           _instShCounts[shpk] = sn + 1;
         }
       }
     }
+    /* 签名刷新(本帧状态写回;无论写/跳,缓冲此刻都逐位等于本帧状态): */
+    t._isX = _p.x; t._isY = _p.y; t._isZ = _p.z;
+    t._isYaw = t.yaw; t._isTurr = t.turretYaw; t._isGun = t.gunPitch; t._isRec = t.recT || -1;
+    t._isVer = _instMeshVer; t._isInit = 1;
   }
   if (_wxUp && typeof vehWeatherInstCommit === 'function') vehWeatherInstCommit();   // 载具风化⑧: 本帧有战损变化 → 上传一次
   if (_wxSigN !== _wxVisSigN || _wxSigH !== _wxVisSigH) { _wxEpoch++; _wxVisSigN = _wxSigN; _wxVisSigH = _wxSigH; }   // R1:可见集变化→bump epoch,下帧重写+上传(静止零开销;修P0-1 commit早退吞force)
   /* 实例流收尾:视觉/阴影双流同形——★审查A5: 由"全表 for-in + 无条件 needsUpdate"(含空桶,
      空桶标脏=每帧全量矩阵缓冲 GPU 重传)收敛为"本帧∪上帧写入桶": 本帧有写的桶回写 count 并标脏;
      上帧有写、本帧无写的桶仅 count 清零(0=draw range 收缩, 不触发上传); 更早的桶 count 已为 0。 */
-  _instFinalize(INST_MESH, _instCounts, _instKeys, _instPrevKeys);
+  _instFinalize(INST_MESH, _instCounts, _instKeys, _instPrevKeys, _instDirtyKeys);
   if (_trackLastWrites.length) {                                // ★审查A5: 存在门——无履带/悬挂写入的帧(全静止/远距)零扫描零标脏(原版每帧全表 for-in + 无条件 needsUpdate=整缓冲重传)
     for (key in INST_MESH) {
       im = INST_MESH[key];
@@ -8206,7 +8275,7 @@ function instUpdateAll() {
       }
     }
   }
-  _instFinalize(INST_SH_MESH, _instShCounts, _instShKeys, _instShPrevKeys);
+  _instFinalize(INST_SH_MESH, _instShCounts, _instShKeys, _instShPrevKeys, _instShDirtyKeys);
 }
 
 /* ============================================================
@@ -8639,6 +8708,7 @@ function instShadowBuildTemplate(t) {
 function instEnsureShadowMesh(team, kind, part, geo) {
   var key = team + '|' + kind + '|sh' + part;
   if (INST_SH_MESH[key]) return INST_SH_MESH[key];
+  _instMeshVer++;                                    // ★P1-⑦:同视觉桶(阴影流共用同一版本闸)
   var im = new THREE.InstancedMesh(geo, shadowProxyMat, INST_CAP);
   im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   im.frustumCulled = false;
