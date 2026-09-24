@@ -8,7 +8,7 @@
 /* ============================================================
    模块与伤害判定核心
    ============================================================ */
-function armorOf(mod, ln, force, lp) {   // lp=命中点(命中壳局部系,可选):单壳位置分区用(99式侧甲前后带);未传按前带兜底
+function armorOf(mod, ln, force, lp) {   // lp=命中点(命中壳局部系,可选):单壳位置分区用(红方重型坦克侧甲前后带);未传按前带兜底
   var a = mod.armor;
   if (a.all !== undefined) return a.all;
   if (force === 'dome') {
@@ -18,15 +18,19 @@ function armorOf(mod, ln, force, lp) {   // lp=命中点(命中壳局部系,可�
     if (azd > Math.PI * 2 / 3) return a.rear;
     return a.side;
   }
-  if (force === 'hullshell') {                                // 59 式车体棱柱壳:命中面=与美术同折点真面;先按法线前后分量定前(110)/后(32)甲——
-    if (ln.z > 0.35) return a.front;                          //   首上 23.8° 陡面朝前(z0.404)/鼻板(z0.904)算前甲;车尾下斜面(z-0.746)算后甲
+  if (force === 'hullshell') {                                // 59 式车体棱柱壳:命中面按普通前/后/侧/顶/底分区读取
+    if (ln.z > 0.35) return a.front;
     if (ln.z < -0.35) return a.rear;
-    var axs = Math.abs(ln.x), ays = Math.abs(ln.y);           //   余下:甲板/车底(|y| 主)24,两侧(±x)55
+    var axs = Math.abs(ln.x), ays = Math.abs(ln.y);           // 余下:甲板/车底(|y| 主)与两侧(±x)
     if (ays >= axs) return ln.y > 0 ? a.top : (a.bottom || a.top);
     return a.side;
   }
   if (force === 'm1hull') {                                 // 首前半球先判——浅带首上(y≈0.95,复合等效)与 75° 首下(y≈0.26,物理)分槽
-    if (ln.z > 0.20) return ln.y > 0.6 ? a.front : (a.glacis !== undefined ? a.glacis : a.front);
+    /* DU is a per-player hull-module equivalent-armor bonus.  It is deliberately
+       consumed here, before armorImpactSolution applies the real incidence-angle
+       calculation, and never reaches turret/side/rear plates or AI modules. */
+    var duFront = Number(mod._duFrontBonus) || 0;
+    if (ln.z > 0.20) return ln.y > 0.6 ? a.front + duFront : ((a.glacis !== undefined ? a.glacis : a.front) + duFront);
     if (ln.z < -0.20) return a.rear;
     if (Math.abs(ln.y) > 0.86) return ln.y > 0 ? a.top : (a.bottom || a.top);   // 甲板/车底
     return a.side;
@@ -37,17 +41,17 @@ function armorOf(mod, ln, force, lp) {   // lp=命中点(命中壳局部系,可�
     if (ln.z < -0.22) return a.rear;
     return a.side;
   }
-  if (force === 't99hull') {                                // 99式车体(唯一真面壳):首上(法线 y0.915/z0.404)/首下鼻板(y-0.428/z0.904)双前甲分槽;
+  if (force === 't99hull') {                                // 红方重型坦克车体(唯一真面壳):首上(法线 y0.915/z0.404)/首下鼻板(y-0.428/z0.904)双前甲分槽;
     if (ln.z > 0.35) return ln.y > 0.6 ? a.front : a.glacis;
     if (ln.z < -0.35) return a.rear;
     var ax9 = Math.abs(ln.x), ay9 = Math.abs(ln.y);
     if (ay9 >= ax9) return ln.y > 0 ? a.top : (a.bottom || a.top);
     return lp && lp.z < -0.85 ? a.sideR : a.sideF;          // 侧甲按命中点 z 分区:前段 300/发动机段 150(界 -0.85;无附加面片)
   }
-  if (force === 't99turret') {                              // 99式炮塔(唯一真面壳):前扇区多朝向面(上/下前楔/颊面)
-    var azT = Math.abs(ln.z);                               //   统一按"等效 a.front 以水平正面入射标定"逐面折物理=front·|nz|
+  if (force === 't99turret') {                              // 红方重型坦克炮塔(唯一真面壳):按面归属返回物理厚度
+    var azT = Math.abs(ln.z);
     if (Math.abs(ln.y) > 0.97 && azT < 0.2) return ln.y > 0 ? a.top : (a.bottom || a.top);   // 平顶/底
-    if (ln.z > 0.2) return a.front * Math.max(azT, 0.342);  // 前扇区:水平射线等效恒=front(0.342 兜底防掠射零厚)
+    if (ln.z > 0.2) return a.front;                         // 前楔的物理厚度交给统一入射角公式折算,不再预先乘 |nz|
     if (ln.z < -0.2) return a.rear;
     return lp && lp.z < -0.45 ? a.sideR : a.sideF;          // 侧甲按命中点 z 分区:前带 200/后带 100(界 -0.45)
   }
@@ -71,9 +75,9 @@ function turretEff(t) { var m = t.mods.turret; return m.max > 0 ? clamp(m.hp / m
 function barrelEff(t) { var m = t.mods.gun; return m && m.max > 0 ? clamp(m.hp / m.max, 0, 1) : 1; }
 function fueled(t) { var m = t.mods.fuel; return !m || m.hp > 0; }          // 油箱 0%=断油
 /* ===== 装填速度衰减通用函数(按装填体制分流)----
-   人工装填(59/M60A1/M1A1/89式):炮塔(战斗室)受损伤及装填手 → 炮塔血量%线性,
+   人工装填(各型号装甲车辆):炮塔(战斗室)受损伤及装填手 → 炮塔血量%线性,
      0% 降为一半(车组乘员接替装填手,不归零);炮塔转速另走 turretMult(0%=物理卡死);
-   弹药架方案(99式自动装弹机/火箭炮):装填链在弹药架内,炮塔(火箭炮=转盘,只管转动)受损
+   弹药架方案(自动装弹机/火箭炮):装填链在弹药架内,炮塔(火箭炮=转盘,只管转动)受损
      不降低装填 → 弹药架血量%线性,同 0.5 下限(火箭炮弹药架=发射架/发射舱,火箭弹就装在
      那里,装填作业围绕它进行)。新增自动装弹机型号只需入册 AUTOLOADER_KINDS。 ===== */
 var AUTOLOADER_KINDS = { '99': true };
@@ -85,10 +89,15 @@ function _calcReloadMult(t) {
   }
   return Math.max(turretEff(t), 0.5);
 }
-function reloadDamageMult(t) { return t._eff ? t._eff.reload : _calcReloadMult(t); }
+function reloadDamageMult(t) {
+  var base = t._eff ? t._eff.reload : _calcReloadMult(t);
+  var powerupRate = typeof powerupReloadRate === 'function' ? powerupReloadRate(t) : 1;
+  var techRate = typeof vehicleTechBurstLoadingRate === 'function' ? vehicleTechBurstLoadingRate(t) : 1;
+  return base * powerupRate * techRate;
+}
 /* ===== 效率族事件缓存(帧检测→触发器):speedMult/turnMult/turretMult/reloadDamageMult
-   均为模块 hp 的纯函数,而模块 hp 仅在两处事件变化(applyModuleDamage 受击/world.js
-   火灾烧蚀 0.8s 节拍;模块不可修复)——受击时 effSync 一次重算入 t._eff,
+   均为模块 hp 的纯函数,而模块 hp 仅在受击/world.js 火灾烧蚀与紧急维修完成时变化——
+   事件发生时 effSync 一次重算入 t._eff,
    物理/AI 每帧消费只读缓存(公开函数签名不变,无缓存兜底直算=预览车/异常路径安全)。 ===== */
 /* 机动效率单一真源:直线速度与转向仅差"单侧断带"的残余系数,其余判定(直升机分支/
    双侧断带归零/断油归零/发动机效率)完全同构。oneTrack = 单侧断带后保留的比例。
@@ -110,7 +119,16 @@ function _calcTurnMult(t)  { return _calcMobilityMult(t, 0.5); }   // 转向速�
 function effSync(t) {
   t._eff = { speed: _calcSpeedMult(t), turn: _calcTurnMult(t), turret: turretEff(t), reload: _calcReloadMult(t) };
 }
-function speedMult(t) { return t._eff ? t._eff.speed : _calcSpeedMult(t); }
+function speedMult(t) {
+  var base = t._eff ? t._eff.speed : _calcSpeedMult(t);
+  /* Rocket Boost adds a fixed 10 km/h to the resulting ground speed, rather than
+     multiplying the vehicle's native speed. Helicopters are rejected by the accessor. */
+  if (typeof powerupSpeedBonusMps === 'function') {
+    var v0 = t && t.speed0 ? t.speed0 : 0, bonus = powerupSpeedBonusMps(t);
+    if (v0 > 0 && bonus > 0) return (base * v0 + bonus) / v0;
+  }
+  return base;
+}
 function turnMult(t) { return t._eff ? t._eff.turn : _calcTurnMult(t); }
 function turretMult(t) {
   return t._eff ? t._eff.turret : turretEff(t);                              // ④炮塔转速 ∝ 炮塔血量(0%=物理卡死;装填速率另走 reloadDamageMult)
@@ -140,7 +158,7 @@ function turretWatchdog(dt) {
     });
     if (bad || !n) console.warn('[TURRET-DOG]', bad || 'no-turret-mesh', 'team=' + t.team, 'kind=' + t.kind,
       'struct=' + t.struct.toFixed(0), 'pos=' + t.group.position.x.toFixed(0) + ',' + t.group.position.z.toFixed(0),
-      'turretYaw=' + t.turretYaw, '(见此日志请截图发回)');
+      'turretYaw=' + t.turretYaw, '(if you see this log please send a screenshot)');
   }
 }
 function setTankVisuals(t, v) {
@@ -204,7 +222,7 @@ function abandonTick() {                                       // 1Hz:仅遍历�
     if (a.kind === 'fuel' && !a.stage) { a.stage = 1; a.due = gameT + ABANDON_CD; continue; }  // 观察窗耗尽 → 3s 倒数
     abandonWatch.splice(i, 1);
     t._abandon = null;
-    killTank(t, '弃车');
+    killTank(t, 'ABANDONED');
   }
 }
 
@@ -216,10 +234,21 @@ var structFrac = { hull: 1, turret: 0.35, gun: 0, engine: 0.4, fuel: 0.25, ammo:
    所有直击调用方(坦克 AP/直升机导弹/火箭)统一传 0, 仅破片递归内层传 1 */
 function applyModuleDamage(t, key, dmg, attacker, point, depth) {
   if (!t.alive) return;
+  // 个人死斗玩家出生保护：三秒内完全忽略弹药、爆炸、碰撞和坠落等模块伤害。
+  if (t === player && isFfaMode() && t._ffaSpawnInvulUntil > gameT) return;
   var mod = t.mods[key];
   t.lastHitBy = attacker;
+  if (dmg > 0) {
+    t.lastDamageT = gameT;   // 真实受伤时间：战场维修和 AI 受击记忆各自消费
+    if (t._vehicleTechRepair) {
+      t._vehicleTechRepair.stationaryT = 0;
+      t._vehicleTechRepair.active = false;
+      t._vehicleTechRepair.target = null;
+    }
+    if (t === player && typeof vehicleTechBattlefieldRepairHudTick === 'function') vehicleTechBattlefieldRepairHudTick();
+  }
   // 受击记忆(仅敌方伤害触发,火灾自伤不算)——AI 自保判断用
-  if (attacker && attacker !== t && attacker.team && attacker.team !== t.team) { t.lastHitT = gameT; noteAttacked(t, attacker); }
+  if (attacker && attacker !== t && areHostile(attacker, t)) { t.lastHitT = gameT; noteAttacked(t, attacker); }
 
   var preStruct = t.struct;                                             // 记录跨零前剩余结构(阵亡记账用)
   t.struct -= dmg * (structFrac[key] !== undefined ? structFrac[key] : 0.3);
@@ -272,7 +301,7 @@ function applyModuleDamage(t, key, dmg, attacker, point, depth) {
     }
   }
   /* 击杀播报仅载具死亡行;命中反馈走屏心命中链/迷你 HUD,不入文字播报 */
-  if (t.struct <= 0 && t.alive) killTank(t, '结构损毁');
+  if (t.struct <= 0 && t.alive) killTank(t, 'STRUCT KILL');
 }
 
 function onModuleDestroyed(t, key, attacker) {
@@ -296,7 +325,7 @@ function startFire(t, attacker) {
   if (!t.alive || t.fire) return;
   // 灭火器无限次使用: 载具每次起火自动触发单次灭火程序,在1~4秒内完成灭火
   t.fire = { dotT: 0, extinguishAt: gameT + rand(1, 4) };
-  if (attacker === player && t !== player) hitMarkerAppend('点燃!', 'pen');   // 起火反馈只走屏心命中链(击杀播报仅载具死亡行)
+  if (attacker === player && t !== player) hitMarkerAppend('IGNITED!', 'pen');   // 起火反馈只走屏心命中链(击杀播报仅载具死亡行)
 }
 
 /* ===== 残骸不可摧毁——残骸=永久物理实体:保留碰撞(可被推动)/挡弹/挡视线/掩体资格 ===== */
@@ -453,7 +482,6 @@ function wckNoteMoved(t) {
    0.5s 回收扫描:被推残骸静止后不再有事件标脏,独行窗口(1s)过期须由扫描重新标脏回烘。 */
 var _wckSweepT = -99;
 function wckFlush() {
-  wreckSweep();                        // ★P2-⑨:残骸生命周期回收(内部 1Hz 自节流,零尖峰)
   if (gameT - _wckSweepT >= 0.5) {
     _wckSweepT = gameT;
     wckChunks.forEach(function (ch) {
@@ -519,91 +547,6 @@ function wckClear() {
   _wckBakeQ.length = 0;             // 延迟队列随清场同清(防消费端把已移除车辆烘焙成幽灵残骸)
 }
 
-/* P2-WRECK-START ★P2-⑨ 残骸生命周期(性能优化报告:“TTL 或总量硬顶,超限回收最远/最旧”,
-   与 fxSmokeR 距离裁剪同一哲学)——残骸原为永久实体,消耗战后期数百具持续累积
-   (节点数/碰撞对/LOS 候选/烟柱随场次单调上涨=“越打越卡”的结构性成分)。
-   策略:总量硬顶 + 寿命双闸,从最旧开始回收;玩家 400m 豁免圈内的残骸不回收
-   (视野内凭空消失=穿帮),圈外无声移除(雾/远处,玩家不可感知);
-   被推中/下落中的残骸跳过(物理一致性)。每 1s 一拍、每拍 ≤2 具,成本摊平无尖峰。 */
-var WRECK_CAP = 48;                    // 在场残骸硬顶(超出即从最旧开始回收)
-var WRECK_TTL = 240;                   // 残骸寿命(秒):超龄且位于豁免圈外即回收
-var WRECK_SAFE_R2 = 400 * 400;         // 玩家豁免半径²(圈内残骸不回收,防视野内消失穿帮)
-var _wreckSweepT = -99;
-function retireWreck(t) {              // 残骸全量退场:九大登记面逐一摘除,幂等
-  if (!t || t._wreckRetired || t.alive || t._heliFalling) return false;
-  t._wreckRetired = true;
-  var i, k, arr;
-  /* ① 残骸总表(追加序=死亡序;AI 密度/烟柱/配对扫描共读) */
-  var wi = wreckList.indexOf(t); if (wi >= 0) wreckList.splice(wi, 1);
-  /* ② 碰撞网格(wreckGrid 20m:avoidSteer/车-残骸碰撞/叠堆配对/地形重锚共用) */
-  if (t._wreckGridRegistered && t._wgKey != null) {
-    arr = wreckGrid.get(t._wgKey);
-    if (arr) { k = arr.indexOf(t); if (k >= 0) arr.splice(k, 1); if (!arr.length) wreckGrid.delete(t._wgKey); }
-    t._wreckGridRegistered = false; t._wgKey = null;
-  }
-  /* ③ 静态遮挡(LOS/挡弹/掩体):代理与 8 壳都尝试剔除——hitGridStaticRemoveTankMesh 幂等,
-     按 _sHg* 记账格精确出表并 bump hitGridStaticVersion(AI LOS 缓存即时失效) */
-  if (t._occMesh) hitGridStaticRemoveTankMesh(t, t._occMesh);
-  if (t.modMeshes) for (i = 0; i < t.modMeshes.length; i++) hitGridStaticRemoveTankMesh(t, t.modMeshes[i]);
-  /* ④ 残骸区合批:摘册+旧区标脏重绘(烘焙集少一本,防旧位幽灵) */
-  if (t._wckRec) {
-    var rec = t._wckRec, ch = wckChunks.get(rec.chunkKey);
-    if (ch) {
-      var ci = ch.items.indexOf(rec); if (ci >= 0) ch.items.splice(ci, 1);
-      ch.stale = true; ch.force = true; _wckMarkDirty(ch);
-    }
-    t._wckRec = null;
-  }
-  /* ⑤ 瞬态队列:烘焙延迟队/障碍复查队 */
-  k = _wckBakeQ.indexOf(t); if (k >= 0) _wckBakeQ.splice(k, 1);
-  t._wMove = false;
-  for (i = _wreckMoveQueue.length - 1; i >= 0; i--) if (_wreckMoveQueue[i] === t) _wreckMoveQueue.splice(i, 1);
-  /* ⑥ 长驻烟柱(与注册同表逆向) */
-  if (typeof wreckSmokeUnregister === 'function') wreckSmokeUnregister(t);
-  /* ⑦ 命中候选表(与预览车逆向摘除同口径):防离场景网格滞留 targetsList */
-  if (t.modMeshes) for (i = 0; i < t.modMeshes.length; i++) {
-    var ti = targetsList.indexOf(t.modMeshes[i]); if (ti >= 0) targetsList.splice(ti, 1);
-  }
-  /* ⑧ 场景退场+显存回收(仅销毁独占几何:合并网格/遮挡代理;模板共享几何禁动,同 mergeWreckMeshes 口径) */
-  if (t._wreckMesh && t._wreckMesh.geometry && t._wreckMesh.geometry.dispose) t._wreckMesh.geometry.dispose();
-  if (t._occMesh) { if (t._occMesh.geometry && t._occMesh.geometry.dispose) t._occMesh.geometry.dispose(); t._occMesh = null; }
-  if (t.group) scene.remove(t.group);
-  t._battleCleared = true;             // 与 flow.rmGroup 同旗:后续清场幂等跳过
-  t.gDirty = false;
-  /* ⑨ 世界缓存失效:残骸簇 + 漫画天线稳定线(事件驱动重建) */
-  if (typeof wclBump === 'function') wclBump();
-  if (typeof comicAntennaWreckDirty === 'function') comicAntennaWreckDirty();
-  return true;
-}
-function wreckSweep() {                // 1Hz:超顶/超龄回收(最旧优先,豁免圈/被推/下落跳过)
-  if (gameT - _wreckSweepT < 1.0) return;
-  _wreckSweepT = gameT;
-  var n = wreckList.length;
-  if (!n) return;
-  var overCap = n - WRECK_CAP, ttlBreach = false, oi, w0;
-  for (oi = 0; oi < n; oi++) {         // 表头=最旧;找到首个超龄即存在寿命违约
-    w0 = wreckList[oi];
-    if (w0 && gameT - (w0._wreckBornT || 0) > WRECK_TTL) { ttlBreach = true; break; }
-  }
-  if (overCap <= 0 && !ttlBreach) return;
-  var px = (player && player.group) ? player.group.position.x : 0;
-  var pz = (player && player.group) ? player.group.position.z : 0;
-  var budget = overCap > 8 ? 2 : 1;    // 大幅超顶(连环殉爆)每拍收 2 具追赶
-  var retired = 0;
-  for (oi = 0; oi < wreckList.length && retired < budget; oi++) {
-    var w = wreckList[oi];
-    if (!w || w._wreckRetired) continue;
-    var age = gameT - (w._wreckBornT || 0);
-    if (overCap <= 0 && age <= WRECK_TTL) break;        // 追加序:表头未违约 → 后面更新,整拍无事
-    if (w._heliFalling || w._wMove) continue;           // 下落中/正被推:物理一致优先
-    if (gameT - (w._wMovedT || -99) < 5) continue;      // 5s 内被推醒过:可能仍在玩家互动域
-    var dxw = w.group.position.x - px, dzw = w.group.position.z - pz;
-    if (dxw * dxw + dzw * dzw < WRECK_SAFE_R2) continue;   // 豁免圈:宁超顶不穿帮(下拍再议)
-    if (retireWreck(w)) retired++;
-  }
-}
-/* P2-WRECK-END */
-
 /* ===== 静态遮挡代理:每残骸烘焙 1 个世界系合并代理,
    替代 8 个命中壳注册进 hitGridStatic——LOS/掩体/弹道/测距宽相位候选 ÷8。
    只产 raycast 数据:不入场景、不渲染、不碰任何视觉几何(规避 D1/D2);
@@ -651,21 +594,26 @@ function detonate(t, attacker) {
   t.lastHitBy = attacker;
   var p = t.group.position.clone(); p.y += 1.8;
   explosion(p, 2.1, { darkN: 26, dustN: 12 });   // 弹药殉爆:最大烟火(文字播报归死亡行"型号+殉爆")
-  killTank(t, '弹药殉爆');
+  killTank(t, 'AMMO DETONATION');
 }
 
-var teamCounts = { ally: 0, enemy: 0 };   // 在场活车增量计数(触发器:createTank 增 / killTank 减 / clearAI 重建;替代 countTeam 全表扫描)
+var teamCounts = { red: 0, blue: 0 };   // 全部在场活车计数(包含战略支援,用于顶部 ACTIVE/战败判定)
+var teamRegularCounts = { red: 0, blue: 0 }; // 不含战略支援的在场计数(最大在场编制门槛)
 function countTeam(team) {
   return teamCounts[team] || 0;
+}
+function countTeamWithinCap(team) {
+  return teamRegularCounts[team] || 0;
 }
 
 /* 死法四类(击杀播报口径):殉爆/燃爆/结构毁坏/弃车——killTank cause 字串归并 */
 function deathWord(cause) {
-  if (!cause) return '结构毁坏';
-  if (cause.indexOf('殉爆') >= 0) return '殉爆';
-  if (cause.indexOf('焚') >= 0 || cause.indexOf('火') >= 0 || cause.indexOf('燃爆') >= 0 || cause.indexOf('坠') >= 0) return '燃爆';
-  if (cause.indexOf('弃车') >= 0) return '弃车';
-  return '结构毁坏';
+  if (!cause) return 'STRUCT KILL';
+  if (cause.indexOf('DETONATION') >= 0) return 'AMMO DETONATION';
+  if (cause.indexOf('AIRSTRIKE') >= 0) return 'AIRSTRIKE';
+  if (cause.indexOf('FIRE') >= 0 || cause.indexOf('BURN') >= 0 || cause.indexOf('CRASH') >= 0) return 'FIRE KILL';
+  if (cause.indexOf('ABANDON') >= 0 || cause.indexOf('BAIL') >= 0) return 'ABANDONED';
+  return 'STRUCT KILL';
 }
 
 /* ===== 空中直升机残骸下落系统(低频/事件驱动,触地自动变回普通地面残骸) ----
@@ -742,22 +690,36 @@ function stepHeliFallingWrecks(dt) {
 }
 function killTank(t, cause) {
   if (!t.alive || t.unitState !== UNIT_ALIVE) return;
+  if (t.lastHitBy && (t.lastHitBy.source === 'airstrike' || t.lastHitBy.source === 'strategic-airstrike') && cause === 'STRUCT KILL') cause = 'AIRSTRIKE KILL';
+  if (typeof minimapNoteDeath === 'function') minimapNoteDeath(t);
   if (t._lws && t._lws.sup) { var _sup = t._lws.sup; if (_sup._lwsSupBy === t) { _sup._laserSuppressed = false; _sup._lwsSupBy = null; } t._lws.sup = null; }   // 压制者死亡=解除压制(所有权校验,防误解除他车叠加照射)
   t._laserSuppressed = false; t._lwsSupBy = null;
   if (t.lastHitBy === player && typeof sfxEventVoice === 'function') sfxEventVoice('target_destroyed');
   var isHeli = isHeliVehicle(t);
-  if (isHeli) cause = '燃爆';
+  // 击毁判定刚成立时先锁定玩家与目标的三维世界位置；后续残骸姿态/直升机坠落处理不得改变记录口径。
+  var _killDist3D = 0;
+  if (t.lastHitBy === player && t !== player && areHostile(player, t)) {
+    try {
+      var _ap0 = player && player.group && player.group.position;
+      var _tp0 = t && t.group && t.group.position;
+      if (_ap0 && _tp0) {
+        var _dx0 = _ap0.x - _tp0.x, _dy0 = _ap0.y - _tp0.y, _dz0 = _ap0.z - _tp0.z;
+        _killDist3D = Math.sqrt(_dx0 * _dx0 + _dy0 * _dy0 + _dz0 * _dz0);
+      }
+    } catch (eKillDist0) {}
+  }
+  if (isHeli) cause = 'FIRE KILL';
   else if (t._heliCrashCause) cause = t._heliCrashCause;
   t.unitState = UNIT_DYING;
   t.alive = false;
   var _ali = aliveList.indexOf(t);       // 活车紧凑表摘除(顺序与 tanks 一致,扫描端语义不变)
   if (_ali >= 0) aliveList.splice(_ali, 1);
   teamCounts[t.team]--;                  // 在场活车增量计数(触发器:阵亡即减)
+  if (!t._strategicSupport) teamRegularCounts[t.team]--;
   hitGridDynamicRemove(t);               // 活车动态命中网格即时剔除(触发器:阵亡即出表,免 0.3s 陈旧幽灵)
   cmdLeave(t);                       // 死亡离组;空组注销
   if (typeof sqCmdNotifyDeath === 'function') sqCmdNotifyDeath(t);   // 指挥模式钩子:玩家阵亡/接管小队全灭→自动退出(事件驱动)
   wreckCount++;
-  t._wreckBornT = gameT;               // ★P2-⑨:残骸诞生时刻(寿命闸;追加序表头=最旧)
   wreckList.push(t);if(typeof wreckSmokeRegister==='function')wreckSmokeRegister(t);   // B2:残骸长驻黑烟柱(事件级注册,上限999柱最旧优先熄灭)
   if (typeof wclBump === 'function') wclBump();   // 新残骸入世=簇缓存失效
   if (typeof comicAntennaWreckDirty === 'function') comicAntennaWreckDirty();   // 残骸天线稳定线重建(事件驱动)
@@ -771,15 +733,22 @@ function killTank(t, cause) {
   t.gDirty = true;                 // 阵亡帧姿态/炮管下垂需要重算一次矩阵
   t._wMove = true;                 // 新残骸首轮障碍/栅栏复查入场券(此后静止即免查,被推再置位)
 
-  // 消耗战:AI 载具被毁 → 按兵种延时在同阵营大本营重新部署;玩家不走队列,
-  // 改为自选翼位+兵种重新部署(玩家那次部署才消耗 1 点兵力,避免双计费);AI 则在左/中/右三翼中随机涌出
-  if (!t.isPlayer) respawnQueue.push({ team: t.team, kind: t.kind,
-    due: gameT + respawnDelayOf(t.kind, t.team) });
+  // 消耗战:普通 AI 载具被毁 → 按兵种延时在同阵营大本营重新部署;玩家不走队列,
+  // 改为自选翼位+兵种重新部署(玩家那次部署才消耗 1 点兵力,避免双计费)。
+  // 战略支援载具是一次性增援,被摧毁后不重新部署;战略运输则只缩短普通 AI 队列。
+  if (!isFfaMode() && !t.isPlayer && !t._strategicSupport) {
+    var _respawnDelay = respawnDelayOf(t.kind, t.team);
+    if (typeof strategicSupportTransportActive === 'function' && strategicSupportTransportActive(t.team)) _respawnDelay *= 0.5;
+    respawnQueue.push({ team: t.team, kind: t.kind, due: gameT + _respawnDelay });
+  }
 
   var p = _v1.set(t.group.position.x, t.group.position.y + (isHeli ? 0.8 : 1.4), t.group.position.z);
+  /* FFA player kill: one random pickup beside the wreck, with the shared 30s/10s blink lifecycle. */
+  if (isFfaMode() && t !== player && t.lastHitBy === player && areHostile(player, t) &&
+      typeof powerupDropAtKill === 'function') powerupDropAtKill(t);
   wreckSparks(p);
   // 直升机坠机/被击毁效果固定为燃爆特效
-  if (isHeli || cause === '火灾焚毁') explosion(p, isHeli ? 1.6 : 1.5, { darkN: 20, dustN: 12 });
+  if (isHeli || cause === 'FIRE KILL') explosion(p, isHeli ? 1.6 : 1.5, { darkN: 20, dustN: 12 });
   t.group.traverse(function (m) {
     if (m.userData && m.userData.visual) {
       m.material = wreckMat;
@@ -816,23 +785,30 @@ function killTank(t, cause) {
   }
 
   var att = t.lastHitBy;
+  // 玩家当前座车造成的敌方击毁才进入本局成就暂存；AI 击杀、友军击杀和接管不计入。
+  if (att === player && t !== player && areHostile(player, t) &&
+      window.Achievements && typeof window.Achievements.noteDestroyed === 'function') {
+    // 使用 killTank 开始处锁定的三维距离；此时目标尚未进入残骸/坠毁姿态处理。
+    window.Achievements.noteDestroyed(t, cause, att, _killDist3D);
+  }
   if (DBG_ON) {
-    dbgStats[t.team].dead++;
-    if (att && att.team && att.team !== t.team) {
-      var kk = att.team + ':' + cause;
+    if (dbgStats[t.team]) dbgStats[t.team].dead++;
+    if (att && areHostile(att, t)) {
+      var _attDbgKey = (att.source === 'airstrike' || att.source === 'strategic-airstrike') ? 'airstrike' : att.team;
+      var kk = _attDbgKey + ':' + cause;
       dbgStats.kills[kk] = (dbgStats.kills[kk] || 0) + 1;
-      dbgStats[att.team].killCredit++;
+      if (dbgStats[_attDbgKey]) dbgStats[_attDbgKey].killCredit++;
     }
   }
   if (t === player) {
-    if (killMsgOn && cause === '主动弃车') addLog('<b>主动弃车</b>', 'fire');   // 玩家主动弃车:击杀播报固定四字
+    if (killMsgOn && cause === 'ABANDONED') addLog('<b>ABANDONED</b>', 'fire');   // 玩家主动弃车:击杀播报固定四字
     playerDied(cause);
     return;
   }
-  if (t.team === eSide()) {                               // 敌方=玩家敌队
+  if (player && areHostile(player, t)) {                 // 团队模式为敌队；个人死斗为所有其他载具
     if (att === player) {
       kills++;
-      hitMarkerAppend('目标摧毁!', 'kill');                           // 接在命中链尾(致死模块命中行之后)
+      hitMarkerAppend('TARGET DESTROYED!', 'kill');                           // 接在命中链尾(致死模块命中行之后)
     }
     if (killMsgOn) addLog('<b>' + vehicleDisplayName(t) + deathWord(cause) + '</b>', att === player ? 'kill' : 'good');   // 击杀播报:型号+死法(玩家击杀=黄标 kill 类)
   } else {
@@ -842,6 +818,10 @@ function killTank(t, cause) {
 }
 
 function playerDied(cause) {
+  // 当前生命段结束；最高纪录已在每次击毁时写入本局暂存，下一次部署/接管会开启新生命段。
+  try {
+    if (window.Achievements && typeof window.Achievements.endLife === 'function') window.Achievements.endLife();
+  } catch (eAchLifeEnd) {}
   if (typeof sfxRwrAlarmStop === 'function') sfxRwrAlarmStop();
   if (typeof sfxRwrToneStop === 'function') sfxRwrToneStop();
   if (typeof sfxEventVoiceStop === 'function') sfxEventVoiceStop();
@@ -852,7 +832,7 @@ function playerDied(cause) {
     player._heliMissileTarget = null;
   }
   if (player && (isHeliVehicle(player) || (typeof isAAVehicle === 'function' && isAAVehicle(player)))) {
-    stopHeliRadarScan(player);   // PGZ-95 车载雷达与直升机火控雷达同套扫描状态机
+    stopHeliRadarScan(player);   // RED_AA 车载雷达与直升机火控雷达同套扫描状态机
   }
   if (typeof sfxHeliDamageVoiceStop === 'function') sfxHeliDamageVoiceStop();
   if (typeof sfxHeliPullupStop === 'function') sfxHeliPullupStop();
@@ -864,6 +844,18 @@ function playerDied(cause) {
   ownVisualsVisible = true;
 
   scopeMode = false;
+  if (isFfaMode()) {
+    // 个人死斗没有接管：有备用载具就延迟后打开同一套重新部署选择菜单；没有则记录淘汰名次。
+    var survivorsAfterDeath = typeof ffaAliveCount === 'function' ? ffaAliveCount() : aliveList.length;
+    if (ffaState.reserves > 0 && survivorsAfterDeath > 0) {
+      respawnT = 3.5;
+    } else {
+      ffaState.playerEliminated = true;
+      ffaState.finalRank = survivorsAfterDeath + 1;
+      if (typeof battleCheck === 'function' && survivorsAfterDeath <= 1) battleCheck();
+    }
+    return;
+  }
   if (teamPool[pSide()] <= 0) {           // 兵力已空:无法重新部署 → 自选一类友军载具接管(实时在场类型)
     showPossessOv();
     return;                               // 若已无可接管者,胜负交由 battleCheck:兵力0+全灭判负
@@ -876,22 +868,24 @@ var possessUiOpen = false, possessRefreshT = 0;
 function vehicleKindName(team, kind) {
   // 通用化:型号名查 VEHICLE_KINDS 注册表(新增型号自动生效;火箭炮保持类名)
   for (var vi = 0; vi < VEHICLE_KINDS.length; vi++)
-    if (VEHICLE_KINDS[vi].kind === kind) return VEHICLE_KINDS[vi].names[team] || VEHICLE_KINDS[vi].names.ally;
-  return '载具';
+    if (VEHICLE_KINDS[vi].kind === kind) return VEHICLE_KINDS[vi].names[team] || VEHICLE_KINDS[vi].names.red;
+  return 'VEHICLE';
 }
 function refreshVehicleChoiceLabels() {                    // 开局/重部署按钮随阵营显示真实平台名,data-k 兼容键不变;
-  var rows = [el.skrow, el.rkindrow];                      // 阵营白名单型号(99=红方专属)在蓝方隐藏按钮,选中态回退坦克
+  var rows = [el.skrow, el.rkindrow];                      // 阵营白名单型号(99=红方专属)在蓝方隐藏按钮; FFA 重部署行由 ffaVehicleOptions 自己过滤
   for (var r = 0; r < rows.length; r++) {
     if (!rows[r] || typeof rows[r].querySelectorAll !== 'function') continue;
     var bs = rows[r].querySelectorAll('button');
     for (var i = 0; i < bs.length; i++) {
       var k = bs[i].getAttribute('data-k');
       if (!k) continue;
-      var allowed = vehicleKindAllowed(pSide(), k);
+      var rowFfa = isFfaMode() && (rows[r] === el.skrow || rows[r] === el.rkindrow);
+      var bTeam = bs[i].getAttribute('data-side') || pSide();
+      var allowed = rowFfa ? true : vehicleKindAllowed(pSide(), k);
       bs[i].style.display = allowed ? '' : 'none';
       if (!allowed && startKind === k && rows[r] === el.skrow) { startKind = 'tank'; markSel(el.skrow, 'data-k', startKind); }
       if (!allowed && respawnSel.kind === k) { respawnSel.kind = 'tank'; markSel(el.rkindrow, 'data-k', respawnSel.kind); }   // 仅回退兵种,翼位是玩家的独立选择
-      bs[i].textContent = vehicleKindName(pSide(), k);
+      bs[i].textContent = vehicleKindName(bTeam, k);
     }
   }
 }
@@ -899,13 +893,22 @@ function possessCandidates(kind) {
   var out = [];
   for (var i = 0; i < aliveList.length; i++) {
     var t = aliveList[i];
-    if (t.team === pSide() && !t.isPlayer && (!kind || t.kind === kind)) out.push(t);
+    /* aliveList is normally pruned by killTank, but keep the live/unit-state
+       checks here as the final gate: a death-frame click must never select a
+       stale wreck or the old player shell. */
+    if (!t || !t.alive || (typeof UNIT_ALIVE !== 'undefined' && t.unitState !== UNIT_ALIVE)) continue;
+    if (t === player || t.team !== pSide() || t.isPlayer || (kind && t.kind !== kind)) continue;
+    out.push(t);
   }
   return out;
 }
 function showPossessOv() {
   if (el.possessov) el.possessov.classList.remove('hidden');
   possessUiOpen = true;
+  /* Re-ensure the row on every death path.  The wrapper UI can move the row
+     into its BIOS window after startup, so the native handler must remain
+     available at the actual open boundary as well. */
+  if (el.posskindrow && !el.posskindrow._possessBound && typeof bindPossessUI === 'function') bindPossessUI();
   // 选车界面立刻放光标直接可点(倒数期光标不锁);复活界面同款
   document.exitPointerLock && document.exitPointerLock();
   updatePossessOv();
@@ -916,14 +919,15 @@ function hidePossessOv() {
 }
 function updatePossessOv() {                 // 实时在场量:tanks 列表为唯一真值源
   if (!el.posskindrow) return;
+  if (!el.posskindrow.querySelectorAll('button').length && typeof bindPossessUI === 'function') bindPossessUI();
   var c = {}, i;
   var all = possessCandidates();
   for (i = 0; i < all.length; i++) c[all[i].kind] = (c[all[i].kind] || 0) + 1;
   var btns = el.posskindrow.querySelectorAll('button');
   for (i = 0; i < btns.length; i++) {
     var k = btns[i].getAttribute('data-k'), n = c[k] || 0;
-    btns[i].style.display = vehicleKindAllowed(pSide(), k) ? '' : 'none';     // 阵营白名单(蓝方无 99式行;开界面/0.25s 节流刷新=事件级)
-    btns[i].textContent = vehicleKindName(pSide(), k) + ' ×' + n;             // 显示型号名(59式/99式/M60A1/PTZ-89/M1A1/火箭炮)+在场数
+    btns[i].style.display = vehicleKindAllowed(pSide(), k) ? '' : 'none';     // 阵营白名单(蓝方无 红方重型坦克行;开界面/0.25s 节流刷新=事件级)
+    btns[i].textContent = vehicleKindName(pSide(), k) + ' ×' + n;             // 显示型号名(红方主战坦克/红方重型坦克/BLUE_MBT_1/RED_TD/BLUE_MBT_2/火箭炮)+在场数
     btns[i].disabled = n === 0;
     if (btns[i].classList && btns[i].classList.toggle) btns[i].classList.toggle('dim', n === 0);
   }
@@ -931,28 +935,43 @@ function updatePossessOv() {                 // 实时在场量:tanks 列表为�
 
 function bindPossessUI() {
   if (!el.posskindrow || typeof el.posskindrow.querySelectorAll !== 'function') return;
+  if (el.posskindrow._possessBound) return;
   var rows = [], ri;                // 接管类型行=VEHICLE_KINDS 注册表全量生成(新增型号自动生效;阵营过滤/在场量刷新见 updatePossessOv)
   for (ri = 0; ri < VEHICLE_KINDS.length; ri++)
-    rows.push({ text: vehicleKindName('ally', VEHICLE_KINDS[ri].kind), attrs: { k: VEHICLE_KINDS[ri].kind } });
+    rows.push({ text: vehicleKindName('red', VEHICLE_KINDS[ri].kind), attrs: { k: VEHICLE_KINDS[ri].kind } });
   bindOptionRow(el.posskindrow, rows, function (b) {
     possessByKind(b.getAttribute('data-k'));
   });
+  el.posskindrow._possessBound = true;
 }
 function possessByKind(kind) {
-  if (!possessUiOpen || gameState !== 'playing' || (player && player.alive)) return;
+  /* The cinematic BIOS wrapper may briefly defer its own open flag while the
+     native button is already clickable.  Trust the death/player state and the
+     live candidate list instead of making the click depend on that animation
+     bookkeeping flag. */
+  var panelVisible = el.possessov && el.possessov.classList && !el.possessov.classList.contains('hidden');
+  if ((!possessUiOpen && !panelVisible) || gameState !== 'playing' || (player && player.alive)) return;
   var cands = possessCandidates(kind);
   if (!cands.length) { updatePossessOv(); return; }        // 该类刚被打光→重刷,不放行空气接管
   if (DBG_ON) dbgStats.possesses = (dbgStats.possesses || 0) + 1;
   var t2 = cands[Math.floor(Math.random() * cands.length)];
-  if (player) { player.isPlayer = false; if (typeof vehInkMarkPlayer === 'function') vehInkMarkPlayer(player, false); }   // 旧座车残骸留在战场上
+  if (!t2 || !t2.alive || (typeof UNIT_ALIVE !== 'undefined' && t2.unitState !== UNIT_ALIVE)) { updatePossessOv(); return; }
+  if (player) {
+    player.isPlayer = false;
+    if (typeof vehicleTechApplyToTank === 'function') vehicleTechApplyToTank(player);  // 立刻还原基础字段，避免旧玩家科技泄漏给 AI
+    if (typeof vehInkMarkPlayer === 'function') vehInkMarkPlayer(player, false);
+  }   // 旧座车残骸留在战场上
   player = t2;
   cmdLeave(t2);                      // 被接管车脱离 AI 指挥编组
   t2.isPlayer = true;
+  if (typeof vehicleTechApplyToTank === 'function') vehicleTechApplyToTank(t2);
+  // 接管开启新的生命段，但不计入出击次数。
+  if (window.Achievements && typeof window.Achievements.beginLife === 'function') window.Achievements.beginLife(t2);
   if (typeof vehInkMarkPlayer === 'function') vehInkMarkPlayer(t2, true);
   t2._hullAim = turretMult(t2) <= 0.001;   // 接管瞬间一次性检测炮塔状态(车体瞄准旗标;此后不再检测)
   abandonCancel(t2);                 // 被接管:取消弃车观察(防倒数误杀新座车)
   playerEquipSync();                 // 接管边沿:座车设备缓存+越权关断+触控键显隐
-  t2.name = '你';
+  t2.name = 'YOU';
   /* 接管实例化——AI 车视觉网格是 _instSrc 隐藏源(实例流代显);
      接管后实例流跳过玩家,个体网格必须还原为常规可见网格,否则=隐形车(命中壳/阴影仍在而车身不可见)。
      还原后 setTankVisuals(开镜自隐)旧显隐链原样接管。 */
@@ -964,7 +983,7 @@ function possessByKind(kind) {
   /* 接管履带动画——AI 车 hull 个体网格材质是 vehBodyMat(无履带 shader),_hullMat 未挂;
      接管后 trackAnimUpdate 走玩家 uniform 链(需 _hullMat.userData.hullUniforms),须换 vehHullMatPlayer 并挂 _hullMat,
      与 redeployPlayer 新车链路(isP=true → vehHullMatPlayer+_hullMat)对齐;否则玩家/AI 双履带链全断=履带静止。
-     仅坦克/td:arty 模板 hull 无 aTrack/aTrackSide 属性(视觉无 vTreadRing 部件),换材质会导致 shader attribute 缺失异常。 */
+     仅坦克/td:arty 模板 hull 无 aTrack/aTrackSide 属性，换材质会导致 shader attribute 缺失异常。 */
   if (t2.kind !== 'arty' && t2._instSrcs && t2._instSrcs[0]) {
     t2._instSrcs[0].material = vehHullMatPlayer;
     t2._hullMat = vehHullMatPlayer;
@@ -1030,7 +1049,7 @@ function possessByKind(kind) {
   snapCamera();
   hidePossessOv();
   attemptLock();                             // 接管成功自动收回光标(点击手势内必成)
-  if (killMsgOn) addLog('<b>接管友军</b>', 'good');   // 状态播报仅走击杀信息行,固定四字
+  if (killMsgOn) addLog('<b>TOOK OVER ' + (pSide() === 'red' ? 'RED' : 'BLUE') + '</b>', 'good');   // 状态播报仅走击杀信息行,按玩家阵营显色名
   hudTick = 0;
 }
 
@@ -1046,15 +1065,56 @@ function snapCamera() {
 /* ===== 玩家重新部署:自选载具 + 自选翼位 ----
    载具型号经 hqTypeOfKind() 自动对应到该兵种的大本营(定纵深),玩家只需在左翼/中央/右翼中选一个(定横向)。
    与 AI redeploy 等效:部署时消耗 1 点同阵营兵力;兵力为 0 则无法复活 ===== */
-var respawnSel = { wing: HQ_WING_CENTER, kind: 'tank' };
+var respawnSel = { wing: HQ_WING_CENTER, kind: 'td', team: startSide };
 var respawnUiOpen = false, respawnUiT = 0;
-var startKind = 'tank';                                 // 开局选择的载具(遭遇战参数三选一)
-/* ===== 主菜单选边:红方=ally(59 式涂装美术)/蓝方=enemy(M1A1 楔塔美术) ===== */
-var startSide = 'ally';                                 // 玩家阵营(遭遇战参数二选一,默认红方)
+var startKind = 'td';                                 // 开局选择的载具(默认 BLUE-MBT-2)
+/* ===== 主菜单选边:红方=red(59 式涂装美术)/蓝方=blue(BLUE_MBT_2 楔塔美术) ===== */
+var startSide = 'blue';                                // 玩家阵营(遭遇战参数二选一,默认蓝方)
 function pSide() { return startSide; }                   // 玩家队(team 字符串)
-function eSide() { return startSide === 'ally' ? 'enemy' : 'ally'; }   // 玩家敌队
+function oSide() { return startSide === 'red' ? 'blue' : 'red'; }   // 玩家敌队
 var spawnFlip = 1;                                       // 本局半场翻转(spawnTeams 落位时写入;AI 回防方向等读取)
+function redeployFreeForAll() {
+  if (gameState !== 'playing' || !isFfaMode() || ffaState.reserves <= 0) return;
+  if (player && player.alive) return;
+  var opts = typeof ffaCurrentVehicleOptions === 'function' ? ffaCurrentVehicleOptions() : [];
+  var chosen = null;
+  for (var oi = 0; oi < opts.length; oi++) {
+    if (opts[oi].kind === respawnSel.kind && opts[oi].team === respawnSel.team) { chosen = opts[oi]; break; }
+  }
+  if (!chosen) chosen = opts.length ? opts[0] : { team: 'red', kind: 'tank' };
+  var team = chosen.team;
+  var kind = chosen.kind;
+  respawnSel.kind = kind;
+  respawnSel.team = team;
+  var spot = typeof ffaSpawnSpot === 'function' ? ffaSpawnSpot(true) : { x: 0, z: 0 };
+  ffaState.reserves--;
+  playerRespawns++;
+  if (player) {
+    player.isPlayer = false;
+    if (typeof vehicleTechApplyToTank === 'function') vehicleTechApplyToTank(player);
+  }
+  var opt = { isPlayer: true, team: team, x: spot.x, z: spot.z, yaw: rand(-Math.PI, Math.PI), name: 'YOU' };
+  if (kind !== 'tank') opt.kind = kind;
+  var nt = createTank(opt);
+  player = nt;
+  startSide = team; startKind = kind;
+  if (nt) {
+    nt.reload = 0; nt._heliMissileTarget = null; nt._prevLockedKeys = {};
+    nt._ffaSpawnInvulUntil = gameT + 3;
+    if ((isHeliVehicle(nt) || (typeof isAAVehicle === 'function' && isAAVehicle(nt))) && nt._heliWeapon == null) nt._heliWeapon = 3;
+    if (window.Achievements && typeof window.Achievements.noteDeployment === 'function') window.Achievements.noteDeployment(nt);
+    playerEquipSync();
+    player.turretYawDelta = 0; aimPX = innerWidth * 0.5; aimPY = innerHeight * 0.5; aimChaseOn = true;
+    camAimY = nt.yaw + nt.turretYaw; camAimP = nt.gunPitch;
+  }
+  rebuildTargets();
+  scopeMode = false; scopeT = 0; ownVisualsVisible = true;
+  snapCamera(); hideRespawnUI(); attemptLock();
+  if (killMsgOn) addLog('<b>REDEPLOYED</b>', 'good');
+  hudTick = 0;
+}
 function redeployPlayer() {
+  if (isFfaMode()) { redeployFreeForAll(); return; }
   if (gameState !== 'playing' || teamPool[pSide()] <= 0) return;      // 兵力/大本营/载具全按玩家队
   if (player && player.alive) return;              // 防双击重复部署/双扣兵力
   var hq = hqFind(pSide(), respawnSel.kind, respawnSel.wing);   // 载具型号定兵种基地,玩家所选翼位定左/中/右
@@ -1063,11 +1123,18 @@ function redeployPlayer() {
   teamPool[pSide()]--;                                 // 玩家这次重新部署消耗 1 点兵力
   playerRespawns++;
   var yaw = hq.yaw + rand(-0.1, 0.1);
-  if (player) { player.isPlayer = false; }             // 旧座车残骸留在战场上(不参与移除)
-  var opt = { isPlayer: true, team: pSide(), x: spot.x, z: spot.z, yaw: yaw, name: '你' };
+  if (player) {
+    player.isPlayer = false;
+    if (typeof vehicleTechApplyToTank === 'function') vehicleTechApplyToTank(player);
+  }             // 旧座车残骸留在战场上(不参与移除)
+  var opt = { isPlayer: true, team: pSide(), x: spot.x, z: spot.z, yaw: yaw, name: 'YOU' };
   var nt;
   if (respawnSel.kind !== 'tank') opt.kind = respawnSel.kind; nt=createTank(opt);
   player = nt;
+  // 仅正常重新部署计入出击；接管友军走 possessByKind，不调用此记账入口。
+  if (nt && window.Achievements && typeof window.Achievements.noteDeployment === 'function') {
+    window.Achievements.noteDeployment(nt);
+  }
   if (nt) {
     nt._heliMissileTarget = null;
     nt._prevLockedKeys = {};
@@ -1086,7 +1153,7 @@ function redeployPlayer() {
   snapCamera();
   hideRespawnUI();
   attemptLock();                                 // 重新部署后立刻收回鼠标
-  if (killMsgOn) addLog('<b>重新部署</b>', 'good');   // 状态播报仅走击杀信息行,固定四字
+  if (killMsgOn) addLog('<b>REDEPLOYED</b>', 'good');   // 状态播报仅走击杀信息行,固定四字
   hudTick = 0;
 }
 /* ============================================================
@@ -1125,11 +1192,11 @@ var nightCombatOn = false;                             // 夜战全局量(applyT
 function hourLabel(h) {                                  // "8.5" → "08:30 (白昼)"(菜单时间显示)
   var hh = Math.floor(h), mm = Math.round((h - hh) * 60);
   var timeStr = (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
-  var tag = ' (白昼)';
-  if (h >= 5 && h < 7) tag = ' (清晨)';
-  else if (h >= 7 && h < 17) tag = ' (白昼)';
-  else if (h >= 17 && h < 19.5) tag = ' (黄昏)';
-  else tag = ' (夜战)';
+  var tag = ' (Day)';
+  if (h >= 5 && h < 7) tag = ' (Dawn)';
+  else if (h >= 7 && h < 17) tag = ' (Day)';
+  else if (h >= 17 && h < 19.5) tag = ' (Dusk)';
+  else tag = ' (Night)';
   return timeStr + tag;
 }
 var _sunV = new THREE.Vector3();
@@ -1224,7 +1291,7 @@ function buildSunDisc() {
   var tex = null;
   try { tex = buildSunTexture(); } catch (e) { tex = null; }
   sunDisc = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: tex, color: 0xfff8e6, transparent: true, opacity: 1, depthWrite: false, fog: false }));
+    map: tex, color: 0xfff8e6, transparent: true, opacity: 1, depthTest: true, depthWrite: false, fog: false }));
   var w = SUN_CORE_DIA / SUN_TEX_CORE;                     // 整板(含晕)~80m;硬核严格保持真实 0.53°
   sunDisc.scale.set(w, w, 1);
   sunDisc.frustumCulled = false;             // 炮镜窄视锥(28°~5.6°)边缘 pop 根治(与云同策略;视锥外仅 4 顶点零片元)
@@ -1288,13 +1355,14 @@ function buildMoonDisc() {
   var tex = null;
   try { tex = buildMoonTexture(); } catch (e) { tex = null; }
   moonDisc = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: tex, color: 0xffffff, transparent: true, opacity: 1, depthWrite: false, fog: false }));
+    map: tex, color: 0xffffff, transparent: true, opacity: 1, depthTest: true, depthWrite: false, fog: false }));
   var w = MOON_CORE_DIA / MOON_TEX_CORE * 3.6;             // 放大 3.6×(≈2.6° 视径,醒目);月盘纹理不变
   moonDisc.scale.set(w, w, 1);
-  // 月亮被夜色云幕(150~235m 半透明sprite,透明排序在月前绘制)整体遮住=看不见根因;
-  //   renderOrder 提高+depthTest 关 → 月亮恒绘于云幕之上(近天顶位置,不与地平山线冲突)
+  // Keep the moon above the transparent cloud pass, but retain the depth test:
+  // terrain writes the depth buffer and can now occlude the disc without changing
+  // the existing cloud/sky ordering.
   moonDisc.renderOrder = 10;
-  moonDisc.material.depthTest = false;
+  moonDisc.material.depthTest = true;
   moonDisc.frustumCulled = false;            // 炮镜窄视锥边缘 pop 根治(与云/日同策略)
   moonDisc.visible = isNightOf(8);       // 初始按默认 8 点(白天);applyTimeOfDay 开局按所选小时重设
   scene.add(moonDisc);
@@ -1303,7 +1371,7 @@ function buildMoonDisc() {
   var gt = null; try { gt = buildMoonGlowTexture(); } catch (e) { gt = null; }
   moonGlow = new THREE.Sprite(new THREE.SpriteMaterial({
     map: gt, color: 0xbfd2f5, transparent: true, opacity: 0.9,
-    blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, fog: false }));
+    blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true, fog: false }));
   moonGlow.scale.set(w * 5.5, w * 5.5, 1);              // 软晕≈月盘 5.5 倍(约 14° 视径)
   moonGlow.renderOrder = 9;
   moonGlow.frustumCulled = false;            // 炮镜窄视锥边缘 pop 根治(与云/日同策略)
@@ -1371,17 +1439,40 @@ function buildStars() {
   starTrack();
 }
 function starTrack() { for (var i = 0; i < starField.length; i++) if (camera) starField[i].position.copy(camera.position); }
+var _moonV = new THREE.Vector3();
+var _celestialEye = new THREE.Vector3(), _celestialObj = new THREE.Vector3();
+function celestialTerrainClear(obj) {
+  if (!camera || !obj || typeof terrainH !== 'function') return true;
+  _celestialEye.copy(camera.position);
+  _celestialObj.copy(obj);
+  var dx = _celestialObj.x - _celestialEye.x, dy = _celestialObj.y - _celestialEye.y, dz = _celestialObj.z - _celestialEye.z;
+  var len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  if (!(len > 1)) return true;
+  /* A center-ray fallback complements the GPU depth test.  It is important at low
+     elevation: a camera-facing sprite can otherwise remain visible when a narrow
+     ridge is the only depth sample in front of its center. */
+  for (var i = 1; i < 18; i++) {
+    var f = i / 18;
+    var x = _celestialEye.x + dx * f, z = _celestialEye.z + dz * f;
+    var y = _celestialEye.y + dy * f;
+    var th = terrainH(x, z);
+    if (isFinite(th) && th > y - 0.35) return false;
+  }
+  return true;
+}
 function sunTrack() {                                      // 逐帧:太阳钉在「镜头位置 + 光照方位 × 1900m」(远山脊线可天然遮挡落日)
   if (!sunDisc || !camera) return;
   _sunV.copy(sunOffset).multiplyScalar(SUN_DIST).add(camera.position);   // 光照方向唯一来源=sunOffset(不再经 position 反推)
   sunDisc.position.copy(_sunV);
+  sunDisc.visible = sunElev(timeHour) > 0 && celestialTerrainClear(_sunV);
 }
-var _moonV = new THREE.Vector3();
 function moonTrack() {                                     // 月亮钉在「镜头位置 + 太阳对跖方向 × 1900m」(随小时旋转;与 sunTrack 同机理)
   if (!moonDisc || !camera) return;
   _moonV.copy(sunOffset).multiplyScalar(-1).normalize().multiplyScalar(MOON_DIST).add(camera.position);
   moonDisc.position.copy(_moonV);
-  if (moonGlow) moonGlow.position.copy(_moonV);
+  var moonVisible = -sunElev(timeHour) > 0.02 && celestialTerrainClear(_moonV);
+  moonDisc.visible = moonVisible;
+  if (moonGlow) { moonGlow.position.copy(_moonV); moonGlow.visible = moonVisible; }
   starTrack();                                             // 星空随相机平移(天球无透视视差)
 }
 /* ===== 夜视仪(NVD)——车灯只保留零光源 MeshBasic 灯罩,不提供照地/反射/泛光;NVD仍负责黑夜远距离观察 ——
@@ -1460,11 +1551,12 @@ var THERM = { hemiI: 1.25, sunI: 0.10, bg: 0x0a0a0a, fog: 0x121212,
               ground: 0x9c9c9c, hill: 0x303030, veh: 1.32, wreck: 0x3d3d3d, glow: 0x8f8f8f,
               cloud: 0x161616, moon: 0x1f1f1f, shell: 0xb8b8b8 };
 var thermalOn = false, thermalWas = false, thermalSaved = null;
-function thermalActive() { return thermalOn && playerHasTH && player && player.alive; }   // 任意视角生效;设备门=座车装备缓存(99式/M1A1)
+function thermalActive() { return thermalOn && playerHasTH && player && player.alive; }   // 任意视角生效;设备门=座车装备缓存(红方重型坦克/BLUE_MBT_2)
 function thermalSync() {
   var a = thermalActive();
   if (a === thermalWas) return;
   thermalWas = a;
+  if (typeof powerupThermalSync === 'function') powerupThermalSync(a, THERM.ground);
   var ci;
   if (a) {
     if (nvOn) { nvOn = false; nvSync(); }                              // 与夜视仪互斥(先复原像管再入热像)
@@ -1513,12 +1605,13 @@ function thermalSync() {
   if (typeof comicSetThermal === 'function') comicSetThermal(thermalWas ? 1 : 0);
 }
 /* ===== 座车夜战设备缓存(部署/接管边沿一次,禁逐帧检测):
-   夜视仪=59式外全员;热成像=99式/M1A1(vehicleHasNV/TH 设备表,core.js)。
+   夜视仪=基础坦克外全员;热成像=高阶主战坦克(vehicleHasNV/TH 设备表,core.js)。
    换乘无设备车时越权状态即时关断;触控键显隐同步(自定义编辑器内 custShow 全权接管,始终全量显示)。 ===== */
 var playerHasNV = true, playerHasTH = true;
 function playerEquipSync() {
   playerHasNV = !!(player && vehicleHasNV(player.kind, player.team));
   playerHasTH = !!(player && vehicleHasTH(player.kind, player.team));
+  if (player && typeof vehicleTechThermalImagingInstalled === 'function') playerHasTH = playerHasTH || vehicleTechThermalImagingInstalled(player);
   if (!playerHasNV && nvOn) { nvOn = false; nvSync(); }
   if (!playerHasTH && thermalOn) { thermalOn = false; thermalSync(); }
   if (typeof window !== 'undefined' && window._touchUISync) window._touchUISync();   // 观瞄设备可用性变化 → 触控键即时随动
@@ -1592,27 +1685,89 @@ function applyTimeOfDay(h) {
 }
 /* 时间拖动条(遭遇战参数):小时 0~24,默认 8 点(清晨);拖动实时重放光照(菜单背景即时预览) */
 var startHour = 8;
+
+/*
+   Quick TO BATTLE defaults use finite, truncated normal distributions rather than
+   a flat random draw.  Sigma is solved numerically against the existing UI step
+   bins so the requested output bands contain the configured probability: roughness
+   [-25,+25] within [-100,+100] keeps 1/2, while clock [07:00,14:00] within
+   [00:00,24:00] uses 3/4.  The displayed intervals do not change.
+   Rejection keeps every generated value inside the control range, while the normal
+   density still favors the center of each range.
+*/
+function _quickErf(x) {
+  var sign = x < 0 ? -1 : 1, a = Math.abs(x), t = 1 / (1 + 0.3275911 * a);
+  var y = 1 - (((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t) * Math.exp(-a * a);
+  return sign * y;
+}
+function _quickNormalCdf(x, mean, sigma) {
+  return 0.5 * (1 + _quickErf((x - mean) / (Math.SQRT2 * sigma)));
+}
+function _quickTruncMass(min, max, innerMin, innerMax, mean, sigma) {
+  var den = _quickNormalCdf(max, mean, sigma) - _quickNormalCdf(min, mean, sigma);
+  var num = _quickNormalCdf(innerMax, mean, sigma) - _quickNormalCdf(innerMin, mean, sigma);
+  return den > 0 ? num / den : 0;
+}
+function _quickSolveSigma(min, max, innerMin, innerMax, mean, targetMass) {
+  targetMass = targetMass == null ? 0.5 : targetMass;
+  var lo = 0.001, hi = Math.max(1, max - min);
+  /* At a broad sigma the band mass is below targetMass; widen hi if needed. */
+  while (_quickTruncMass(min, max, innerMin, innerMax, mean, hi) > targetMass && hi < 1e6) hi *= 2;
+  for (var i = 0; i < 64; i++) {
+    var mid = (lo + hi) * 0.5;
+    if (_quickTruncMass(min, max, innerMin, innerMax, mean, mid) > targetMass) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) * 0.5;
+}
+function _quickGaussian() {
+  var u = Math.max(1e-12, Math.random()), v = Math.max(1e-12, Math.random());
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(Math.PI * 2 * v);
+}
+function _quickTruncatedNormal(min, max, mean, sigma) {
+  for (var i = 0; i < 256; i++) {
+    var x = mean + sigma * _quickGaussian();
+    if (x >= min && x <= max) return x;
+  }
+  return Math.max(min, Math.min(max, mean));
+}
+/* Half-step bin edges make the probability guarantees apply to the values actually
+   sent to the range controls (roughness step=1, clock step=0.5 hour). */
+var QUICK_ROUGH_SIGMA = _quickSolveSigma(-100, 100, -25.5, 25.5, 0, 0.5);
+var QUICK_HOUR_SIGMA = _quickSolveSigma(0, 24, 6.75, 14.25, 10.5, 0.75);
+function randomizeQuickBattleDefaults() {
+  startRough = clamp(Math.round(_quickTruncatedNormal(-100, 100, 0, QUICK_ROUGH_SIGMA)), -100, 100);
+  startHour = clamp(Math.round(_quickTruncatedNormal(0, 24, 10.5, QUICK_HOUR_SIGMA) * 2) / 2, 0, 24);
+  if (typeof el !== 'undefined' && el) {
+    if (el.roughinput) el.roughinput.value = startRough;
+    if (el.roughval) el.roughval.textContent = startRough > 0 ? '+' + startRough : String(startRough);
+    if (el.hourinput) el.hourinput.value = startHour;
+    if (el.hourval) el.hourval.textContent = hourLabel(startHour);
+  }
+  return { rough: startRough, hour: startHour };
+}
 function bindStartHourUI() {
   if (!el.hourinput) return;
   el.hourinput.value = startHour;
-  function syncHour() {
+  function syncHour(persist) {
     var hv = +el.hourinput.value;
     startHour = clamp(isFinite(hv) ? Math.round(hv * 2) / 2 : 8, 0, 24);
     el.hourinput.value = startHour;
     if (el.hourval) el.hourval.textContent = hourLabel(startHour);
     if (typeof applyTimeOfDay === 'function') applyTimeOfDay(startHour);   // 实时预览太阳/月亮/光照与阴影
+    if (persist && typeof saveCustomBattleSettings === 'function') saveCustomBattleSettings();
   }
-  el.hourinput.addEventListener('input', syncHour);
-  el.hourinput.addEventListener('change', syncHour);
-  syncHour();
+  el.hourinput.addEventListener('input', function () { syncHour(true); });
+  el.hourinput.addEventListener('change', function () { syncHour(true); });
+  syncHour(false);
 }
 
 /* 地图参数(遭遇战参数):
-   材质两选一(草地/沃土,纯视觉,不改地形);
+   材质保留 grass 默认值供旧存档和地形接口兼容，菜单不再暴露材质切换;
    种子=6 位随机(不再手输:点开"遭遇战"按钮时重新随机,见 buildMenuButtons;
    同种子+同参数 → 地形逐位可复现);
    崎岖度 -100~+100(0=平坦;+100=连绵山地≈+26m;-100=盆地≈-26m);
-   边长默认 12000m(用户可改)。地形=种子+崎岖度+边长。
+   团队死斗默认边长 6000m，个人死斗默认边长 3500m(均可在团队参数面板自定义)。地形=种子+崎岖度+边长。
    三兵种大本营(坦克/炮兵/直升机)距地图中心默认 1000/3000/6000m,上限=边长一半(落位再贴进活动边界 15m);
    此处配的是纵深 z,同兵种的左/中/右三座基地共用该纵深,横向按战线三等分铺开(见 spawnTeams)。 */
 var startMat = 'grass';
@@ -1620,102 +1775,334 @@ function randomSeed() { return String(100000 + Math.floor(Math.random() * 900000
 var startSeed = randomSeed();   // 初始随机;点开"遭遇战"按钮时重新随机
 var startRough = 25;
 var startMatchTime = 15;        // 对局时间(分钟;默认15分钟)
-var startMapLen = 6000;         // 战场长(m;南北/纵深/Z方向)★默认尺寸 12000→6000
-var startMapWid = 6000;         // 战场宽(m;东西/横向/X方向)★默认尺寸 12000→6000(与长相等→正方形)
-var startMapSize = 12000;       // 兼容旧口径
-var startBaseDist = { tank: 500, arty: 1500, heli: 3000, aa: 900 };    // 三兵种大本营纵深(同兵种三翼共用;遭遇战地图卡可改,spawnTeams 落位消费)
-/* ★默认地图尺寸改为 6000 后同步折半(上限=长/2=3000);syncBaseDist 亦会按 ratio 折算输入框 */
-function bindStartMatUI() {
+var startMapLen = isFfaMode() ? FFA_DEFAULT_MAP_SIZE : 6000;  // 团队死斗默认6000m；个人死斗默认3500m
+var startMapWid = isFfaMode() ? FFA_DEFAULT_MAP_SIZE : 6000;
+var startMapSize = isFfaMode() ? FFA_DEFAULT_MAP_SIZE : 6000;   // 兼容旧口径
+var startBaseDist = { tank: 500, arty: 1500, heli: 3000, aa: 900 };
+
+/* ===== 自定义战斗配置持久化 =====
+   The quick TO BATTLE path deliberately does not write this snapshot.  Its random
+   clock/roughness and hangar selection are temporary match inputs; DEPLOY restores
+   this independent record before rebuilding the custom menu. */
+/* Do not include the word "custom" in this key: the legacy garage-cache
+   cleanup intentionally removes old keys containing that substring. */
+var CUSTOM_BATTLE_STORAGE_KEY = 'armoredCorps.battleSettings.v1';
+function _customBattleOwn(o, k) { return !!o && Object.prototype.hasOwnProperty.call(o, k); }
+function _customBattleNumber(v, fallback, min, max, integer) {
+  var n = +v;
+  if (!isFinite(n)) n = fallback;
+  if (integer) n = Math.round(n);
+  if (min != null) n = Math.max(min, n);
+  if (max != null) n = Math.min(max, n);
+  return n;
+}
+function _customBattleVehicleKindValid(k) {
+  if (typeof VEHICLE_KINDS === 'undefined' || !VEHICLE_KINDS) return false;
+  for (var i = 0; i < VEHICLE_KINDS.length; i++) if (VEHICLE_KINDS[i].kind === k) return true;
+  return false;
+}
+function _customBattleRosterSnapshot(S) {
+  var out = {}, src = S && S.roster ? S.roster : {};
+  if (typeof VEHICLE_KINDS !== 'undefined' && VEHICLE_KINDS) {
+    for (var i = 0; i < VEHICLE_KINDS.length; i++) {
+      var k = VEHICLE_KINDS[i].kind;
+      out[k] = _customBattleNumber(src[k], 0, 0, 2000, true);
+    }
+  } else {
+    for (var key in src) if (_customBattleOwn(src, key)) out[key] = _customBattleNumber(src[key], 0, 0, 2000, true);
+  }
+  return out;
+}
+function _customBattleRestoreRoster(S, saved) {
+  if (!S || !saved || typeof saved !== 'object') return;
+  if (_customBattleOwn(saved, 'pool')) S.pool = _customBattleNumber(saved.pool, S.pool || 0, 0, 2000, true);
+  if (_customBattleOwn(saved, 'cap')) S.cap = _customBattleNumber(saved.cap, S.cap || 0, 0, 2000, true);
+  if (saved.roster && typeof saved.roster === 'object') {
+    for (var i = 0; i < VEHICLE_KINDS.length; i++) {
+      var k = VEHICLE_KINDS[i].kind;
+      if (_customBattleOwn(saved.roster, k)) S.roster[k] = _customBattleNumber(saved.roster[k], S.roster[k] || 0, 0, 2000, true);
+    }
+  }
+  /* bindStartSetupUI creates a fresh baseline from this restored roster. */
+  S.rosterBase = {};
+}
+function saveCustomBattleSettings() {
+  if (typeof window === 'undefined' || !window.localStorage) return false;
+  var data = {
+    version: 2,
+    mode: currentGameMode === GAME_MODE_FFA ? GAME_MODE_FFA : GAME_MODE_TEAM,
+    side: startSide === 'red' ? 'red' : 'blue',
+    kind: startKind,
+    material: startMat === 'soil' ? 'soil' : 'grass',
+    roughness: _customBattleNumber(startRough, 25, -100, 100, true),
+    hour: _customBattleNumber(startHour, 8, 0, 24, false),
+    matchTime: _customBattleNumber(startMatchTime, 15, 1, 60, true),
+    map: {
+      length: _customBattleNumber(startMapLen, isFfaMode() ? FFA_DEFAULT_MAP_SIZE : 6000, 100, 100000, true),
+      width: _customBattleNumber(startMapWid, isFfaMode() ? FFA_DEFAULT_MAP_SIZE : 6000, 100, 100000, true)
+    },
+    baseDistance: {
+      tank: _customBattleNumber(startBaseDist.tank, 500, 0, 100000, true),
+      arty: _customBattleNumber(startBaseDist.arty, 1500, 0, 100000, true),
+      heli: _customBattleNumber(startBaseDist.heli, 3000, 0, 100000, true),
+      aa: _customBattleNumber(startBaseDist.aa, 900, 0, 100000, true)
+    },
+    ffa: {
+      vehicleCount: _customBattleNumber(FFA_SETUP.vehicleCount, 100, 2, 200, true),
+      playerReserves: _customBattleNumber(FFA_SETUP.playerReserves, 3, 0, 50, true),
+      heliEnabled: !!FFA_SETUP.heliEnabled,
+      powerupMultiplier: _customBattleNumber(FFA_SETUP.powerupMultiplier, FFA_DEFAULT_POWERUP_MULTIPLIER, 0, 4, false)
+    },
+    tdm: {
+      controlZones: tdmControlZonesEnabled !== false,
+      red: { pool: _customBattleNumber(BATTLE_SETUP.red.pool, CONF.startPool, 0, 2000, true),
+        cap: _customBattleNumber(BATTLE_SETUP.red.cap, defaultCap('red'), 0, 2000, true), roster: _customBattleRosterSnapshot(BATTLE_SETUP.red) },
+      blue: { pool: _customBattleNumber(BATTLE_SETUP.blue.pool, CONF.startPool, 0, 2000, true),
+        cap: _customBattleNumber(BATTLE_SETUP.blue.cap, defaultCap('blue'), 0, 2000, true), roster: _customBattleRosterSnapshot(BATTLE_SETUP.blue) }
+    }
+  };
+  try {
+    window.localStorage.setItem(CUSTOM_BATTLE_STORAGE_KEY, JSON.stringify(data));
+    return true;
+  } catch (e) { return false; }
+}
+function refreshCustomBattleControls() {
+  if (typeof el === 'undefined' || !el) return;
+  if (el.timeinput) { el.timeinput.value = startMatchTime; if (el.timeval) el.timeval.textContent = startMatchTime + ' min'; }
+  if (el.roughinput) { el.roughinput.value = startRough; if (el.roughval) el.roughval.textContent = startRough > 0 ? '+' + startRough : String(startRough); }
+  if (el.hourinput) { el.hourinput.value = startHour; if (el.hourval) el.hourval.textContent = hourLabel(startHour); }
+  if (typeof applyTimeOfDay === 'function') applyTimeOfDay(startHour);
+  if (el.leninput) el.leninput.value = startMapLen;
+  if (el.widinput) el.widinput.value = startMapWid;
+  if (el.sizeinput) el.sizeinput.value = startMapLen;
+  if (el.bdinput_tank) el.bdinput_tank.value = startBaseDist.tank;
+  if (el.bdinput_arty) el.bdinput_arty.value = startBaseDist.arty;
+  if (el.bdinput_heli) el.bdinput_heli.value = startBaseDist.heli;
+  if (el.siderow) markSel(el.siderow, 'data-side', startSide);
+  if (el.skrow) markSel(el.skrow, 'data-k', startKind);
+  refreshStartControlZonesUI();
+}
+function refreshCustomBattlePanel() {
+  /* This is the single post-restore sync point for the custom battle panel.
+     Keep it after all dynamic rows are rebuilt; the static sliders are updated
+     here, while bindStartSetupUI creates the roster controls from BATTLE_SETUP. */
+  refreshCustomBattleControls();
+  if (typeof refreshVehicleChoiceLabels === 'function') refreshVehicleChoiceLabels();
+  if (el && el.siderow) markSel(el.siderow, 'data-side', startSide);
+  if (el && el.skrow) {
+    markSel(el.skrow, 'data-k', startKind);
+    if (isFfaMode()) {
+      var _customKindButtons = el.skrow.querySelectorAll('button');
+      for (var _customKindI = 0; _customKindI < _customKindButtons.length; _customKindI++) {
+        _customKindButtons[_customKindI].classList.toggle('sel',
+          _customKindButtons[_customKindI].getAttribute('data-k') === startKind &&
+          _customKindButtons[_customKindI].getAttribute('data-side') === startSide);
+      }
+    }
+  }
+  if (typeof refreshGameModeUI === 'function') refreshGameModeUI();
+  if (typeof refreshStartControlZonesUI === 'function') refreshStartControlZonesUI();
+}
+function loadCustomBattleSettings(applyMode) {
+  if (typeof window === 'undefined' || !window.localStorage) return false;
+  var raw = null, data = null;
+  try { raw = window.localStorage.getItem(CUSTOM_BATTLE_STORAGE_KEY); data = raw ? JSON.parse(raw) : null; } catch (e) { data = null; }
+  if (!data || typeof data !== 'object') return false;
+
+  if (data.mode === GAME_MODE_FFA || data.mode === GAME_MODE_TEAM) {
+    if (applyMode) currentGameMode = data.mode;
+  }
+  if (data.side === 'red' || data.side === 'blue') startSide = data.side;
+  if (_customBattleVehicleKindValid(data.kind)) startKind = data.kind;
+  if (data.material === 'grass' || data.material === 'soil') startMat = data.material;
+  startRough = _customBattleNumber(data.roughness, startRough, -100, 100, true);
+  startHour = Math.round(_customBattleNumber(data.hour, startHour, 0, 24, false) * 2) / 2;
+  startMatchTime = _customBattleNumber(data.matchTime, startMatchTime, 1, 60, true);
+  if (data.map && typeof data.map === 'object') {
+    startMapLen = _customBattleNumber(data.map.length, startMapLen, 100, 100000, true);
+    startMapWid = _customBattleNumber(data.map.width, startMapWid, 100, 100000, true);
+    startMapSize = Math.max(startMapLen, startMapWid);
+  }
+  if (data.baseDistance && typeof data.baseDistance === 'object') {
+    startBaseDist.tank = _customBattleNumber(data.baseDistance.tank, startBaseDist.tank, 0, 100000, true);
+    startBaseDist.arty = _customBattleNumber(data.baseDistance.arty, startBaseDist.arty, 0, 100000, true);
+    startBaseDist.heli = _customBattleNumber(data.baseDistance.heli, startBaseDist.heli, 0, 100000, true);
+    startBaseDist.aa = _customBattleNumber(data.baseDistance.aa, startBaseDist.aa, 0, 100000, true);
+  }
+  if (data.ffa && typeof data.ffa === 'object') {
+    FFA_SETUP.vehicleCount = _customBattleNumber(data.ffa.vehicleCount, FFA_SETUP.vehicleCount || 100, 2, 200, true);
+    FFA_SETUP.playerReserves = _customBattleNumber(data.ffa.playerReserves, FFA_SETUP.playerReserves || 3, 0, 50, true);
+    if (_customBattleOwn(data.ffa, 'heliEnabled')) FFA_SETUP.heliEnabled = !!data.ffa.heliEnabled;
+    /* A record written before the slider existed has no multiplier: retain the
+       historical aliveN × 2 compatibility rule instead of silently changing it. */
+    var savedPowerupMultiplier = data.ffa.powerupMultiplier;
+    var savedBattleVersion = isFinite(+data.version) ? +data.version : 1;
+    /* v1 used 2.5 as the menu default. Migrate that old implicit default to the
+       corrected 2× default; explicit values other than 2.5 remain untouched. */
+    if (savedBattleVersion < 2 && +savedPowerupMultiplier === 2.5) savedPowerupMultiplier = 2;
+    FFA_SETUP.powerupMultiplier = _customBattleNumber(
+      savedPowerupMultiplier, FFA_DEFAULT_POWERUP_MULTIPLIER, 0, 4, false);
+  } else {
+    /* A legacy custom snapshot without an FFA block has no explicit multiplier. */
+    FFA_SETUP.powerupMultiplier = 2;
+  }
+  if (data.tdm && typeof data.tdm === 'object') {
+    if (_customBattleOwn(data.tdm, 'controlZones')) tdmControlZonesEnabled = data.tdm.controlZones !== false;
+    _customBattleRestoreRoster(BATTLE_SETUP.red, data.tdm.red);
+    _customBattleRestoreRoster(BATTLE_SETUP.blue, data.tdm.blue);
+  }
+  refreshCustomBattleControls();
+  return true;
+}
+function resetCustomBattleDefaults() {
+  startRough = 25;
+  startHour = 8;
+  startMatchTime = 15;
+  startMat = 'grass';
+  startMapLen = isFfaMode() ? FFA_DEFAULT_MAP_SIZE : 6000;
+  startMapWid = startMapLen;
+  startMapSize = startMapLen;
+  startBaseDist = { tank: 500, arty: 1500, heli: 3000, aa: 900 };
+  FFA_SETUP.vehicleCount = 100;
+  FFA_SETUP.playerReserves = 3;
+  FFA_SETUP.heliEnabled = false;
+  FFA_SETUP.powerupMultiplier = FFA_DEFAULT_POWERUP_MULTIPLIER;
+  tdmControlZonesEnabled = true;
+  refreshCustomBattleControls();
+}
+function syncModeMapDefault(mode) {
+  var size = mode === GAME_MODE_FFA ? FFA_DEFAULT_MAP_SIZE : 6000;
+  startMapLen = size; startMapWid = size; startMapSize = size;
+  if (typeof el !== 'undefined' && el) {
+    if (el.leninput) el.leninput.value = size;
+    if (el.widinput) el.widinput.value = size;
+    if (el.sizeinput) el.sizeinput.value = size;
+    // 个人死斗不消费大本营距离；仅同步输入上限，避免 FFA↔TDM 切换污染 TDM 自定义值。
+    var baseMax = Math.floor(size / 2);
+    [['tank', el.bdinput_tank], ['arty', el.bdinput_arty], ['heli', el.bdinput_heli]].forEach(function (b) {
+      if (b[1]) b[1].max = baseMax;
+    });
+  }
+}
+/* 三兵种大本营纵深(同兵种三翼共用;遭遇战地图卡可改,spawnTeams 落位消费)
+   团队死斗默认边长 6000m 时上限=长/2=3000；个人死斗不消费这些参数。 */
+function refreshStartControlZonesUI() {
+  if (!el || !el.stylerow || typeof el.stylerow.querySelectorAll !== 'function') return;
+  var value = tdmControlZonesEnabled === false ? 'off' : 'on';
+  markSel(el.stylerow, 'data-control-zones', value);
+  var disabled = typeof isFfaMode === 'function' && isFfaMode();
+  var controlRow = el.stylerow.parentElement;
+  if (controlRow && controlRow.classList) {
+    controlRow.classList.toggle('hidden', disabled);
+    controlRow.setAttribute('aria-hidden', disabled ? 'true' : 'false');
+  }
+  var buttons = el.stylerow.querySelectorAll('button[data-control-zones]');
+  for (var i = 0; i < buttons.length; i++) {
+    buttons[i].disabled = disabled;
+    buttons[i].classList.toggle('dim', disabled);
+    buttons[i].setAttribute('aria-disabled', disabled ? 'true' : 'false');
+  }
+}
+function bindStartControlZonesUI() {
   if (!el.stylerow || typeof el.stylerow.querySelectorAll !== 'function') return;
-  bindOptionRow(el.stylerow, [   // 材质二选一
-    { text: '草地', attrs: { m: 'grass' }, sel: startMat === 'grass' },
-    { text: '沃土', attrs: { m: 'soil' }, sel: startMat === 'soil' }
+  bindOptionRow(el.stylerow, [
+    { text: 'ON', attrs: { 'control-zones': 'on' }, sel: tdmControlZonesEnabled !== false },
+    { text: 'OFF', attrs: { 'control-zones': 'off' }, sel: tdmControlZonesEnabled === false }
   ], function (b) {
-    startMat = b.getAttribute('data-m') || 'grass';
-    markSel(el.stylerow, 'data-m', startMat);
+    if (typeof isFfaMode === 'function' && isFfaMode()) return;
+    tdmControlZonesEnabled = b.getAttribute('data-control-zones') !== 'off';
+    refreshStartControlZonesUI();
+    if (typeof saveCustomBattleSettings === 'function') saveCustomBattleSettings();
   });
+  refreshStartControlZonesUI();
 }
 function bindStartMapUI() {
   if (el.timeinput) {
     el.timeinput.value = startMatchTime;
-    function syncTime() {
+    function syncTime(persist) {
       startMatchTime = Math.max(1, Math.min(60, Math.round(+el.timeinput.value) || 15));
       el.timeinput.value = startMatchTime;
-      if (el.timeval) el.timeval.textContent = startMatchTime + ' 分钟';
+      if (el.timeval) el.timeval.textContent = startMatchTime + ' min';
+      if (persist && typeof saveCustomBattleSettings === 'function') saveCustomBattleSettings();
     }
-    el.timeinput.addEventListener('input', syncTime);
-    el.timeinput.addEventListener('change', syncTime);
-    syncTime();
+    el.timeinput.addEventListener('input', function () { syncTime(true); });
+    el.timeinput.addEventListener('change', function () { syncTime(true); });
+    syncTime(false);
   }
 
   if (el.roughinput) {
-    function syncRough() {
+    function syncRough(persist) {
       startRough = clamp(Math.round(+el.roughinput.value || 0), -100, 100);
       el.roughinput.value = startRough;
       if (el.roughval) el.roughval.textContent = startRough > 0 ? '+' + startRough : String(startRough);
+      if (persist && typeof saveCustomBattleSettings === 'function') saveCustomBattleSettings();
     }
-    el.roughinput.addEventListener('input', syncRough);
-    el.roughinput.addEventListener('blur', syncRough);
-    el.roughinput.addEventListener('keydown', function (e) { if (e.key === 'Enter') { syncRough(); el.roughinput.blur(); } });
-    syncRough();
+    el.roughinput.addEventListener('input', function () { syncRough(true); });
+    el.roughinput.addEventListener('blur', function () { syncRough(true); });
+    el.roughinput.addEventListener('keydown', function (e) { if (e.key === 'Enter') { syncRough(true); el.roughinput.blur(); } });
+    syncRough(false);
   }
 
   // 三型大本营距离: 上限 = 战场长度一半(纵深规则), 边长变化后自动重新钳制
   var bdInputs = [['tank', el.bdinput_tank], ['arty', el.bdinput_arty], ['heli', el.bdinput_heli]];
-  function syncBaseDist() {
+  function syncBaseDist(persist) {
     var halfCap = Math.floor(startMapLen / 2);
     bdInputs.forEach(function (b) {
       var key = b[0], inp = b[1];
       if (!inp) return;
+      inp.max = halfCap;
+      if (isFfaMode()) return; // FFA 不创建/显示/使用大本营距离，也不改写 TDM 的自定义值。
       var v = clamp(Math.round(+inp.value || 0), 0, halfCap);
       startBaseDist[key] = v;
       inp.value = v;
-      inp.max = halfCap;
     });
+    if (persist && typeof saveCustomBattleSettings === 'function') saveCustomBattleSettings();
   }
   bdInputs.forEach(function (b) {
     if (!b[1]) return;
-    b[1].addEventListener('blur', syncBaseDist);
-    b[1].addEventListener('keydown', function (e) { if (e.key === 'Enter') { syncBaseDist(); b[1].blur(); } });
+    b[1].addEventListener('blur', function () { syncBaseDist(true); });
+    b[1].addEventListener('keydown', function (e) { if (e.key === 'Enter') { syncBaseDist(true); b[1].blur(); } });
   });
 
   var lenInp = el.leninput || el.sizeinput;
   var widInp = el.widinput;
 
-  function syncLen() {
+  function syncLen(persist) {
     var prev = startMapLen;
     startMapLen = Math.max(100, Math.round(+(lenInp ? lenInp.value : 6000)) || 6000);
     startMapSize = Math.max(startMapLen, startMapWid);
     if (lenInp) lenInp.value = startMapLen;
     if (el.sizeinput && el.sizeinput !== lenInp) el.sizeinput.value = startMapLen;
     if (startMapLen !== prev) {
-      var ratio = startMapLen / prev;
+      var ratio = prev > 0 ? startMapLen / prev : 1;
       bdInputs.forEach(function (b) {
         if (!b[1]) return;
         b[1].value = Math.round((+b[1].value || 0) * ratio);
       });
     }
-    syncBaseDist();
+    syncBaseDist(false);
+    if (persist && typeof saveCustomBattleSettings === 'function') saveCustomBattleSettings();
   }
 
-  function syncWid() {
+  function syncWid(persist) {
     startMapWid = Math.max(100, Math.round(+(widInp ? widInp.value : 6000)) || 6000);
     startMapSize = Math.max(startMapLen, startMapWid);
     if (widInp) widInp.value = startMapWid;
+    if (persist && typeof saveCustomBattleSettings === 'function') saveCustomBattleSettings();
   }
 
   if (lenInp) {
     lenInp.value = startMapLen;
-    lenInp.addEventListener('blur', syncLen);
-    lenInp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { syncLen(); lenInp.blur(); } });
+    lenInp.addEventListener('blur', function () { syncLen(true); });
+    lenInp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { syncLen(true); lenInp.blur(); } });
   }
   if (widInp) {
     widInp.value = startMapWid;
-    widInp.addEventListener('blur', syncWid);
-    widInp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { syncWid(); widInp.blur(); } });
+    widInp.addEventListener('blur', function () { syncWid(true); });
+    widInp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { syncWid(true); widInp.blur(); } });
   }
-  syncLen();
-  syncWid();
+  syncLen(false);
+  syncWid(false);
 }
 /* 遭遇战编制配置(通用化):红/蓝独立——参战兵力/最大在场/各型号数量;
    型号数量输入遍历 VEHICLE_KINDS 自动生成(新增型号自动出现);
@@ -1736,7 +2123,7 @@ function getAllowedTeamVehicleKinds(tm) {
 /* 当最大在场载具数改变时,按比例自适应缩放所有细分载具数量 */
 function scaleRosterToCap(S, tm) {
   if (!S || !S.roster) return;
-  var allowed = getAllowedTeamVehicleKinds(tm || 'ally');
+  var allowed = getAllowedTeamVehicleKinds(tm || 'red');
   if (allowed.length === 0) return;
 
   // 严格清除非本阵营载具配额,杜绝幽灵配额
@@ -1803,7 +2190,7 @@ if (!S.rosterBase) S.rosterBase = {};
 }
 
 function adjustOtherVehiclesToFit(S, tm, editedKind, newVal) {
-  var allowed = getAllowedTeamVehicleKinds(tm || 'ally');
+  var allowed = getAllowedTeamVehicleKinds(tm || 'red');
   if (allowed.length === 0) return;
 
   var targetCap = Math.max(0, Math.round(S.cap || 0));
@@ -1861,7 +2248,68 @@ function adjustOtherVehiclesToFit(S, tm, editedKind, newVal) {
 function bindStartSetupUI() {
   if (!el.setuproot || typeof document === 'undefined') return;
   el.setuproot.innerHTML = '';
-  ['ally', 'enemy'].forEach(function (tm) {
+  if (isFfaMode()) {
+    var fbox = document.createElement('div');
+    fbox.className = 'setupcard ffa-setupcard';
+    var ft = document.createElement('div'); ft.className = 'setupcard-t'; ft.textContent = 'FREE-FOR-ALL ROSTER'; fbox.appendChild(ft);
+    function ffaRow(label, input, note, output) {
+      var rr = document.createElement('div'); rr.className = 'srow';
+      var ll = document.createElement('span'); ll.textContent = label; rr.appendChild(ll); rr.appendChild(input);
+      if (output) rr.appendChild(output);
+      if (note) { var nn = document.createElement('small'); nn.textContent = note; rr.appendChild(nn); }
+      fbox.appendChild(rr);
+    }
+    var activeIn = document.createElement('input');
+    activeIn.type = 'number'; activeIn.min = 2; activeIn.max = 200; activeIn.value = FFA_SETUP.vehicleCount;
+    var reserveIn = document.createElement('input');
+    reserveIn.type = 'number'; reserveIn.min = 0; reserveIn.max = 50; reserveIn.value = FFA_SETUP.playerReserves;
+    var heliIn = document.createElement('select');
+    heliIn.className = 'ffa-heli-select';
+    [['0', 'DISABLED'], ['1', 'ENABLED']].forEach(function (opt) {
+      var o = document.createElement('option'); o.value = opt[0]; o.textContent = opt[1]; heliIn.appendChild(o);
+    });
+    heliIn.value = FFA_SETUP.heliEnabled ? '1' : '0';
+    var powerIn = document.createElement('input');
+    powerIn.type = 'range'; powerIn.min = 0; powerIn.max = 4; powerIn.step = 0.1;
+    powerIn.className = 'ffa-powerup-slider';
+    powerIn.value = isFinite(+FFA_SETUP.powerupMultiplier) ? Math.max(0, Math.min(4, +FFA_SETUP.powerupMultiplier)) : FFA_DEFAULT_POWERUP_MULTIPLIER;
+    var powerOut = document.createElement('output');
+    powerOut.className = 'ffa-powerup-value';
+    function powerupMultiplierLabel(v) {
+      var n = Math.round(v * 10) / 10;
+      return (n % 1 === 0 ? String(n.toFixed(0)) : n.toFixed(1)) + '×';
+    }
+    powerOut.textContent = powerupMultiplierLabel(+powerIn.value);
+    // 只保留数值/开关控件本身，不再在人数与备用载具后附加说明文字。
+    ffaRow('Active vehicles', activeIn);
+    ffaRow('Player reserve vehicles', reserveIn);
+    ffaRow('Helicopters', heliIn);
+    ffaRow('Powerup density', powerIn, 'per survivor', powerOut);
+    function syncFfaSetup(refreshKinds) {
+      FFA_SETUP.vehicleCount = clamp(Math.round(+activeIn.value || 100), 2, 200);
+      FFA_SETUP.playerReserves = clamp(Math.round(+reserveIn.value || 0), 0, 50);
+      FFA_SETUP.heliEnabled = heliIn.value === '1';
+      var pm = +powerIn.value;
+      FFA_SETUP.powerupMultiplier = isFinite(pm) ? Math.round(clamp(pm, 0, 4) * 10) / 10 : FFA_DEFAULT_POWERUP_MULTIPLIER;
+      activeIn.value = FFA_SETUP.vehicleCount; reserveIn.value = FFA_SETUP.playerReserves;
+      powerIn.value = FFA_SETUP.powerupMultiplier;
+      powerOut.textContent = powerupMultiplierLabel(FFA_SETUP.powerupMultiplier);
+      // 关闭直升机时从开局载具选择行移除直升机；开启后恢复全部登记型号。
+      if (refreshKinds && typeof bindStartKindUI === 'function' && isFfaMode()) bindStartKindUI(true);
+      if (typeof saveCustomBattleSettings === 'function') saveCustomBattleSettings();
+    }
+    activeIn.addEventListener('input', function () { syncFfaSetup(true); });
+    activeIn.addEventListener('change', function () { syncFfaSetup(true); });
+    reserveIn.addEventListener('input', function () { syncFfaSetup(true); });
+    reserveIn.addEventListener('change', function () { syncFfaSetup(true); });
+    heliIn.addEventListener('change', function () { syncFfaSetup(true); });
+    powerIn.addEventListener('input', function () { syncFfaSetup(false); });
+    powerIn.addEventListener('change', function () { syncFfaSetup(false); });
+    el.setuproot.appendChild(fbox);
+    return;
+  }
+
+  ['red', 'blue'].forEach(function (tm) {
     var S = BATTLE_SETUP[tm];
     S.ins = {};
     S.rosterBase = {}; // 基线快照:用户最近直接输入的配置
@@ -1872,7 +2320,7 @@ function bindStartSetupUI() {
     box.className = 'setupcard';
     var title = document.createElement('div');
     title.className = 'setupcard-t';
-    title.textContent = tm === 'ally' ? '红方编制' : '蓝方编制';
+    title.textContent = tm === 'red' ? 'RED OOB' : 'BLUE OOB';
     box.appendChild(title);
 
     function row(label, inp) {
@@ -1886,10 +2334,10 @@ function bindStartSetupUI() {
     }
 
     var pIn = document.createElement('input'); pIn.type = 'number'; pIn.min = 0; pIn.max = 2000; pIn.value = S.pool;
-    row('参战兵力', pIn);
+    row('Combat strength', pIn);
     var cIn = document.createElement('input'); cIn.type = 'number'; cIn.min = 0; cIn.max = 2000; cIn.value = S.cap;
     S.ins.cap = cIn;
-    row('最大在场载具', cIn);
+    row('Max vehicles in play', cIn);
 
     VEHICLE_KINDS.forEach(function (vk) {
       if (!vehicleKindAllowed(tm, vk.kind)) return;
@@ -1899,40 +2347,107 @@ function bindStartSetupUI() {
       S.ins[vk.kind] = kIn;
       kIn.addEventListener('input', function () {
         adjustOtherVehiclesToFit(S, tm, vk.kind, +kIn.value || 0);
+        if (typeof saveCustomBattleSettings === 'function') saveCustomBattleSettings();
       });
     });
 
-    pIn.addEventListener('input', function () { S.pool = clamp(Math.round(+pIn.value || 0), 0, 2000); });
-    cIn.addEventListener('input', function () { S.cap = clamp(Math.round(+cIn.value || 0), 0, 2000); scaleRosterToCap(S, tm); });
+    pIn.addEventListener('input', function () {
+      S.pool = clamp(Math.round(+pIn.value || 0), 0, 2000);
+      if (typeof saveCustomBattleSettings === 'function') saveCustomBattleSettings();
+    });
+    cIn.addEventListener('input', function () {
+      S.cap = clamp(Math.round(+cIn.value || 0), 0, 2000);
+      scaleRosterToCap(S, tm);
+      if (typeof saveCustomBattleSettings === 'function') saveCustomBattleSettings();
+    });
     el.setuproot.appendChild(box);
   });
 }
-/* 开局阵营二选一:特殊装甲槽按阵营显示真实平台名——红方89式、蓝方M1A1;data-k='td'仅作内部兼容键。 */
+/* 开局阵营二选一:特殊装甲槽按阵营显示真实平台名——红方红方歼击车、蓝方BLUE_MBT_2;data-k='td'仅作内部兼容键。 */
 function bindStartSideUI() {
   if (!el.siderow || typeof el.siderow.querySelectorAll !== 'function') return;
-  bindOptionRow(el.siderow, [   // 阵营二选一(红方89式/蓝方M1A1 文本由 refreshVehicleChoiceLabels 刷新)
-    { text: '红方', attrs: { side: 'ally' }, sel: startSide === 'ally' },
-    { text: '蓝方', attrs: { side: 'enemy' }, sel: startSide === 'enemy' }
+  bindOptionRow(el.siderow, [   // 阵营二选一(红方红方歼击车/蓝方BLUE_MBT_2 文本由 refreshVehicleChoiceLabels 刷新)
+    { text: 'RED', attrs: { side: 'red' }, sel: startSide === 'red' },
+    { text: 'BLUE', attrs: { side: 'blue' }, sel: startSide === 'blue' }
   ], function (b) {
-    startSide = b.getAttribute('data-side') || 'ally';
+    startSide = b.getAttribute('data-side') || 'red';
     markSel(el.siderow, 'data-side', startSide);
-    refreshVehicleChoiceLabels();                    // 红方显示89式,蓝方显示M1A1
+    refreshVehicleChoiceLabels();                    // 红方显示红方歼击车,蓝方显示BLUE_MBT_2
+    if (typeof saveCustomBattleSettings === 'function') saveCustomBattleSettings();
   });
 }
-/* 开局载具:按阵营载具列表生成 */
-function bindStartKindUI() {
+/* 开局载具:团队死斗按当前阵营；个人死斗把注册表中的红/蓝平台平铺为可选项。 */
+function bindStartKindUI(force) {
   if (!el.skrow || typeof el.skrow.querySelectorAll !== 'function') return;
-  var rows = [], ri;                 // 开局载具行=VEHICLE_KINDS 注册表全量生成(新增型号自动生效;阵营过滤/回退见 refreshVehicleChoiceLabels)
-  for (ri = 0; ri < VEHICLE_KINDS.length; ri++)
-    rows.push({ text: vehicleKindName('ally', VEHICLE_KINDS[ri].kind), attrs: { k: VEHICLE_KINDS[ri].kind },
-                sel: startKind === VEHICLE_KINDS[ri].kind });
+  if (force) el.skrow.innerHTML = '';
+  var rows = [], ri;
+  if (isFfaMode()) {
+    for (ri = 0; ri < VEHICLE_KINDS.length; ri++) {
+      var vkF = VEHICLE_KINDS[ri];
+      if (!FFA_SETUP.heliEnabled && (vkF.kind === 'ah64' || vkF.kind === 'wz10')) continue;
+      for (var ti = 0; ti < 2; ti++) {
+        var tmF = ti ? 'blue' : 'red';
+        if (vkF.sides && !vkF.sides[tmF]) continue;
+        rows.push({ text: vehicleKindName(tmF, vkF.kind), attrs: { k: vkF.kind, side: tmF },
+                    sel: startKind === vkF.kind && startSide === tmF });
+      }
+    }
+  } else {
+    for (ri = 0; ri < VEHICLE_KINDS.length; ri++)
+      rows.push({ text: vehicleKindName('red', VEHICLE_KINDS[ri].kind), attrs: { k: VEHICLE_KINDS[ri].kind },
+                  sel: startKind === VEHICLE_KINDS[ri].kind });
+  }
   bindOptionRow(el.skrow, rows, function (b) {
     startKind = b.getAttribute('data-k');
+    if (isFfaMode()) startSide = b.getAttribute('data-side') || startSide;
     markSel(el.skrow, 'data-k', startKind);
+    if (isFfaMode()) {
+      var bs = el.skrow.querySelectorAll('button');
+      for (var bi = 0; bi < bs.length; bi++)
+        bs[bi].classList.toggle('sel', bs[bi].getAttribute('data-k') === startKind && bs[bi].getAttribute('data-side') === startSide);
+    }
+    if (typeof saveCustomBattleSettings === 'function') saveCustomBattleSettings();
   });
 }
 
 // 重新部署界面(死亡后弹出;战斗照常进行,不暂停)
+function bindFfaRespawnChoices() {
+  if (!el.rkindrow || typeof ffaCurrentVehicleOptions !== 'function') return;
+  var opts = ffaCurrentVehicleOptions(), sig = '';
+  for (var si = 0; si < opts.length; si++) sig += opts[si].team + ':' + opts[si].kind + '|';
+
+  /* Rebuild when the active FFA setup changes (not only on the first death).
+     The option source is also the spawn source, so every visible button is a
+     real, currently allowed {team, kind} pair. */
+  if (!el.rkindrow._ffaBound || el.rkindrow._ffaSig !== sig) {
+    el.rkindrow.innerHTML = '';
+    var defs = [];
+    for (var i = 0; i < opts.length; i++) {
+      defs.push({ text: vehicleKindName(opts[i].team, opts[i].kind), attrs: { k: opts[i].kind, side: opts[i].team },
+        sel: respawnSel.kind === opts[i].kind && respawnSel.team === opts[i].team });
+    }
+    bindOptionRow(el.rkindrow, defs, function (b) {
+      respawnSel.kind = b.getAttribute('data-k') || 'tank';
+      respawnSel.team = b.getAttribute('data-side') || 'red';
+      markSel(el.rkindrow, 'data-k', respawnSel.kind);
+      var bs = el.rkindrow.querySelectorAll('button');
+      for (var j = 0; j < bs.length; j++) bs[j].classList.toggle('sel', bs[j].getAttribute('data-k') === respawnSel.kind && bs[j].getAttribute('data-side') === respawnSel.team);
+    });
+    el.rkindrow._ffaBound = true;
+    el.rkindrow._ffaSig = sig;
+  }
+
+  /* A stale selection can survive a mode/config change.  Keep the highlighted
+     choice and the eventual spawn on one of the buttons actually rendered. */
+  var valid = false;
+  for (var oi = 0; oi < opts.length; oi++) {
+    if (opts[oi].kind === respawnSel.kind && opts[oi].team === respawnSel.team) { valid = true; break; }
+  }
+  if (!valid && opts.length) {
+    respawnSel.kind = opts[0].kind;
+    respawnSel.team = opts[0].team;
+  }
+}
 function showRespawnUI() {
   if (!el.respawnov) return;
   respawnUiOpen = true;
@@ -1946,15 +2461,28 @@ function hideRespawnUI() {
 }
 function updateRespawnUI() {
   if (!el.respawnov) return;
+  if (isFfaMode()) {
+    bindFfaRespawnChoices();
+    if (el.rhqrow) el.rhqrow.style.display = 'none';
+    if (el.rkindrow) el.rkindrow.style.display = '';
+    markSel(el.rkindrow, 'data-k', respawnSel.kind);
+    var ffaBtns = el.rkindrow.querySelectorAll('button');
+    for (var fb = 0; fb < ffaBtns.length; fb++) ffaBtns[fb].classList.toggle('sel', ffaBtns[fb].getAttribute('data-k') === respawnSel.kind && ffaBtns[fb].getAttribute('data-side') === respawnSel.team);
+    var noFfaReserve = ffaState.reserves <= 0;
+    el.rconfirm.disabled = noFfaReserve;
+    el.rconfirm.textContent = noFfaReserve ? 'NO RESERVE VEHICLES' : 'REDEPLOY (' + ffaState.reserves + ' LEFT)';
+    return;
+  }
+  if (el.rhqrow) el.rhqrow.style.display = '';
   refreshVehicleChoiceLabels();
-  // 菜单每次打开时按 respawnSel.kind 重新同步按钮选中态
+  // 每次打开时按 respawnSel.kind 重新同步按钮选中态
   // (ensureOptionButtons 仅在首次创建时应用 sel,此后按钮已存在即跳过——旧高亮停留在页面加载时的 'tank',
   //  而 respawnSel.kind 已被 spawnTeams 同步为 startKind(玩家开局所选载具),导致菜单高亮与实际部署不一致)
   markSel(el.rkindrow, 'data-k', respawnSel.kind);
   markSel(el.rhqrow, 'data-wing', respawnSel.wing);   // 翼位高亮同步(防旧会话残留索引)
-  var noPts = teamPool[pSide()] <= 0;                // 判禁用按玩家队(旧笔误恒 ally)
+  var noPts = teamPool[pSide()] <= 0;                // 判禁用按玩家队(旧笔误恒 red)
   el.rconfirm.disabled = noPts;
-  el.rconfirm.textContent = noPts ? '兵力耗尽(无法部署)' : '重新部署';
+  el.rconfirm.textContent = noPts ? 'NO STRENGTH - NO DEPLOY' : 'REDEPLOY';
 }
 function bindRespawnUI() {
   if (!el.respawnov) return;
@@ -1971,11 +2499,12 @@ function bindRespawnUI() {
   });
   var krows = [], kri;               // 载具行=VEHICLE_KINDS 注册表全量生成(新增型号自动生效;文本按当前阵营,刷新见 refreshVehicleChoiceLabels)
   for (kri = 0; kri < VEHICLE_KINDS.length; kri++)
-    krows.push({ text: vehicleKindName('ally', VEHICLE_KINDS[kri].kind), attrs: { k: VEHICLE_KINDS[kri].kind },
+    krows.push({ text: vehicleKindName('red', VEHICLE_KINDS[kri].kind), attrs: { k: VEHICLE_KINDS[kri].kind },
                  sel: respawnSel.kind === VEHICLE_KINDS[kri].kind });
   bindOptionRow(el.rkindrow, krows, function (b) {
     respawnSel.kind = b.getAttribute('data-k');   // 兵种基地由型号自动对应(hqFind),翼位保持玩家上次的选择
     markSel(el.rkindrow, 'data-k', respawnSel.kind);
   });
 }
+
 

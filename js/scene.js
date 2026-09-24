@@ -45,43 +45,25 @@
      (core_util.js MODQ_PRESETS)独立控制,此处字段原样保留作 sandbox 兜底与数值留档,
      运行时不再被读取(消费方见 player.js _phudBuild / uifx-enhance.js 机库 init)。
    ============================================================ */
-var GFX_TOUCH = (window.matchMedia && matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in window;
+var GFX_TOUCH = false; // 纯桌面端适配: 默认最高画质配置
 var GFX_PRESETS = {
   high: { maxPixelRatio: 2,   shadowMapSize: 1024, shadowSoft: true,  noStencil: false, hudAA: true,  hudPost: true,
           fxDistMax: 3.4, fxYieldMax: 2.0, fxGroundLight: true,  fxSatHi: 12, fxSatLo: 8, fxHardMax: 24,
-          fxWreckSmoke: 999, fxSmokeR: 0,   fxBigTex: 1024, fxTrailAdapt: false, fxBurstMerge: 0, fxBurstDedup: false, fxSfxMerge: false, fxSpriteCap: 1.0 },
+          fxWreckSmoke: 999, fxSmokeR: 0,   fxBigTex: 1024, fxTrailAdapt: false, fxBurstMerge: 0, fxBurstDedup: false, fxSfxMerge: false },
   mid:  { maxPixelRatio: 1.5, shadowMapSize: 512,  shadowSoft: false, noStencil: true,  hudAA: false, hudPost: false,
           fxDistMax: 1.8, fxYieldMax: 1.4, fxGroundLight: false, fxSatHi: 5,  fxSatLo: 3, fxHardMax: 10,
-          fxWreckSmoke: 48,  fxSmokeR: 420, fxBigTex: 512,  fxTrailAdapt: true,  fxBurstMerge: 3, fxBurstDedup: true,  fxSfxMerge: true,  fxSpriteCap: 0.6 },
+          fxWreckSmoke: 48,  fxSmokeR: 420, fxBigTex: 512,  fxTrailAdapt: true,  fxBurstMerge: 3, fxBurstDedup: true,  fxSfxMerge: true },
   low:  { maxPixelRatio: 1.0, shadowMapSize: 512,  shadowSoft: false, noStencil: true,  hudAA: false, hudPost: false,
           fxDistMax: 1.5, fxYieldMax: 1.2, fxGroundLight: false, fxSatHi: 3,  fxSatLo: 2, fxHardMax: 6,
-          fxWreckSmoke: 24,  fxSmokeR: 300, fxBigTex: 512,  fxTrailAdapt: true,  fxBurstMerge: 2, fxBurstDedup: true,  fxSfxMerge: true,  fxSpriteCap: 0.4 }
+          fxWreckSmoke: 24,  fxSmokeR: 300, fxBigTex: 512,  fxTrailAdapt: true,  fxBurstMerge: 2, fxBurstDedup: true,  fxSfxMerge: true }
 };
 var GFX_PROFILE = (function () {
   var m = /[?&]gfx=(high|mid|low)\b/.exec(window.location.search || '');
   if (m) return m[1];
   try { var s = localStorage.getItem('prefGfxProfile'); if (GFX_PRESETS[s]) return s; } catch (e) {}
-  return GFX_TOUCH ? 'mid' : 'high';
+  return 'high';
 })();
 var GFX = GFX_PRESETS[GFX_PROFILE];
-/* ★P0-①(性能优化报告 2026-09-13):触屏性能钳——仅当画质档为「设备默认」(未被 ?gfx= 或
-   设置页显式选择)时生效:像素比上限 1.5→1.25。中档触屏上 1.5 仍要填 2.25 倍像素量,
-   与满分辨率漫画合成 RT 叠加是移动帧率第一嫌疑(报告 §二A);1.25 在省 ~44% 像素量的
-   同时保留高于 CSS 分辨率的锐度。复制一份再钳,不改预设源表(设置页高亮/?gfx= A/B
-   对照读的仍是原表语义);显式选档用户完全不受钳制。 */
-var GFX_TOUCH_CLAMP = false;
-if (GFX_TOUCH) {
-  GFX_TOUCH_CLAMP = (function () {
-    if (/[?&]gfx=(high|mid|low)\b/.test(window.location.search || '')) return false;
-    try { if (GFX_PRESETS[localStorage.getItem('prefGfxProfile')]) return false; } catch (e) {}
-    return true;
-  })();
-  if (GFX_TOUCH_CLAMP) {
-    var _gfxCopy = {}; for (var _gfxK in GFX) _gfxCopy[_gfxK] = GFX[_gfxK];
-    _gfxCopy.maxPixelRatio = Math.min(_gfxCopy.maxPixelRatio, 1.25);
-    GFX = _gfxCopy;
-  }
-}
 function gfxMaxPr() { return Math.min(window.devicePixelRatio || 1, GFX.maxPixelRatio); }
 /* ============================================================
    场景搭建
@@ -147,8 +129,7 @@ function initScene() {
     var pr = gfxMaxPr();
     if (Math.abs(pr - _basePixelRatio) > 0.001) {
       _basePixelRatio = pr;
-      if (typeof drsApply === 'function') drsApply();      // ★P2-⑧:统一落笔(基准×全局DRS×开镜档)
-      else renderer.setPixelRatio(_scopeResHi ? Math.max(0.35, pr * _scopeResRatio) : pr);
+      renderer.setPixelRatio(_scopeResHi ? Math.max(0.35, pr * _scopeResRatio) : pr);
     }
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
@@ -169,7 +150,8 @@ function buildGroundMeshes() {
   }
   groundChunks.length = 0;
   var i, lx, lz;
-  var groundMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 });
+  var groundMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1,
+    depthTest: true, depthWrite: true });   // real terrain must write depth before world markers
   if (!scSlotTA) scorchFieldBuild();                      // 焦土像素层(菜单背景地面也要有;幂等)
   scorchPatchMaterial(groundMat);                          // 注入:焦土改在片元里解析求值 → 正圆,与网格无关
   biomePatchMaterial(groundMat);                           // P1:三套地貌细节贴图按顶点权重混合(替代单张 map)
@@ -261,11 +243,16 @@ function setupMapWorld(seed, rough, side, mat, wid) {
   buildTerrainBaseTable();               // 菜单期 tbLat 可能已按旧参数惰性构建:开局显式重建
   if (typeof navGridBuild === 'function') navGridBuild();   // 奇观连通性验证需 nav 网格(spawnTeams 内幂等重建,约 10ms)
   if (typeof wonderEnsureConnected === 'function') wonderEnsureConnected();   // 验证失败→确定性重布奇观(≤3 次);恒在建地面网格之前
+  /* TDM control areas are armed here but remain absent until 30 seconds into
+     the match; their later density-based placement never edits the terrain. */
+  if (typeof controlZonesPrepare === 'function') controlZonesPrepare();
   buildGroundMeshes();
+  if (typeof controlZonesBuildVisuals === 'function') controlZonesBuildVisuals();
   swapGroundStyle(MAP.mat);
   buildHillRing(MAP.mat);
   if (typeof _sprStreamReset === 'function') _sprStreamReset();   // R22-T1:清空上一局流式区块与状态账本(新种子)
   buildTrees();                          // 漫画纸板树:建 mesh + 注册阴影(表由 _sprStream 随足迹流式填充)
   buildGrass();                          // 漫画纸板花草丛:建 mesh(表由 _sprStream 流式填充;仅爆炸可摧毁,玩家可抖动)
   _stumpDispose();                       // 开局清空上一局遗留树桩
+  if (typeof initBattlefieldAtmosphere === 'function') initBattlefieldAtmosphere();
 }

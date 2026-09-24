@@ -18,7 +18,7 @@ var css = '' +
   /* cursor 是继承属性，但子元素的 cursor:auto/grab/none 会截断继承。主界面空白大量命中
      #hangar-canvas(cursor:grab)，所以只写 html,body 不能覆盖全界面。主界面命中树、画布及
      所有交互控件均直接指定同一箭头；对局 renderer canvas 的 cursor:none 不受影响。 */
-  /* v14：完全删除手指素材与分支；普通区域、按钮和输入控件统一使用现有 CUR_ARROW。 */
+  /* Pointer visuals use the shared CUR_ARROW asset. */
   '#startov,#startov *{cursor:' + curl(CUR_ARROW, 2, 1, 'auto') + ' !important;}' +
   '#hangar-canvas,#hangar-canvas:active{cursor:' + curl(CUR_ARROW, 2, 1, 'auto') + ' !important;}' +
   'button,.bigbtn,.optbtn,a,select,label,input,input[type=range],input[type=checkbox],#startov button,#startov a,#startov select,#startov label,#startov input{cursor:' + curl(CUR_ARROW, 2, 1, 'auto') + ' !important;}' +
@@ -207,7 +207,7 @@ function sfxTacticalBeep(count) {
 window.sfxTacticalBeep = sfxTacticalBeep;
 
 /* ---------- ④ 屏幕碎裂与濒死视效资源 ---------- */
-/* 破碎:漫画墨裂纹(阶梯收分20/12/5px,方向/撞击点与旧版一致)+纸白侧刃+碎片+墨星——无滤镜,硬边。 */
+/* Ink-shard death effect: stepped edges, fragments, and hard borders. */
 var SHATTER_SVG = '<svg class="uifx-shatter-svg" viewBox="0 0 1920 1080" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">' +
   '<g transform="translate(6,-5)" stroke="rgba(252,249,240,.5)" stroke-width="2" fill="none">' +
     '<path d="M1020,520 L840,410 L650,330 L420,240 L180,150 L0,90"/>' +
@@ -284,7 +284,7 @@ var rspCss = '' +
     'position:absolute;inset:0;pointer-events:none;z-index:8;opacity:0;--blood-depth:0%;' +
     'background:radial-gradient(ellipse at 50% 50%,transparent calc(98% - var(--blood-depth)),rgba(195,18,12,.46) calc(100% - var(--blood-depth)*.7),rgba(145,5,5,.94) 100%);' +
     'filter:blur(8px);will-change:background,opacity,transform;' +
-    'will-change:opacity;}' +   /* 心跳收拢改由JS血脉调度(见startDeathAnim),CSS抖动删除 */
+    'will-change:opacity;}' +   /* Pulse timing is owned by startDeathAnim. */
 
   /* 视野虚化层: 动态中心跟随开眼中心 */
   '#uifx-death .uifx-blur{position:absolute;inset:0;z-index:3;opacity:0;' +
@@ -358,7 +358,12 @@ var rspCss = '' +
     'border:1px solid #26331c;background:#060c05;padding:10px 14px;box-shadow:inset 0 0 14px rgba(0,0,0,.7);}' +
   '.tbios-end-head{font-size:14px;color:#6f9a63;font-weight:700;border-bottom:1px dashed #3d4a2e;padding-bottom:4px;margin-bottom:6px;}' +
   '.tbios-end-val{font-size:16px;color:#c8ffc0;margin:3px 0;}' +
-  '.tbios-end-val strong{color:#9dffa8;font-size:18px;margin-right:4px;}';
+  '.tbios-end-val strong{color:#9dffa8;font-size:18px;margin-right:4px;}' +
+  '.tbios-xp-reward{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:6px 10px;margin:10px 0 2px;padding:8px 10px;border:1px solid #75662b;background:linear-gradient(90deg,rgba(54,43,12,.52),rgba(16,25,9,.9));color:#ffd85a;box-shadow:inset 0 0 12px rgba(255,216,90,.08);}' +
+  '.tbios-xp-star{display:grid;place-items:center;width:28px;height:28px;border:1px solid #ffd85a;border-radius:50%;font-size:17px;color:#fff1a5;text-shadow:0 0 8px rgba(255,216,90,.8);}' +
+  '.tbios-xp-label{font-size:14px;letter-spacing:.12em;color:#fff1a5;}' +
+  '.tbios-xp-reward strong{font-size:21px;color:#ffd85a;text-shadow:0 0 8px rgba(255,216,90,.45);}' +
+  '.tbios-xp-reward > span:last-child{grid-column:2 / -1;font-size:11px;color:#d6c477;letter-spacing:.08em;}';
 
 var rspSt = document.createElement('style');
 rspSt.id = 'uifx-rsp-style';
@@ -446,11 +451,11 @@ function applyLid(f) {
   if (!lidT) return;
   lidT.style.transition = lidB.style.transition = 'none';
   lidT.style.transform = 'translateY(' + (f * 118 - 118) + '%)';
-  var ss = 0;   // 末段补足:下睑顶边70=上睑弧心70.56之下,真正闭合(旧版闭眼);f≤0.85与旧曲线一致
+  var ss = 0;   // Close the lower lid under the upper arc; preserve the readable center.
   if (f > 0.85) { var sb = (f - 0.85) / 0.15; ss = sb * sb * (3 - 2 * sb); }
   var b = Math.pow(f, 1.75) * 0.4 + ss * 0.6;
   lidB.style.transform = 'translateY(' + (118 - b * 118) + '%)';
-  var arc = 22 - f * 18;   // 闭合仍保留弧口(旧版弧线,中央清晰区可见);f=0与旧一致
+  var arc = 22 - f * 18;   // Keep a small arc opening so the center remains visible.
   if (lidTPath) lidTPath.setAttribute('d', 'M0 0 H1000 V100 Q500 ' + (100 - arc).toFixed(1) + ' 0 100 Z');
   if (lidBPath) lidBPath.setAttribute('d', 'M0 100 H1000 V0 Q500 ' + arc.toFixed(1) + ' 0 0 Z');
 
@@ -475,6 +480,30 @@ function applyLid(f) {
   if (cv && RSP.phase === 'dying') {
     cv.style.transformOrigin = '50% ' + cy.toFixed(1) + '%';
   }
+}
+
+/* ---------- ⑦.1 阵亡与复苏动画定时器总线 (防状态冲突与竞态穿透) ---------- */
+var _deathTimers = [];
+function clearDeathTimers() {
+  for (var i = 0; i < _deathTimers.length; i++) {
+    clearTimeout(_deathTimers[i]);
+  }
+  _deathTimers.length = 0;
+  if (lidRaf) {
+    cancelAnimationFrame(lidRaf);
+    lidRaf = 0;
+  }
+}
+window.clearDeathTimers = clearDeathTimers;
+
+function deathTimeout(fn, ms) {
+  var tid = setTimeout(function () {
+    var idx = _deathTimers.indexOf(tid);
+    if (idx >= 0) _deathTimers.splice(idx, 1);
+    fn();
+  }, ms);
+  _deathTimers.push(tid);
+  return tid;
 }
 
 function lidSet(f, ms, ease) {
@@ -571,8 +600,16 @@ window.sfxBreath = sfxBreath;
 /* ---------- ⑧ 阵亡全流程 (碎裂 + 心跳血框 + 眨眼闭合) ---------- */
 function startDeathAnim(cause) {
   if (RSP.phase === 'dying') return;
+  // ★ 核心修复:若玩家刚点下重新部署(处于 wake 或 deploying 阶段)时被击杀,
+  // 必须立即中止并清空之前未完成的睁眼定时器与补丁,防止旧定时器把眼皮重新拉开(Bug 1)或在黑屏后擦除黑幕(Bug 2)
+  clearDeathTimers();
   ensureDeathDom();
   ensureTacticalCornerOverlay();
+  if (respModal) respModal.classList.remove('win-contracting', 'win-expanding');
+  if (possModal) possModal.classList.remove('win-contracting', 'win-expanding');
+  if (el && el.respawnov) el.respawnov.classList.add('hidden');
+  if (el && el.possessov) el.possessov.classList.add('hidden');
+  RSP.pendingHide = null;
   RSP.phase = 'dying';
   RSP.blackAt = Date.now() + 3350;   // 黑场3260/收尾3340(血褪后弹窗,等闭眼+血褪)
   
@@ -583,7 +620,12 @@ function startDeathAnim(cause) {
   deathVg.style.animationDuration = '';
   deathVg.classList.add('beat');
   
-  var cv = gameCanvas(); if (cv) cv.classList.add('uifx-dying');
+  var cv = gameCanvas();
+  if (cv) {
+    cv.style.transition = '';
+    cv.style.filter = '';
+    cv.classList.add('uifx-dying');
+  }
   worldDuck(0.06, 1.7);
   sfxHeartbeats();
   sfxTinnitus();
@@ -591,41 +633,43 @@ function startDeathAnim(cause) {
   var bloodBeat = function () {
     if (!bloodBeating || !deathBloodVg || RSP.phase !== 'dying') return;
     deathBloodVg.style.transform = 'scale(1.03)';
-    setTimeout(function () { if (deathBloodVg && RSP.phase === 'dying') deathBloodVg.style.transform = 'scale(1)'; }, 140);
-    setTimeout(bloodBeat, beatP);
+    deathTimeout(function () { if (deathBloodVg && RSP.phase === 'dying') deathBloodVg.style.transform = 'scale(1)'; }, 140);
+    deathTimeout(bloodBeat, beatP);
   };
   bloodBeat();
 
-  var isKilled = (cause !== '主动弃车' && cause !== '弃车');
+  var isKilled = (cause !== 'ABANDONED');
   if (isKilled) {
     if (deathShatter) deathShatter.style.opacity = '1';
     if (deathBloodVg) {
+      deathBloodVg.style.transition = '';
       deathBloodVg.style.opacity = '1';
       deathBloodVg.style.transform = 'scale(1)';
       deathBloodVg.style.setProperty('--blood-depth', '8%');
-      setTimeout(function () { if (deathBloodVg && RSP.phase === 'dying') deathBloodVg.style.setProperty('--blood-depth', '18%'); }, 520);
-      setTimeout(function () { if (deathBloodVg && RSP.phase === 'dying') deathBloodVg.style.setProperty('--blood-depth', '28%'); }, 1100);
-      setTimeout(function () { if (deathBloodVg && RSP.phase === 'dying') deathBloodVg.style.setProperty('--blood-depth', '38%'); }, 1680);
-      setTimeout(function () { if (deathBloodVg && RSP.phase === 'dying') deathBloodVg.style.setProperty('--blood-depth', '50%'); }, 2320);
+      deathTimeout(function () { if (deathBloodVg && RSP.phase === 'dying') deathBloodVg.style.setProperty('--blood-depth', '18%'); }, 520);
+      deathTimeout(function () { if (deathBloodVg && RSP.phase === 'dying') deathBloodVg.style.setProperty('--blood-depth', '28%'); }, 1100);
+      deathTimeout(function () { if (deathBloodVg && RSP.phase === 'dying') deathBloodVg.style.setProperty('--blood-depth', '38%'); }, 1680);
+      deathTimeout(function () { if (deathBloodVg && RSP.phase === 'dying') deathBloodVg.style.setProperty('--blood-depth', '50%'); }, 2320);
     }
   }
 
-  lidSet(0.12, 200);
-  setTimeout(function () { lidSet(0.92, 70); }, 140);
-  setTimeout(function () { lidSet(0.16, 160); }, 230);
-  setTimeout(function () { lidSet(0.96, 80); }, 560);
-  setTimeout(function () { lidSet(0.34, 200); }, 670);
-  setTimeout(function () { lidSet(1.00, 90); }, 1080);
-  setTimeout(function () { lidSet(0.52, 240); }, 1210);
-  setTimeout(function () { lidSet(1.00, 110); }, 1680);
-  setTimeout(function () { lidSet(0.70, 280); }, 1840);
-  setTimeout(function () { lidSet(1, 720, 'cubic-bezier(.45,0,.8,.35)'); }, 2260);
+  lidSet(0.12, 160);
+  deathTimeout(function () { if (RSP.phase === 'dying') lidSet(0.92, 70); }, 140);
+  deathTimeout(function () { if (RSP.phase === 'dying') lidSet(0.16, 160); }, 230);
+  deathTimeout(function () { if (RSP.phase === 'dying') lidSet(0.96, 80); }, 560);
+  deathTimeout(function () { if (RSP.phase === 'dying') lidSet(0.34, 200); }, 670);
+  deathTimeout(function () { if (RSP.phase === 'dying') lidSet(1.00, 90); }, 1080);
+  deathTimeout(function () { if (RSP.phase === 'dying') lidSet(0.52, 240); }, 1210);
+  deathTimeout(function () { if (RSP.phase === 'dying') lidSet(1.00, 110); }, 1680);
+  deathTimeout(function () { if (RSP.phase === 'dying') lidSet(0.70, 280); }, 1840);
+  deathTimeout(function () { if (RSP.phase === 'dying') lidSet(1, 720, 'cubic-bezier(.45,0,.8,.35)'); }, 2260);
   
-  setTimeout(function () { if (deathVg) deathVg.style.animationDuration = '1.2s'; beatP = 1200; }, 900);
-  setTimeout(function () { if (deathVg) deathVg.style.animationDuration = '1.6s'; beatP = 1600; }, 1700);
-  setTimeout(function () { if (deathVg) deathVg.classList.remove('beat'); bloodBeating = false; }, 2500);
+  deathTimeout(function () { if (deathVg && RSP.phase === 'dying') deathVg.style.animationDuration = '1.2s'; beatP = 1200; }, 900);
+  deathTimeout(function () { if (deathVg && RSP.phase === 'dying') deathVg.style.animationDuration = '1.6s'; beatP = 1600; }, 1700);
+  deathTimeout(function () { if (deathVg && RSP.phase === 'dying') deathVg.classList.remove('beat'); bloodBeating = false; }, 2500);
 
-  setTimeout(function () {
+  deathTimeout(function () {
+    if (RSP.phase !== 'dying') return;
     if (deathBloodVg) {
       deathBloodVg.style.transition = 'opacity .22s ease-out, transform .22s ease-out';
       deathBloodVg.style.opacity = '0';
@@ -634,8 +678,12 @@ function startDeathAnim(cause) {
     if (deathShatter) deathShatter.style.opacity = '0';
   }, 3000);   // 睑闭合(2980)后血褪
 
-  setTimeout(function () { deathBlk.style.opacity = '1'; }, 3260);
-  setTimeout(function () {
+  deathTimeout(function () {
+    if (RSP.phase !== 'dying') return;
+    deathBlk.style.opacity = '1';
+  }, 3260);
+  deathTimeout(function () {
+    if (RSP.phase !== 'dying') return;
     if (cv) cv.classList.remove('uifx-dying');
     RSP.phase = 'black';
   }, 3340);
@@ -651,7 +699,7 @@ function buildTacticalBiosWindow(ov, isPossess) {
     '<div class="bios-haz"></div>' +
     
     '<div class="mm-modal-head bios-head">' +
-      '<div class="bios-title tb-win-title">战术面板</div>' +
+      '<div class="bios-title tb-win-title">TACTICAL PANEL</div>' +
       '<div class="bios-hud">' +
         '<div class="bios-batt"><span>PWR</span><div class="bios-batt-track"><i class="bios-batt-fill"></i></div><b class="bios-batt-pct">100%</b></div>' +
         '<div class="bios-sig"><span>LINK</span><div class="bios-siggrid"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="bios-sig-db">-8dB</span></div>' +
@@ -666,11 +714,11 @@ function buildTacticalBiosWindow(ov, isPossess) {
     '<div class="mm-modal-body bios-body tbios-panel-content" style="display:none;">' +
       (isPossess ? '' :
         '<div class="tbios-sec tbios-sec-hq">' +
-          '<div class="tbios-sec-title">出击营地</div>' +
+          '<div class="tbios-sec-title">STAGING BASE</div>' +
           '<div class="tbios-slot-hq"></div>' +
         '</div>') +
       '<div class="tbios-sec tbios-sec-kind">' +
-        '<div class="tbios-sec-title">' + (isPossess ? '接管载具' : '载具类型') + '</div>' +
+        '<div class="tbios-sec-title">' + (isPossess ? 'TAKE OVER' : 'VEH TYPE') + '</div>' +
         '<div class="tbios-slot-kind"></div>' +
       '</div>' +
     '</div>' +
@@ -720,10 +768,10 @@ function runBiosBootAnimation(win, onReady) {
   if (typeof sfxUiDi === 'function') sfxUiDi(2); else if (typeof sfxTacticalBeep === 'function') sfxTacticalBeep(2);
 
   var lines = [
-    '<div class="tbios-boot-line" style="animation-delay:0ms"><span class="tb-tag">[BOOT]</span> 系统启动... <span class="tb-ok">[OK]</span></div>',
-    '<div class="tbios-boot-line" style="animation-delay:180ms"><span class="tb-tag">[AUTH]</span> 申请访问权限... <span class="tb-ok">[GRANTED]</span></div>',
-    '<div class="tbios-boot-line" style="animation-delay:380ms"><span class="tb-tag">[LINK]</span> 同步加密数据链... <span class="tb-ok">[ONLINE]</span></div>',
-    '<div class="tbios-boot-line" style="animation-delay:580ms"><span class="tb-tag tb-hi">[READY]</span> 欢迎使用战术面板！ <span class="loader-cursor blink">_</span></div>'
+    '<div class="tbios-boot-line" style="animation-delay:0ms"><span class="tb-tag">[BOOT]</span> BOOTING... <span class="tb-ok">[OK]</span></div>',
+    '<div class="tbios-boot-line" style="animation-delay:180ms"><span class="tb-tag">[AUTH]</span> REQUESTING AUTH... <span class="tb-ok">[GRANTED]</span></div>',
+    '<div class="tbios-boot-line" style="animation-delay:380ms"><span class="tb-tag">[LINK]</span> SYNCING DATALINK... <span class="tb-ok">[ONLINE]</span></div>',
+    '<div class="tbios-boot-line" style="animation-delay:580ms"><span class="tb-tag tb-hi">[READY]</span> WELCOME TO THE TACTICAL PANEL! <span class="loader-cursor blink">_</span></div>'
   ];
 
   lines.forEach(function (lHtml) {
@@ -732,11 +780,11 @@ function runBiosBootAnimation(win, onReady) {
     bootLines.appendChild(div.firstChild);
   });
 
-  setTimeout(function () {
+  deathTimeout(function () {
     if (typeof sfxUiDi === 'function') sfxUiDi(1); else if (typeof sfxTacticalBeep === 'function') sfxTacticalBeep(1);
   }, 580);
 
-  setTimeout(function () {
+  deathTimeout(function () {
     bootScreen.style.display = 'none';
     panelContent.style.display = 'flex';
     if (foot) foot.style.display = 'flex';
@@ -745,6 +793,7 @@ function runBiosBootAnimation(win, onReady) {
 }
 
 function rspAbort() {
+  clearDeathTimers();
   RSP.pendingHide = null;
   worldUnduck(0.45);
   if (!deathOv) { RSP.phase = 'idle'; return; }
@@ -756,13 +805,13 @@ function rspAbort() {
   var cv = gameCanvas();
   if (cv) { cv.classList.remove('uifx-dying'); cv.style.transition = ''; cv.style.filter = ''; cv.style.animation = ''; }
   RSP.phase = 'idle';
-  setTimeout(function () { if (RSP.phase === 'idle') deathOv.classList.remove('on'); }, 460);
+  deathTimeout(function () { if (RSP.phase === 'idle') deathOv.classList.remove('on'); }, 460);
 }
 
 function waitUntilDeathBlack(cb) {
   if (typeof cb !== 'function') return;
-  if (RSP.phase === 'black' || RSP.phase === 'form') { cb(); return; }
-  if (RSP.phase !== 'dying') startDeathAnim('阵亡');
+  if (RSP.phase === 'black') { cb(); return; }
+  if (RSP.phase !== 'dying') startDeathAnim('KIA');
   var started = Date.now();
   function poll() {
     var due = (RSP.blackAt || 0) + 120;
@@ -776,9 +825,6 @@ function waitUntilDeathBlack(cb) {
     requestAnimationFrame(poll);
   }
   poll();
-}
-function deferToBlack(cb) {
-  waitUntilDeathBlack(cb);
 }
 
 /* ---------- ⑩ 包装游戏原生显隐 ---------- */
@@ -848,7 +894,8 @@ document.addEventListener('click', function (e) {
     win.classList.add('win-contracting');
   }
 
-  setTimeout(function () {
+  deathTimeout(function () {
+    if (RSP.phase !== 'deploying') return;
     var ok = (typeof player !== 'undefined') && player && player.alive;
     if (!ok && isResp) {
       RSP.phase = 'form';
@@ -866,9 +913,13 @@ document.addEventListener('click', function (e) {
 }, true);
 
 function wakeSeq() {
+  clearDeathTimers();
   RSP.phase = 'wake';
-  setTimeout(sfxBreath, 160);
-  setTimeout(function () {
+  deathTimeout(function () {
+    if (RSP.phase === 'wake') sfxBreath();
+  }, 160);
+  deathTimeout(function () {
+    if (RSP.phase !== 'wake') return;
     worldUnduck(1.35);
     var cv = gameCanvas();
     if (cv) {
@@ -876,8 +927,10 @@ function wakeSeq() {
       cv.style.transition = 'none';
       cv.style.filter = 'blur(6px) brightness(.7) saturate(.5)';
       requestAnimationFrame(function () { requestAnimationFrame(function () {
-        cv.style.transition = 'filter 1.15s ease-out';
-        cv.style.filter = '';
+        if (RSP.phase === 'wake') {
+          cv.style.transition = 'filter 1.15s ease-out';
+          cv.style.filter = '';
+        }
       }); });
     }
     deathBlk.style.opacity = '0';
@@ -886,7 +939,8 @@ function wakeSeq() {
     deathVg.classList.remove('beat');
     lidSet(0, 980, 'cubic-bezier(.65,0,.22,1)');
   }, 720);
-  setTimeout(function () {
+  deathTimeout(function () {
+    if (RSP.phase !== 'wake') return;
     deathOv.classList.remove('on');
     var cv = gameCanvas(); if (cv) { cv.style.transition = ''; cv.style.animation = ''; }
     RSP.phase = 'idle';
@@ -951,6 +1005,13 @@ function transitionHangarToBattle(onComplete) {
 
 /* ---------- ⑫ 对局退回主菜单转场 (Battle -> Hangar) ---------- */
 function transitionBattleToHangar(onComplete) {
+  // Last-resort settlement for an end-screen transition that is interrupted
+  // before the wrapped gameOver callback reaches its original body.
+  try {
+    if ((gameState === 'over' || window._vehicleTechMatchEnded === true) && window.vehicleTechSettleMatch) {
+      window.vehicleTechSettleMatch(!!window._vehicleTechMatchWin, typeof kills === 'number' ? kills : 0);
+    }
+  } catch (eVehicleXpExit) {}
   worldUnduck(0.8);   // §6:局内死亡压制(master 6%)可能残留到结算后,回车库先恢复(否则菜单音效哑 ~19dB 到下次进局)
   var pausePanel = document.querySelector('#pauseov .bios-pause-panel') || document.getElementById('pauseov');
   var endPanel = document.querySelector('#endov .tactical-bios-window') || document.getElementById('endov');
@@ -995,6 +1056,8 @@ function transitionBattleToHangar(onComplete) {
           curView = 'mainmenu';
           if (_smv) _smv('mainmenu');
           mmSync('mainmenu');
+          if (typeof refreshGameModeUI === 'function') refreshGameModeUI();
+          if (typeof window.vehicleTechRefreshUI === 'function') window.vehicleTechRefreshUI();
           if (typeof Hangar3D !== 'undefined') {
             try { if (Hangar3D.pause) Hangar3D.pause(); } catch (e1) {}
             try { if (Hangar3D.resume) Hangar3D.resume(); } catch (e2) {}
@@ -1030,9 +1093,9 @@ function mmSync(name) {
   var t = document.getElementById('mm-panel-title');
   var e = document.getElementById('mm-panel-en');
   var map = {
-    mainmenu: ['车库整备', 'HANGAR // VEHICLE INSPECTION'],
-    startsub: ['遭遇战', 'SKIRMISH // BATTLE PARAMETERS'],
-    settingssub: ['游戏设置', 'SETTINGS // AUDIO & CONTROLS']
+    mainmenu: ['HANGAR', 'HANGAR // VEHICLE INSPECTION'],
+    startsub: ['SKIRMISH', 'SKIRMISH // BATTLE PARAMETERS'],
+    settingssub: ['SETTINGS', 'SETTINGS // AUDIO & CONTROLS']
   };
   var m = map[name] || map.mainmenu;
   if (t) t.textContent = m[0];
@@ -1080,6 +1143,7 @@ window.uifxReturnToMenu = function () {
   curView = 'mainmenu';
   if (_smv) _smv('mainmenu');
   mmSync('mainmenu');
+  if (typeof refreshGameModeUI === 'function') refreshGameModeUI();
   if (typeof playMenuBgm === 'function') playMenuBgm();
 };
 
@@ -1093,7 +1157,7 @@ function btnOf(n) {
 function isCombatBtn(b) {
   if (!b.classList || !b.classList.contains('bigbtn')) return false;
   var t = (b.textContent || '').replace(/\s+/g, '');
-  return t === '主菜单' || t === '开始战斗' || t === '开始游戏' || t === '出击' ||
+  return t === 'MAIN MENU' || t === 'TO BATTLE' || t === 'START GAME' || t === 'DEPLOY' || t === 'HANGER' || t === 'Hanger' ||
          b.id === 'startbtn' || (b.id && b.id.indexOf('menubtn-') === 0);
 }
 
@@ -1128,7 +1192,7 @@ document.addEventListener('pointerenter', function (e) {
 }, true);
 
 document.addEventListener('click', function (e) {
-  var hangarBtn = e.target && e.target.closest && e.target.closest('#menubtn-battle, #menubtn-settings');
+  var hangarBtn = e.target && e.target.closest && e.target.closest('#menubtn-battle, #menubtn-settings, #menubtn-achievements');
   if (hangarBtn && typeof sfxUiDi === 'function') sfxUiDi(2);
   var b = btnOf(e.target);
   if (b && !b.disabled) {
@@ -1170,9 +1234,9 @@ document.addEventListener('keydown', function () { gameAC(); }, true);
 function resetEndStats() { END.bail = END.lost = END.kill = END.capt = 0; }
 function noteKill(t, cause) {
   if (!t || !t.alive || (typeof UNIT_ALIVE !== 'undefined' && t.unitState !== UNIT_ALIVE)) return;
-  var ab = cause === '弃车' || cause === '主动弃车';
+  var ab = cause === 'ABANDONED';
   var mine = false;
-  try { mine = t.team === (typeof pSide === 'function' ? pSide() : startSide); } catch (e) { mine = t.team === 'ally'; }
+  try { mine = !isFfaMode() && t.team === (typeof pSide === 'function' ? pSide() : startSide); } catch (e) { mine = t.team === 'red'; }
   if (mine) { if (ab) END.bail++; else END.lost++; }
   else { if (ab) END.capt++; else END.kill++; }
 }
@@ -1186,7 +1250,7 @@ function buildEndDebrief(ov) {
     '<div class="bios-haz"></div>' +
     
     '<div class="mm-modal-head bios-head">' +
-      '<div class="bios-title tb-end-title">战术面板</div>' +
+      '<div class="bios-title tb-end-title">TACTICAL PANEL</div>' +
       '<div class="bios-hud">' +
         '<div class="bios-batt"><span>PWR</span><div class="bios-batt-track"><i class="bios-batt-fill"></i></div><b class="bios-batt-pct">82%</b></div>' +
         '<div class="bios-sig"><span>LINK</span><div class="bios-siggrid"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="bios-sig-db">-14dB</span></div>' +
@@ -1196,24 +1260,28 @@ function buildEndDebrief(ov) {
 
     '<div class="mm-modal-body bios-body tbios-panel-content">' +
       '<div class="tbios-sec">' +
-        '<div class="tbios-sec-title" id="tbios-end-headline" style="font-size:18px;color:#c8ffc0;text-align:center;">会战结束</div>' +
+        '<div class="tbios-sec-title" id="tbios-end-headline" style="font-size:18px;color:#c8ffc0;text-align:center;">BATTLE OVER</div>' +
         '<div class="tbios-end-grid">' +
           '<div class="tbios-end-card">' +
-            '<div class="tbios-end-head">我方战损</div>' +
-            '<div class="tbios-end-val"><strong id="tbios-end-lost">0</strong> 车组牺牲</div>' +
-            '<div class="tbios-end-val"><strong id="tbios-end-bail">0</strong> 车组撤离</div>' +
+            '<div class="tbios-end-head" id="tbios-end-own-head">FRIENDLY LOSSES</div>' +
+            '<div class="tbios-end-val"><strong id="tbios-end-lost">0</strong> CREWS LOST</div>' +
+            '<div class="tbios-end-val"><strong id="tbios-end-bail">0</strong> CREWS BAILED</div>' +
           '</div>' +
           '<div class="tbios-end-card">' +
-            '<div class="tbios-end-head">敌方战果</div>' +
-            '<div class="tbios-end-val"><strong id="tbios-end-kill">0</strong> 击毁敌载具</div>' +
-            '<div class="tbios-end-val"><strong id="tbios-end-capt">0</strong> 俘获敌载具</div>' +
+            '<div class="tbios-end-head" id="tbios-end-foe-head">ENEMY TALLY</div>' +
+            '<div class="tbios-end-val"><strong id="tbios-end-kill">0</strong> FOE VEH KILLED</div>' +
+            '<div class="tbios-end-val"><strong id="tbios-end-capt">0</strong> FOE VEH CAPTURED</div>' +
           '</div>' +
         '</div>' +
+      '</div>' +
+      '<div class="tbios-xp-reward" id="tbios-end-xp" aria-live="polite">' +
+        '<span class="tbios-xp-star">★</span><span class="tbios-xp-label">EXPERIENCE EARNED</span><strong id="tbios-end-xp-total">+0 XP</strong>' +
+        '<span id="tbios-end-xp-breakdown">COMPLETION +5 // VICTORY +0 // KILLS +0</span>' +
       '</div>' +
     '</div>' +
 
     '<div class="mm-modal-foot bios-foot tbios-foot" style="gap:12px;">' +
-      '<div class="tbios-end-actions" style="display:flex;gap:12px;justify-content:center;width:100%;"></div>' +
+      '<div class="tbios-end-actions" style="display:flex;gap:12px;justify-content:center;align-items:center;width:100%;flex-wrap:wrap;"></div>' +
     '</div>' +
 
     '<div class="bios-status"><span>CH-04 <b class="ok">SYNC</b></span><span>REPORT <b class="ok">ARCHIVED</b></span><span>AUTH <b class="ok">FORWARD</b></span></div>' +
@@ -1226,18 +1294,78 @@ function buildEndDebrief(ov) {
 
 function ensureEndUI() {
   if (typeof el === 'undefined' || !el || !el.endov) return;
-  if (endModal) return;
-  endModal = buildEndDebrief(el.endov);
+  if (!endModal) {
+    endModal = buildEndDebrief(el.endov);
+  }
   var act = endModal.querySelector('.tbios-end-actions');
-  if (el.restartbtn) act.appendChild(el.restartbtn);
-  if (el.continuebtn) act.appendChild(el.continuebtn);
+  if (act) {
+    if (el.continuebtn && !act.contains(el.continuebtn)) act.appendChild(el.continuebtn);
+    if (el.airSupportBtn && !act.contains(el.airSupportBtn)) act.appendChild(el.airSupportBtn);
+    if (el.restartbtn && !act.contains(el.restartbtn)) act.appendChild(el.restartbtn);
+  }
+}
+
+function fillEndExperience() {
+  if (!endModal) return;
+  var reward = (typeof window !== 'undefined' && window._vehicleTechLastXpReward) || null;
+  var total = reward ? reward.total : 0;
+  var completion = reward ? reward.completion : 5;
+  var victory = reward ? reward.victory : 0;
+  var killsXp = reward ? reward.kills : 0;
+  var totalEl = endModal.querySelector('#tbios-end-xp-total');
+  var breakdownEl = endModal.querySelector('#tbios-end-xp-breakdown');
+  if (totalEl) totalEl.textContent = '+' + total + ' XP';
+  if (breakdownEl) breakdownEl.textContent = 'COMPLETION +' + completion + ' // VICTORY +' + victory + ' // KILLS +' + killsXp;
 }
 
 function fillEndReport(win) {
   if (!endModal) return;
+  ensureEndUI();
+  fillEndExperience();
+  if (el.continuebtn) el.continuebtn.classList.toggle('hidden', !win);
+  if (el.airSupportBtn) el.airSupportBtn.classList.toggle('hidden', isFfaMode() || !!win);
+  var myName, foeName;
+  if (isFfaMode()) {
+    myName = 'PERSONAL RESULT'; foeName = 'FREE-FOR-ALL STATUS';
+    var fOwn = endModal.querySelector('#tbios-end-own-head');
+    var fFoe = endModal.querySelector('#tbios-end-foe-head');
+    var fTitle = endModal.querySelector('#tbios-end-headline');
+    if (fOwn) fOwn.textContent = 'PERSONAL RESULT';
+    if (fFoe) fFoe.textContent = 'SURVIVOR BOARD';
+    if (fTitle) {
+      fTitle.textContent = win ? '[*] VICTORY! LAST SURVIVOR [*]' : 'DEFEAT! ELIMINATED';
+      fTitle.style.color = win ? '#9dffa8' : '#ff5d55';
+    }
+    var fLost = endModal.querySelector('#tbios-end-lost');
+    var fBail = endModal.querySelector('#tbios-end-bail');
+    var fKill = endModal.querySelector('#tbios-end-kill');
+    var fCapt = endModal.querySelector('#tbios-end-capt');
+    if (fLost) fLost.textContent = kills;
+    if (fBail) fBail.textContent = typeof ffaPlayerRank === 'function' ? ffaPlayerRank() : (win ? 1 : 0);
+    if (fKill) fKill.textContent = ffaState.reserves;
+    if (fCapt) fCapt.textContent = ffaAliveCount();
+    var fLostRow = fLost && fLost.parentNode;
+    var fBailRow = fBail && fBail.parentNode;
+    var fKillRow = fKill && fKill.parentNode;
+    var fCaptRow = fCapt && fCapt.parentNode;
+    if (fLostRow) fLostRow.lastChild.textContent = ' PLAYER KILLS';
+    if (fBailRow) fBailRow.lastChild.textContent = ' FINAL RANK';
+    if (fKillRow) fKillRow.lastChild.textContent = ' RESERVE VEHICLES';
+    if (fCaptRow) fCaptRow.lastChild.textContent = ' SURVIVORS LEFT';
+    return;
+  }
+  try {
+    var ps = (typeof pSide === 'function') ? pSide() : startSide;
+    myName = (ps === 'red') ? 'RED' : 'BLUE';
+  } catch (e) { myName = 'RED'; }
+  foeName = (myName === 'RED') ? 'BLUE' : 'RED';
+  var ownHead = endModal.querySelector('#tbios-end-own-head');
+  if (ownHead) ownHead.textContent = myName + ' LOSSES';
+  var foeHead = endModal.querySelector('#tbios-end-foe-head');
+  if (foeHead) foeHead.textContent = foeName + ' TALLY';
   var t = endModal.querySelector('#tbios-end-headline');
   if (t) {
-    t.textContent = win ? '★ 会战胜利！我军已夺取目标阵地！ ★' : '会战失败！敌军已夺取阵地！';
+    t.textContent = win ? '[*] VICTORY! OBJECTIVE TAKEN! [*]' : 'DEFEAT! ' + foeName + ' TOOK THE OBJECTIVE!';
     t.style.color = win ? '#9dffa8' : '#ff5d55';
   }
   var elLost = endModal.querySelector('#tbios-end-lost');
@@ -1270,6 +1398,48 @@ function endContinue() {
   }, 220);
 }
 
+function endAirSupport() {
+  if (typeof sfxUiDi === 'function') sfxUiDi(2);
+
+  function executeAirSupport() {
+    var mySide = (typeof pSide === 'function') ? pSide() : (startSide || 'red');
+    if (typeof teamPool !== 'undefined') {
+      teamPool[mySide] = (teamPool[mySide] || 0) + 50;
+    }
+    if (el.poolr && el.poolb && typeof updatePoolBar === 'function') updatePoolBar();
+    if (typeof logMsg === 'function') logMsg('★ AIR REINFORCEMENTS ARRIVED: +50 FORCES!', 'sys');
+
+    RSP.phase = 'endleave';
+    if (endModal) {
+      endModal.classList.remove('win-expanding');
+      endModal.classList.add('win-contracting');
+    }
+    setTimeout(function () {
+      if (el && el.endov) el.endov.classList.add('hidden');
+      if (endModal) endModal.classList.remove('win-contracting');
+      try {
+        freePlay = true;
+        gameState = 'playing';
+        if (window.CrazyGamesAdapter) window.CrazyGamesAdapter.gameplayStart();
+        if (player && !player.alive && typeof redeployPlayer === 'function') {
+          redeployPlayer();
+        } else if (player && player.alive) {
+          if (typeof attemptLock === 'function') attemptLock();
+        } else {
+          respawnT = 1.6;
+        }
+        if (typeof updateLockHint === 'function') updateLockHint();
+        if (typeof window._touchUISync === 'function') window._touchUISync();
+        worldUnduck(0.4);
+      } catch (err) {}
+      wakeSeq();
+    }, 220);
+  }
+
+  executeAirSupport();
+}
+window.endAirSupport = endAirSupport;
+
 if (typeof window.killTank === 'function') {
   var _kt = window.killTank;
   window.killTank = function (t, cause) {
@@ -1289,6 +1459,18 @@ if (typeof window.spawnTeams === 'function') {
 if (typeof window.gameOver === 'function') {
   var _gov = window.gameOver;
   window.gameOver = function (win, cause) {
+    // Settle XP before the delayed death/terminal animation.  The animation can be
+    // interrupted by HANGER or RESUME, so waiting only for flow.js' delayed body
+    // leaves the reward uncommitted when the player exits immediately.
+    try {
+      if (window.vehicleTechSettleMatch) window.vehicleTechSettleMatch(!!win, typeof kills === 'number' ? kills : 0);
+      window._vehicleTechMatchEnded = true;
+      window._vehicleTechMatchWin = !!win;
+    } catch (eVehicleXpUi) {}
+    // 结算动画/战报 DOM 即使降级，成就暂存也必须先完成一次性提交；flow.js 原函数内还有幂等兜底。
+    try {
+      if (window.Achievements && typeof window.Achievements.commitMatch === 'function') window.Achievements.commitMatch();
+    } catch (eAchReport) {}
     if (RSP.phase === 'endblink' || RSP.phase === 'endpending' || RSP.phase === 'endform' || RSP.phase === 'endleave') return;   // 防重入:原 gameOver 延迟 880ms 执行,battleCheck 在窗口内会二次触发(此前表现为弹窗后眼皮回放一次)
     ensureEndUI();
     var go = function () {
@@ -1326,13 +1508,16 @@ if (typeof window.gameOver === 'function') {
 }
 
 document.addEventListener('click', function (e) {
-  if (RSP.phase !== 'endform') return;
   var b = btnOf(e.target);
   if (!b || b.disabled) return;
-  if (el && el.continuebtn && b === el.continuebtn) {
+  if (el && el.continuebtn && (b === el.continuebtn || el.continuebtn.contains(b))) {
     e.stopImmediatePropagation();
     e.preventDefault();
     endContinue();
+  } else if ((b && b.id === 'airsupportbtn') || (el && el.airSupportBtn && (b === el.airSupportBtn || el.airSupportBtn.contains(b)))) {
+    e.stopImmediatePropagation();
+    e.preventDefault();
+    endAirSupport();
   }
 }, true);
 
@@ -1345,6 +1530,47 @@ if (typeof window.playerDied === 'function') {
   };
 }
 
+function bindResetAllDataUI() {
+  var openBtn = document.getElementById('reset-all-btn');
+  var dialog = document.getElementById('reset-all-confirm');
+  var yes = document.getElementById('reset-all-yes');
+  var no = document.getElementById('reset-all-no');
+  if (!openBtn || !dialog || !yes || !no) return;
+  function closeDialog() {
+    dialog.classList.add('hidden');
+    dialog.setAttribute('aria-hidden', 'true');
+  }
+  openBtn.addEventListener('click', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    dialog.classList.remove('hidden');
+    dialog.setAttribute('aria-hidden', 'false');
+  });
+  no.addEventListener('click', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    closeDialog();
+  });
+  yes.addEventListener('click', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      if (window.localStorage) window.localStorage.clear();
+    } catch (err) {}
+    // Reload so every in-memory archive, upgrade cache, and preference is reset
+    // together with the localStorage data.
+    try {
+      if (window.location && typeof window.location.reload === 'function') window.location.reload();
+    } catch (errReload) {}
+  });
+  dialog.addEventListener('click', function (e) {
+    if (e.target === dialog) closeDialog();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !dialog.classList.contains('hidden')) closeDialog();
+  });
+}
+bindResetAllDataUI();
 mmSync(curView || 'mainmenu');
 function mmTick() {
   var c = document.getElementById('mm-clock');
@@ -1356,15 +1582,13 @@ function mmTick() {
 mmTick();
 setInterval(mmTick, 1000);
 
-/* ==================== 战术 3D 机库系统 (Line-Art & In-Game Cartoon 3-Theme + Armor & Module X-Ray Intel) ==================== */
+/* ==================== Tactical garage and armor/module inspection ==================== */
 var Hangar3D = (function () {
   var canvas, renderer, scene, camera;
   var envGroup, curTankObj = null;
-  var curTeam = 'ally', curKind = 'tank';
+  var curTeam = 'red', curKind = '99';
 
-  // 3 种风格循环模式: 0 = 战场实色卡通 (Cartoon Solid / 默认), 1 = 暗夜黑金 (Dark Night), 2 = 图纸白墨 (Blueprint)
-  var styleMode = 0;
-  var STYLE_NAMES = ['◐ 实色', '◐ 暗夜', '◐ 图纸'];
+  // The garage uses one fixed tactical presentation.
 
   // 检视模式 (Module X-Ray 模块透视视角)
   var inspectMode = false;
@@ -1393,14 +1617,14 @@ var Hangar3D = (function () {
 
   // 内部模块与装甲数据字典
   var PV_FACE_NAMES = {
-    front: '正面装甲', rear: '后部装甲', side_l: '左侧装甲', side_r: '右侧装甲',
-    side: '侧面装甲', top: '顶部装甲', bottom: '底部装甲', roof: '顶部装甲', belly: '底部装甲',
-    mantle: '主炮防盾', mantlet: '主炮防盾', turret_side: '炮塔侧面',
-    turret_rear: '炮塔后部', turret_roof: '炮塔顶部', dome: '铸造穹顶',
-    hullshell: '车体首上', m1hull: '车体正面复合装甲', m1turret: '炮塔楔形复合装甲',
-    t99hull: '车体首上复合装甲', t99turret: '炮塔重型反应装甲', ring: '座圈防护带',
-    trackL: '右侧履带/行动机构', trackR: '左侧履带/行动机构',
-    rotor: '主旋翼系统', tailRotor: '尾桨抗扭系统', gun: '主炮身管/火控系统'
+    front: 'FRONTAL ARMOR', rear: 'REAR ARMOR', side_l: 'LEFT ARMOR', side_r: 'RIGHT ARMOR',
+    side: 'SIDE ARMOR', top: 'ROOF ARMOR', bottom: 'BELLY ARMOR', roof: 'ROOF ARMOR', belly: 'BELLY ARMOR',
+    mantle: 'MANTLET', mantlet: 'MANTLET', turret_side: 'TURRET SIDE',
+    turret_rear: 'TURRET REAR', turret_roof: 'TURRET ROOF', dome: 'CAST DOME',
+    hullshell: 'UPPER GLACIS', m1hull: 'HULL COMPOSITE', m1turret: 'TURRET WEDGE',
+    t99hull: 'HULL COMPOSITE', t99turret: 'TURRET ERA', ring: 'TURRET RING',
+    trackL: 'R TRACK / DRIVE', trackR: 'L TRACK / DRIVE',
+    rotor: 'MAIN ROTOR', tailRotor: 'TAIL ROTOR', gun: 'GUN / FCS'
   };
 
   // 全载具统一高科技战术全息内构色板 (Unified Holographic X-Ray Palette)
@@ -1421,92 +1645,92 @@ var Hangar3D = (function () {
   function pvFaceOf(ln, force) {
     if (force && PV_FACE_NAMES[force]) return PV_FACE_NAMES[force];
     var ax = Math.abs(ln.x), ay = Math.abs(ln.y), az = Math.abs(ln.z);
-    if (ay >= ax && ay >= az) return ln.y > 0 ? '顶部装甲' : '底部装甲';
-    if (az >= ax) return ln.z > 0 ? '正面装甲' : '后部装甲';
-    return (ln.x > 0 ? '右侧装甲' : '左侧装甲');
+    if (ay >= ax && ay >= az) return ln.y > 0 ? 'ROOF ARMOR' : 'BELLY ARMOR';
+    if (az >= ax) return ln.z > 0 ? 'FRONTAL ARMOR' : 'REAR ARMOR';
+    return (ln.x > 0 ? 'RIGHT ARMOR' : 'LEFT ARMOR');
   }
 
   // 载具全套规格与情报字典
   var VEH_DATA = {
-    ally: {
+    red: {
       tank: {
-        name: '59式 中型坦克', sub: 'TYPE 59 MBT',
-        fire: '100mm 线膛炮', fireSub: '穿深 220mm · 初速 1480m/s',
-        armor: 'RHA 均质装甲钢', armorSub: '首上 100mm / 炮塔 200mm',
-        speed: '50 km/h', speedSub: '12150L 520马力柴油机',
-        hp: '1800 HP', hpSub: '战备完好率 100%'
+        name: 'RED-MBT-1', sub: 'RED-MEDIUM TANK',
+        fire: '100mm rifled gun', fireSub: 'PEN 220mm - MV 1480m/s',
+        armor: 'RHA steel', armorSub: 'Glacis 100mm / Turret 200mm',
+        speed: '50 km/h', speedSub: '520HP diesel',
+        hp: '1800 HP', hpSub: 'Readiness 100%'
       },
       '99': {
-        name: '99式 主战坦克', sub: 'ZTZ-99A MBT',
-        fire: '125mm 高压滑膛炮', fireSub: '穿深 680mm · 自动装弹机',
-        armor: '重型复合装甲+反应装甲', armorSub: '正面等效 >1000mm(FY-4)',
-        speed: '70 km/h', speedSub: '1500马力涡轮增压柴油机',
-        hp: '3200 HP', hpSub: '战备完好率 100%'
+        name: 'RED-MBT-2', sub: 'RED-HEAVY MBT',
+        fire: '125mm smoothbore gun', fireSub: 'PEN 680mm - Autoloader',
+        armor: 'Heavy composite + ERA', armorSub: 'Frontal >1000mm',
+        speed: '70 km/h', speedSub: '1500HP turbo diesel',
+        hp: '3200 HP', hpSub: 'Readiness 100%'
       },
       td: {
-        name: 'PTZ-89 89式自行反坦克炮', sub: 'PTZ-89 TD',
-        fire: '120mm 高膛压滑膛炮', fireSub: '穿深 550mm · 半自动装填',
-        armor: '高硬度均质装甲钢', armorSub: '车体 50mm / 炮塔 80mm',
-        speed: '55 km/h', speedSub: '520马力增压柴油机',
-        hp: '1600 HP', hpSub: '战备完好率 100%'
+        name: 'RED-TD', sub: 'RED-TANK DESTROYER',
+        fire: '120mm smoothbore gun', fireSub: 'PEN 832mm - MV 1700m/s - Semi-auto loader',
+        armor: 'High-hardness RHA', armorSub: 'Hull 50mm / Turret 80mm',
+        speed: '55 km/h', speedSub: '520HP supercharged diesel',
+        hp: '1600 HP', hpSub: 'Readiness 100%'
       },
       wz10: {
-        name: '直-10 武装直升机', sub: 'WZ-10 ATTACK HELI',
-        fire: '火蛇-70A 制导火箭 + PL-5C 格斗弹', fireSub: '70mm 惯导火箭 6km · 红外近距弹 16km',
-        armor: '防弹装甲板 + 自封油箱', armorSub: '座舱抗 12.7mm 穿甲弹',
-        speed: '280 km/h', speedSub: '涡轴-9 双发涡轮轴发动机',
-        hp: '1500 HP', hpSub: '战备完好率 100%'
+        name: 'RED-HELI', sub: 'RED-ATTACK HELI',
+        fire: '70mm rockets + Missiles', fireSub: '70mm guided rockets / Air-to-air missiles',
+        armor: 'Armored plate + self-seal tank', armorSub: 'Cockpit vs 12.7mm AP',
+        speed: '280 km/h', speedSub: 'Twin turboshaft',
+        hp: '1500 HP', hpSub: 'Readiness 100%'
       },
       arty: {
-        name: 'PHL-11 122mm 轮式自行火箭炮', sub: 'PHL-11 MLRS',
-        fire: '40联装 122mm 火箭弹齐射', fireSub: '最大射程 40km · 单发伤害 60 · 装填 40s',
-        armor: '驾驶室轻型防破片装甲', armorSub: '万山 WS2400 系高机动越野底盘',
-        speed: '80 km/h', speedSub: '涡轮增压柴油重型越野底盘',
-        hp: '1300 HP', hpSub: '战备完好率 100%'
+        name: 'RED-MLRS', sub: 'RED-ROCKET ARTILLERY',
+        fire: '40x 122mm rocket salvo', fireSub: '122mm multiple rocket launcher',
+        armor: 'Light frag cab', armorSub: 'High-mobility chassis',
+        speed: '80 km/h', speedSub: 'Turbo diesel off-road chassis',
+        hp: '1300 HP', hpSub: 'Readiness 100%'
       },
       aa: {
-        name: 'PGZ-95 自行高炮', sub: 'PGZ-95 SPAAG',
-        fire: '4×飞弩-6 防空导弹 + 2×双联 25mm 机炮', fireSub: '红外格斗弹 6km · 双联机炮=直升机机炮性能',
-        armor: '轻型焊接装甲车体', armorSub: '车载 CLC-1 搜索雷达(游戏口径=直升机火控雷达范围,光标指向搜索)',
-        speed: '53 km/h', speedSub: '履带底盘,伴随机械化部队野战防空',
-        hp: '1300 HP', hpSub: '战备完好率 100%'
+        name: 'RED-AA', sub: 'RED-AIR DEFENSE',
+        fire: '4x SAM missiles + Twin 25mm autocannon', fireSub: 'Surface-to-air missiles / 25mm twin cannon',
+        armor: 'Light welded hull', armorSub: 'Air search radar',
+        speed: '53 km/h', speedSub: 'Tracked ADA escort chassis',
+        hp: '1300 HP', hpSub: 'Readiness 100%'
       }
     },
-    enemy: {
+    blue: {
       tank: {
-        name: 'M60A1 巴顿坦克', sub: 'M60A1 PATTON',
-        fire: '105mm M68 线膛炮', fireSub: '穿深 260mm · APFSDS穿甲弹',
-        armor: '铸造均质装甲钢', armorSub: '首上 109mm / 炮塔 254mm',
-        speed: '48 km/h', speedSub: 'AVDS-1790 750马力柴油机',
-        hp: '2000 HP', hpSub: '战备完好率 100%'
+        name: 'BLUE-MBT-1', sub: 'BLUE-MEDIUM TANK',
+        fire: '105mm rifled gun', fireSub: 'PEN 260mm - APFSDS',
+        armor: 'Cast RHA', armorSub: 'Glacis 109mm / Turret 254mm',
+        speed: '48 km/h', speedSub: '750HP diesel',
+        hp: '2000 HP', hpSub: 'Readiness 100%'
       },
       td: {
-        name: 'M1A1 艾布拉姆斯', sub: 'M1A1 ABRAMS MBT',
-        fire: '120mm M256 滑膛炮', fireSub: '穿深 600mm · 尾翼稳定脱壳穿甲弹',
-        armor: '贫铀复合装甲', armorSub: '正面等效 >850mm(DU Armor)',
-        speed: '67 km/h', speedSub: 'AGT-1500 燃气轮机',
-        hp: '3000 HP', hpSub: '战备完好率 100%'
+        name: 'BLUE-MBT-2', sub: 'BLUE-HEAVY MBT',
+        fire: '120mm smoothbore gun', fireSub: 'PEN 600mm - APFSDS',
+        armor: 'Composite armor', armorSub: 'Frontal >850mm',
+        speed: '67 km/h', speedSub: 'Gas turbine engine',
+        hp: '3000 HP', hpSub: 'Readiness 100%'
       },
       ah64: {
-        name: 'AH-64d 阿帕奇武装直升机', sub: 'AH-64D LONGBOW APACHE',
-        fire: 'Hyper-70 火箭 + AIM-92 毒刺', fireSub: '70mm 航空火箭 8km · 红外空空弹 8km',
-        armor: '凯夫拉/陶瓷装甲座舱', armorSub: '抗 23mm 高炮直射',
-        speed: '290 km/h', speedSub: 'T700-GE-701C 双发涡轮轴',
-        hp: '1650 HP', hpSub: '战备完好率 100%'
+        name: 'BLUE-HELI', sub: 'BLUE-ATTACK HELI',
+        fire: '70mm rockets + Missiles', fireSub: '70mm unguided rockets / Air-to-air missiles',
+        armor: 'Armored cockpit', armorSub: 'Vs 23mm direct fire',
+        speed: '290 km/h', speedSub: 'Twin turboshaft',
+        hp: '1650 HP', hpSub: 'Readiness 100%'
       },
       arty: {
-        name: 'M142 海马斯高机动火箭炮', sub: 'M142 HIMARS',
-        fire: '6联装 227mm GMLRS 制导火箭弹齐射', fireSub: '最大射程 40km · 单发伤害 120 · 装填 12s',
-        armor: '装甲驾驶室', armorSub: 'FMTV M1140 6×6 中型战术车底盘',
-        speed: '85 km/h', speedSub: '卡特彼勒 C7 柴油机 330马力',
-        hp: '1300 HP', hpSub: '战备完好率 100%'
+        name: 'BLUE-MLRS', sub: 'BLUE-ROCKET ARTILLERY',
+        fire: '6x 227mm rocket salvo', fireSub: '227mm multiple rocket launcher',
+        armor: 'Armored cab', armorSub: '6x6 tactical chassis',
+        speed: '85 km/h', speedSub: '330HP turbo diesel',
+        hp: '1300 HP', hpSub: 'Readiness 100%'
       },
       aa: {
-        name: 'AN/TWQ-1 复仇者防空系统', sub: 'AN/TWQ-1 AVENGER',
-        fire: '8×FIM-92 毒刺防空导弹', fireSub: '红外弹 8km · 发射后不管(弹载导引头自搜索)',
-        armor: '悍马轻装甲', armorSub: 'M1097A2 重型悍马 4×4 底盘 · 无车载雷达',
-        speed: '89 km/h', speedSub: '底特律柴油机 V8 6.2L 135hp',
-        hp: '1300 HP', hpSub: '战备完好率 100%'
+        name: 'BLUE-AA', sub: 'BLUE-AIR DEFENSE',
+        fire: '8x SAM missiles', fireSub: 'Surface-to-air missiles - Fire-and-forget',
+        armor: 'Light armored 4x4', armorSub: '4x4 tactical chassis',
+        speed: '89 km/h', speedSub: 'V8 diesel',
+        hp: '1300 HP', hpSub: 'Readiness 100%'
       }
     }
   };
@@ -1520,15 +1744,11 @@ var Hangar3D = (function () {
   var meshMatOrange, meshMatWhite, meshMatScreen, meshMatBrass, meshMatCabinetBlue, meshMatGlass;
 
   function initMaterials() {
-    var isCartoon = (styleMode === 0);
-    var isDark = (styleMode === 1);
-    var isBlueprint = (styleMode === 2);
-
-    var cDark = isDark ? 0xd9a72e : (isCartoon ? 0x141610 : 0x141610);
-    var cGold = isDark ? 0x6bb39b : 0xd9a72e;
-    var cSubtle = isDark ? 0x4a5848 : (isCartoon ? 0x3d4638 : 0x8a927a);
+    var cDark = 0x141610;
+    var cGold = 0xd9a72e;
+    var cSubtle = 0x3d4638;
     var cRed = 0xb0442f;
-    var cCyan = isDark ? 0x44ddaa : 0x228866;
+    var cCyan = 0x228866;
 
     lineMatDark = new THREE.LineBasicMaterial({ color: cDark, linewidth: 1.5, fog: true });
     lineMatGold = new THREE.LineBasicMaterial({ color: cGold, linewidth: 1.5, fog: true });
@@ -1536,7 +1756,6 @@ var Hangar3D = (function () {
     lineMatRed = new THREE.LineBasicMaterial({ color: cRed, linewidth: 1.5, fog: true });
     lineMatCyan = new THREE.LineBasicMaterial({ color: cCyan, linewidth: 1.5, fog: true });
 
-    if (isCartoon) {
       meshMatFloor = new THREE.MeshLambertMaterial({ color: 0x384036, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
       meshMatTurntable = new THREE.MeshLambertMaterial({ color: 0x272e24, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
       meshMatWall = new THREE.MeshLambertMaterial({ color: 0x2e362c, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
@@ -1563,48 +1782,14 @@ var Hangar3D = (function () {
       meshMatGlass = new THREE.MeshLambertMaterial({ color: 0x3b6278, transparent: true, opacity: 0.65, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1, fog: true });
       meshMatBackdrop = new THREE.MeshLambertMaterial({ color: 0x232920, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
       meshMatTank = null;
-    } else {
-      var baseBg = isDark ? 0x181c15 : 0xd8d1be;
-      var baseMeshBg = isDark ? 0x20261c : 0xd6ceb6;
-      var wallMeshBg = isDark ? 0x1d2319 : 0xd2cabb;
-      var propMeshBg = isDark ? 0x242c1f : 0xcbc3a5;
-      var tankMeshBg = isDark ? 0x263022 : 0xded8cc;
-
-      meshMatFloor = new THREE.MeshBasicMaterial({ color: baseBg, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
-      meshMatTurntable = new THREE.MeshBasicMaterial({ color: baseMeshBg, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
-      meshMatWall = new THREE.MeshBasicMaterial({ color: wallMeshBg, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
-      meshMatDoor = new THREE.MeshBasicMaterial({ color: propMeshBg, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
-      meshMatSteel = new THREE.MeshBasicMaterial({ color: propMeshBg, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
-      meshMatCrane = new THREE.MeshBasicMaterial({ color: isDark ? 0x2e3828 : 0xd4ccb4, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
-      meshMatHoist = new THREE.MeshBasicMaterial({ color: propMeshBg, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
-      meshMatCrate1 = new THREE.MeshBasicMaterial({ color: propMeshBg, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
-      meshMatCrate2 = new THREE.MeshBasicMaterial({ color: propMeshBg, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
-      meshMatCrateBand = new THREE.MeshBasicMaterial({ color: baseMeshBg, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
-      meshMatDrumGreen = new THREE.MeshBasicMaterial({ color: propMeshBg, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
-      meshMatDrumRed = new THREE.MeshBasicMaterial({ color: isDark ? 0x5a2d24 : 0xdfcbba, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
-      meshMatDrumRing = new THREE.MeshBasicMaterial({ color: baseMeshBg, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true, side: THREE.DoubleSide });
-      meshMatLampStand = new THREE.MeshBasicMaterial({ color: propMeshBg, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
-      meshMatLampHead = new THREE.MeshBasicMaterial({ color: propMeshBg, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
-      meshMatLampLens = new THREE.MeshBasicMaterial({ color: isDark ? 0x6bb39b : 0xd9a72e, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1, fog: true });
-      meshMatHazardYellow = new THREE.MeshBasicMaterial({ color: isDark ? 0xd9a72e : 0xd9a72e, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1, fog: true, side: THREE.DoubleSide });
-      meshMatHazardBlack = new THREE.MeshBasicMaterial({ color: isDark ? 0x141610 : 0x141610, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1, fog: true });
-      meshMatOrange = new THREE.MeshBasicMaterial({ color: isDark ? 0x904a25 : 0xdba27c, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1, fog: true });
-      meshMatWhite = new THREE.MeshBasicMaterial({ color: isDark ? 0x5a6654 : 0xeee8d8, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1, fog: true });
-      meshMatScreen = new THREE.MeshBasicMaterial({ color: isDark ? 0x44ddaa : 0x339977, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1, fog: true });
-      meshMatBrass = new THREE.MeshBasicMaterial({ color: propMeshBg, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
-      meshMatCabinetBlue = new THREE.MeshBasicMaterial({ color: propMeshBg, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
-      meshMatGlass = new THREE.MeshBasicMaterial({ color: isDark ? 0x223640 : 0xc6d6db, transparent: true, opacity: 0.6, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1, fog: true });
-      meshMatBackdrop = new THREE.MeshBasicMaterial({ color: isDark ? 0x121510 : 0xd2cbb5, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
-      meshMatTank = new THREE.MeshBasicMaterial({ color: tankMeshBg, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, fog: true });
-    }
   }
 
   function addSolidMesh(geo, meshMat, lineMat, angle) {
     var g = new THREE.Group();
     if (meshMat) {
       var m = new THREE.Mesh(geo, meshMat);
-      m.castShadow = (styleMode === 0);
-      m.receiveShadow = (styleMode === 0);
+      m.castShadow = true;
+      m.receiveShadow = true;
       g.add(m);
     }
     if (lineMat) {
@@ -3151,20 +3336,16 @@ function buildHangarRearLineArt(g) {
 
   function buildHangarEnv() {
     var g = new THREE.Group();
-    var isCartoon = (styleMode === 0);
-    var isDark = (styleMode === 1);
-    var isBlueprint = (styleMode === 2);
-
     // 1. 地面平铺尺寸延伸 22% 至 66m x 66m (配合加重边缘雾化，彻底消除地坪可见边缘)
     var floorGeo = new THREE.PlaneGeometry(66, 66);
     var floorMesh = new THREE.Mesh(floorGeo, meshMatFloor);
     floorMesh.rotation.x = -Math.PI / 2;
     floorMesh.position.set(0, -0.01, -7.0);
-    floorMesh.receiveShadow = (styleMode === 0);
+    floorMesh.receiveShadow = true;
     g.add(floorMesh);
 
-    var gridColor1 = isDark ? 0xd9a72e : (isCartoon ? 0x141610 : 0x141610);
-    var gridColor2 = isDark ? 0x3d4937 : (isCartoon ? 0x364032 : 0x8a927a);
+    var gridColor1 = 0x141610;
+    var gridColor2 = 0x364032;
     var grid = new THREE.GridHelper(66, 66, gridColor1, gridColor2);
     grid.position.set(0, 0, -7.0);
     g.add(grid);
@@ -3201,21 +3382,21 @@ function buildHangarRearLineArt(g) {
     ringGeo1.rotateX(-Math.PI / 2);
     var ring1 = new THREE.Mesh(ringGeo1, meshMatHazardYellow);
     ring1.position.set(0, 0.192, 0);
-    ring1.receiveShadow = (styleMode === 0);
+    ring1.receiveShadow = true;
     g.add(ring1);
 
     var ringGeo2 = new THREE.RingGeometry(3.4, 3.44, 36);
     ringGeo2.rotateX(-Math.PI / 2);
     var ring2 = new THREE.Mesh(ringGeo2, meshMatHazardYellow);
     ring2.position.set(0, 0.192, 0);
-    ring2.receiveShadow = (styleMode === 0);
+    ring2.receiveShadow = true;
     g.add(ring2);
 
     var ringGeo3 = new THREE.RingGeometry(4.0, 4.04, 36);
     ringGeo3.rotateX(-Math.PI / 2);
     var ring3 = new THREE.Mesh(ringGeo3, meshMatHazardYellow);
     ring3.position.set(0, 0.192, 0);
-    ring3.receiveShadow = (styleMode === 0);
+    ring3.receiveShadow = true;
     g.add(ring3);
 
     for (var gi = 0; gi < 4; gi++) {
@@ -3294,13 +3475,14 @@ function buildHangarRearLineArt(g) {
     return g;
   }
 
-  // 车辆网格应用样式 (透视检视与高级战术全息蓝图外壳)
+  // Apply the fixed tactical garage surface and inspection shell.
   function applyVehicleStyle(tank) {
     if (!tank || !tank.group) return;
-    var isCartoon = (styleMode === 0);
-
     tank.group.traverse(function (child) {
       if (!child.isMesh) return;
+      // 关键修复：实例化网格(如多管火箭炮的火箭弹InstancedMesh)绝对不可挂载非实例化的普通EdgesGeometry折边线框，
+      // 否则会在局部坐标原点(0,0,0)处残留一根穿模多余火箭线框！
+      if (child.isInstancedMesh || (child.userData && child.userData.skipEdges)) return;
       if (child.userData && child.userData.isHl) return;
       if (child.userData && child.userData.isModShell) return;
 
@@ -3308,8 +3490,8 @@ function buildHangarRearLineArt(g) {
         child.userData.origMat = child.material;
       }
 
-      child.castShadow = (isCartoon && !inspectMode);
-      child.receiveShadow = (isCartoon && !inspectMode);
+      child.castShadow = !inspectMode;
+      child.receiveShadow = !inspectMode;
 
       if (child.material) {
         if (inspectMode) {
@@ -3321,18 +3503,12 @@ function buildHangarRearLineArt(g) {
           faded.side = THREE.DoubleSide;
           faded.fog = true;
           child.material = faded;
-        } else {
-          if (isCartoon) {
-            if (child.userData.origMat) {
-              child.material = child.userData.origMat;
-              child.material.transparent = false;
-              child.material.opacity = 1.0;
-              child.material.depthWrite = true;
-              child.material.fog = true;
-            }
-          } else {
-            child.material = meshMatTank;
-          }
+        } else if (child.userData.origMat) {
+          child.material = child.userData.origMat;
+          child.material.transparent = false;
+          child.material.opacity = 1.0;
+          child.material.depthWrite = true;
+          child.material.fog = true;
         }
       }
 
@@ -3347,7 +3523,7 @@ function buildHangarRearLineArt(g) {
            回退仅用于没有经过 mergeVisParts 的环境/辅助模型。 */
         var edges = (child.geometry.userData && child.geometry.userData._vehInkPrePanel) ||
                     new THREE.EdgesGeometry(child.geometry, 22);
-        var edgeColor = inspectMode ? 0x44bbcc : (isCartoon ? 0x141610 : lineMatDark.color.getHex());
+        var edgeColor = inspectMode ? 0x44bbcc : 0x141610;
         var edgeOpacity = inspectMode ? 0.35 : 1.0;
         var edgeMat = new THREE.LineBasicMaterial({
           color: edgeColor,
@@ -3428,7 +3604,7 @@ function buildHangarRearLineArt(g) {
     inspectMode = !inspectMode;
     var btn = document.getElementById('hangar-btn-inspect');
     if (btn) {
-      btn.textContent = inspectMode ? '◫ 实色' : '◫ 检视';
+      btn.textContent = inspectMode ? '◫ SOLID' : '◫ INSPECT';
       if (inspectMode) btn.classList.add('active');
       else btn.classList.remove('active');
     }
@@ -3444,10 +3620,19 @@ function buildHangarRearLineArt(g) {
   }
 
   function clearArmorHl() {
-    if (hlMesh && hlMesh.parent) {
-      hlMesh.parent.remove(hlMesh);
-      if (hlMesh.geometry) hlMesh.geometry.dispose();
-      if (hlMesh.material && hlMesh.material.dispose) hlMesh.material.dispose();
+    if (hlMesh) {
+      if (hlMesh.parent) hlMesh.parent.remove(hlMesh);
+      var disposed = [], disposedGeometries = [];
+      hlMesh.traverse(function (node) {
+        if (node.geometry && disposedGeometries.indexOf(node.geometry) < 0) {
+          disposedGeometries.push(node.geometry);
+          if (node.geometry.dispose) node.geometry.dispose();
+        }
+        if (node.material && disposed.indexOf(node.material) < 0) {
+          disposed.push(node.material);
+          if (node.material.dispose) node.material.dispose();
+        }
+      });
     }
     hlMesh = null;
     hlSrc = null;
@@ -3456,6 +3641,7 @@ function buildHangarRearLineArt(g) {
     if (tip) tip.classList.add('hidden');
   }
 
+  /* Overlay the clicked module itself so the highlight follows the selected part. */
   function highlightArmor(mm, targetHit) {
     clearArmorHl();
     if (!mm || !mm.geometry) return;
@@ -3487,7 +3673,9 @@ function buildHangarRearLineArt(g) {
 
     var edgeMat = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2.2, depthTest: false });
     var edges = new THREE.EdgesGeometry(hlGeo, 18);
-    hlMesh.add(new THREE.LineSegments(edges, edgeMat));
+    var edgeLines = new THREE.LineSegments(edges, edgeMat);
+    edgeLines.userData.isHl = true;
+    hlMesh.add(edgeLines);
 
     if (mm.parent) mm.parent.add(hlMesh);
     else scene.add(hlMesh);
@@ -3511,33 +3699,33 @@ function buildHangarRearLineArt(g) {
     var unit3 = document.getElementById('atip-unit-3');
 
     if (card && partEl) {
-      var vehName = (VEH_DATA[curTeam] && VEH_DATA[curTeam][curKind] && VEH_DATA[curTeam][curKind].name) || '载具';
+      var vehName = (VEH_DATA[curTeam] && VEH_DATA[curTeam][curKind] && VEH_DATA[curTeam][curKind].name) || 'VEHICLE';
 
       if (inspectMode || isInternal) {
-        if (badgeEl) badgeEl.textContent = '● 关键战术模块';
-        var modName = (key === 'engine' ? '动力核心 · 发动机' :
-                       key === 'fuel' ? '主油箱 · 储油隔舱' :
-                       key === 'ammo' ? '弹药架 · 备弹舱' :
-                       key === 'trans' ? '传动箱 · 减速机构' :
-                       key === 'crew' ? '乘员战斗室 / 座舱' : (mod ? mod.label : '战术核心模块'));
-        partEl.textContent = vehName + ' · ' + modName;
+        if (badgeEl) badgeEl.textContent = '● KEY MODULE';
+        var modName = (key === 'engine' ? 'POWERPLANT' :
+                       key === 'fuel' ? 'MAIN FUEL CELL' :
+                       key === 'ammo' ? 'AMMO RACK' :
+                       key === 'trans' ? 'TRANSMISSION' :
+                       key === 'crew' ? 'CREW COMPARTMENT' : (mod ? mod.label : 'TAC CORE MODULE'));
+        partEl.textContent = vehName + ' - ' + modName;
 
-        if (lbl1) lbl1.textContent = '模块状态';
+        if (lbl1) lbl1.textContent = 'STATUS';
         if (physVal) physVal.textContent = '100';
         if (unit1) unit1.textContent = '%';
 
-        if (lbl2) lbl2.textContent = '殉爆风险';
-        if (angleVal) angleVal.textContent = (key === 'ammo' ? '极高' : (key === 'fuel' ? '中等' : '低'));
+        if (lbl2) lbl2.textContent = 'COOK-OFF RISK';
+        if (angleVal) angleVal.textContent = (key === 'ammo' ? 'EXTREME' : (key === 'fuel' ? 'MEDIUM' : 'LOW'));
         if (unit2) unit2.textContent = '';
 
-        if (lbl3) lbl3.textContent = '战损后果';
-        if (losVal) losVal.textContent = (key === 'ammo' ? '一炮致命' : (key === 'engine' ? '全车瘫痪' : (key === 'fuel' ? '起火燃烧' : '效能减半')));
+        if (lbl3) lbl3.textContent = 'IF HIT';
+        if (losVal) losVal.textContent = (key === 'ammo' ? 'ONE-SHOT KILL' : (key === 'engine' ? 'IMMOBILIZED' : (key === 'fuel' ? 'FIRE' : 'DEGRADED')));
         if (unit3) unit3.textContent = '';
 
-        if (lbl4) lbl4.textContent = '防护类型';
-        if (matVal) matVal.textContent = (key === 'ammo' ? '泄压抑爆隔舱' : (key === 'fuel' ? '自封阻燃油箱' : '机舱均质装甲盒'));
+        if (lbl4) lbl4.textContent = 'PROTECTION';
+        if (matVal) matVal.textContent = (key === 'ammo' ? 'BLOWOUT PANEL' : (key === 'fuel' ? 'SELF-SEAL TANK' : 'RHA BOX'));
       } else {
-        if (badgeEl) badgeEl.textContent = '● 装甲测定';
+        if (badgeEl) badgeEl.textContent = '● ARMOR SCAN';
 
         var ln = new THREE.Vector3(0, 0, 1);
         if (targetHit && targetHit.face && targetHit.face.normal) {
@@ -3545,7 +3733,7 @@ function buildHangarRearLineArt(g) {
         }
 
         var faceTitle = pvFaceOf(ln, face);
-        var partTitle = (mod && mod.label) ? mod.label : (PV_FACE_NAMES[key] || '装甲结构');
+        var partTitle = (mod && mod.label) ? mod.label : (PV_FACE_NAMES[key] || 'ARMOR');
         partEl.textContent = partTitle + ' · ' + faceTitle;
 
         var thick = 120;
@@ -3565,31 +3753,31 @@ function buildHangarRearLineArt(g) {
         if (isNaN(deg)) deg = 0;
 
         var rad = (deg * Math.PI) / 180;
-        // LOS 等效按水平来袭炮弹:入射角=90°-法线距垂直轴夹角,故除 sin(deg)(战斗 resolveHit 用弹道矢量是同式的矢量版)。
-        // 旧代码误用 cos(deg)=天顶垂直来袭等效,会把首上/首下算反(99式:首上350↔790/首下857↔400)。
+        // 这是水平来袭的显示近似:实际战斗结算使用炮弹当前段方向与世界法线的 cosI；超过 68° 显示为跳弹。
         var cosIncidence = Math.sin(rad);
-        var los = Math.round(thick / Math.max(0.35, cosIncidence));
+        var ricochetCos = (typeof ARMOR_RICOCHET_COS === 'number') ? ARMOR_RICOCHET_COS : Math.cos(68 * Math.PI / 180);
+        var los = cosIncidence <= ricochetCos ? 'RICOCHET' : Math.round(thick / cosIncidence);
 
-        if (lbl1) lbl1.textContent = '物理厚度';
+        if (lbl1) lbl1.textContent = 'PHYS THICKNESS';
         if (physVal) physVal.textContent = Math.round(thick);
         if (unit1) unit1.textContent = 'mm';
 
-        if (lbl2) lbl2.textContent = '法线倾角';
+        if (lbl2) lbl2.textContent = 'SLOPE ANGLE';
         if (angleVal) angleVal.textContent = deg.toFixed(1);
         if (unit2) unit2.textContent = '°';
 
-        if (lbl3) lbl3.textContent = 'LOS 等效';
-        if (losVal) losVal.textContent = Math.round(los);
-        if (unit3) unit3.textContent = 'mm';
+        if (lbl3) lbl3.textContent = 'LOS EQUIV';
+        if (losVal) losVal.textContent = typeof los === 'number' ? Math.round(los) : los;
+        if (unit3) unit3.textContent = typeof los === 'number' ? 'mm' : '';
 
-        if (lbl4) lbl4.textContent = '装甲材质';
-        var matName = 'RHA 均质装甲钢';
-        if (curKind === '99') matName = '重型复合装甲 + FY-4反应装甲';
-        else if (curKind === 'm1' || (curKind === 'td' && curTeam === 'enemy')) matName = '贫铀复合装甲 (DU Armor)';
-        else if (curKind === 'ah64') matName = '凯夫拉/陶瓷复合轻装甲';
-        else if (curKind === 'wz10') matName = '防弹装甲板 + 复合座舱';
-        else if (curKind === 'arty') matName = (curTeam === 'enemy') ? '装甲驾驶室 + 防破片内衬' : '高强度防破片装甲板';   // 蓝 M142 / 红 PHL-11
-        else if (curKind === 'aa') matName = (curTeam === 'enemy') ? '悍马轻型装甲板' : '轻型焊接装甲 + 防弹玻璃';   // 蓝 复仇者 / 红 PGZ-95
+        if (lbl4) lbl4.textContent = 'MATERIAL';
+        var matName = 'RHA STEEL';
+        if (curKind === '99') matName = 'HEAVY COMPOSITE + FY-4 ERA';
+        else if (curKind === 'm1' || (curKind === 'td' && curTeam === 'blue')) matName = 'DU COMPOSITE';
+        else if (curKind === 'ah64') matName = 'KEVLAR/CERAMIC LIGHT';
+        else if (curKind === 'wz10') matName = 'ARMORED PLATE + COMPOSITE COCKPIT';
+        else if (curKind === 'arty') matName = (curTeam === 'blue') ? 'ARMORED CAB + SPALL LINER' : 'HIGH-STRENGTH SPALL PLATE';
+        else if (curKind === 'aa') matName = (curTeam === 'blue') ? 'HMMWV LIGHT PLATE' : 'LIGHT WELDED + BULLETPROOF GLASS';
         if (matVal) matVal.textContent = matName;
       }
 
@@ -3666,10 +3854,191 @@ function buildHangarRearLineArt(g) {
     raycastArmor(e);
   }
 
+  var LS_GARAGE_VEH = 'prefGarageVeh';
+
+  function saveGarageSelection(team, kind) {
+    var tm = team || 'blue';
+    var kd = kind || 'td';
+    try {
+      localStorage.setItem(LS_GARAGE_VEH, tm + '|' + kd);
+    } catch (e) {}
+  }
+
+  function loadGarageSelection() {
+    // Remove obsolete model-cache keys during garage migration.
+    try {
+      var legacyKeys = [
+        'ws_custom_model', 'prefJoyMode', 'garage_veh_cache', 'hangar_veh',
+        'garage_vehicle', 'prefHangarVehicle', 'custom_vehicle', 'tank_save',
+        'prefVehicle', 'lastVehicle', 'player_tank'
+      ];
+      for (var ki = 0; ki < legacyKeys.length; ki++) {
+        localStorage.removeItem(legacyKeys[ki]);
+      }
+      for (var i = localStorage.length - 1; i >= 0; i--) {
+        var k = localStorage.key(i);
+        if (k && (k.indexOf('custom') !== -1 || k.indexOf('model') !== -1)) {
+          if (k !== LS_GARAGE_VEH) localStorage.removeItem(k);
+        }
+      }
+    } catch (e) {}
+
+    var saved = null;
+    try {
+      saved = localStorage.getItem(LS_GARAGE_VEH);
+    } catch (e) {}
+
+    // A missing record (or the legacy bare kind value) gets the default BLUE-MBT-2.
+    // Valid team|kind pairs, including RED-MBT-1 and RED-MBT-2, must remain restorable.
+    if (!saved || saved === 'tank') {
+      saveGarageSelection('blue', 'td');
+      return { team: 'blue', kind: 'td' };
+    }
+
+    if (typeof saved === 'string') {
+      var parts = saved.split('|');
+      if (parts.length === 2) {
+        var tm = parts[0], kd = parts[1];
+        if (VEH_DATA[tm] && VEH_DATA[tm][kd]) {
+          return { team: tm, kind: kd };
+        }
+      }
+    }
+
+    saveGarageSelection('blue', 'td');
+    return { team: 'blue', kind: 'td' };
+  }
+
+  var TECH_ICON_BODY = {
+    'fcs': '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2" fill="currentColor"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>',
+    'aux-loader': '<rect x="4" y="5" width="11" height="14" rx="1"/><path d="M8 9h4M8 13h4M17 8l3 4-3 4M20 12h-6"/>',
+    'non-skid-track': '<path d="M3 8h18M3 16h18M5 5l3 3-3 3M11 5l3 3-3 3M17 5l3 3-3 3M5 13l3 3-3 3M11 13l3 3-3 3M17 13l3 3-3 3"/>',
+    'improved-105': '<path d="M4 12h13M14 7l6 5-6 5z"/><path d="M3 8v8"/>',
+    'improved-ap': '<path d="M4 12h15M14 7l6 5-6 5z"/><path d="M4 8v8M7 9v6"/>',
+    'improved-engine': '<rect x="5" y="7" width="12" height="10" rx="1"/><path d="M8 4v3M12 4v3M16 4v3M17 10h4v4h-4M8 10h5v4H8z"/>',
+    'improved-motor': '<circle cx="12" cy="12" r="7"/><path d="M12 5v4l3 2M5 12H2M19 12h3"/>',
+    'improved-optics': '<path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+    'gun-launched-missile': '<path d="M4 15l8-8 4 4-8 8zM15 5l2-2 4 4-2 2M5 19l-2 2"/><path d="M11 9l4 4"/>',
+    'battlefield-repair': '<path d="M9 3h6v6h6v6h-6v6H9v-6H3V9h6z"/>',
+    'depleted-uranium-armor': '<path d="M12 2l8 3v6c0 5-3 8-8 11-5-3-8-6-8-11V5z"/><path d="M8 12l2 2 5-5"/>',
+    'burst-loading': '<path d="M3 8h6l-2-3 5 2-2 3h6l-2-3 5 2-2 3M3 16h6l-2-3 5 2-2 3h6l-2-3 5 2-2 3"/>',
+    'depleted-uranium-round': '<path d="M12 3l3 5v8l-3 5-3-5V8z"/><path d="M9 8h6M9 16h6"/>',
+    'high-explosive': '<path d="M12 2l2 6 6-3-3 6 5 3-6 2 1 6-5-4-5 4 1-6-6-2 5-3-3-6 6 3z"/>',
+    'improved-cooling': '<path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/><circle cx="12" cy="12" r="3"/>',
+    'improved-power-pack': '<rect x="4" y="6" width="16" height="12" rx="1"/><path d="M20 10h2v4h-2M10 9l-2 4h3l-2 4 5-5h-3z"/>',
+    'high-power-laser': '<path d="M3 12h13M13 7l7 5-7 5z"/><path d="M4 6l2 2M4 18l2-2"/>',
+    'heavy-rocket-warhead': '<path d="M6 17l3-9 3-4 3 4 3 9-6 4z"/><path d="M9 11h6M12 4v14"/>',
+    'airburst-round': '<path d="M12 3v5M12 16v5M3 12h5M16 12h5M5.6 5.6l3.5 3.5M14.9 14.9l3.5 3.5M18.4 5.6l-3.5 3.5M9.1 14.9l-3.5 3.5"/><circle cx="12" cy="12" r="3"/>',
+    'auto-cannon': '<circle cx="12" cy="12" r="6"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4M8 8l8 8M16 8l-8 8"/>',
+    'guided-warhead': '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M3 5l5 2M3 5l2 5"/>',
+    'anti-tank-missile': '<path d="M4 14l10-5 6 3-6 3zM14 9l2-4 3 1-2 4M7 15l-3 4"/>'
+  };
+  function techIconSvg(id) {
+    var body = TECH_ICON_BODY[id] || TECH_ICON_BODY.fcs;
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + body + '</svg>';
+  }
+  function refreshVehicleExperienceBadge() {
+    var node = document.getElementById('hangar-tech-experience-value');
+    if (node && window.VehicleTech && typeof window.VehicleTech.experience === 'function') node.textContent = window.VehicleTech.experience() + ' XP';
+  }
+
+  function refreshVehicleLevelDrawer(team, kind) {
+    refreshVehicleExperienceBadge();
+    var list = document.getElementById('hangar-tech-tree');
+    if (!list) return;
+    var tm = team || 'red', kd = kind || 'tank';
+    var key = tm + '|' + kd;
+    var data = (VEH_DATA[tm] && VEH_DATA[tm][kd]) || VEH_DATA.red.tank;
+    var displayName = data.name || (tm.toUpperCase() + '-' + kd.toUpperCase());
+    list.setAttribute('data-tech-tree-key', key);
+    list.setAttribute('data-tech-tree-team', tm);
+    list.setAttribute('data-tech-tree-kind', kd);
+    list.setAttribute('data-tech-vehicle-name', displayName);
+    list.setAttribute('aria-label', displayName + ' vehicle level tree');
+    list.innerHTML = '';
+
+    var techTree = window.VehicleTech && window.VehicleTech.treeFor ? window.VehicleTech.treeFor(tm, kd) : null;
+    if (techTree) {
+      var techState = window.VehicleTech.stateFor(tm, kd);
+      for (var ti = 0; ti < techTree.nodes.length; ti++) {
+        var tech = techTree.nodes[ti];
+        var techItem = document.createElement('div');
+        var installed = !!(techState && techState.installed[tech.id]);
+        var unlocked = !!(techState && techState.unlocked[tech.id]);
+        techItem.className = 'mm-drawer-item mm-tech-item' + (installed ? ' active tech-installed' : ' tech-removed') + (!unlocked ? ' tech-locked' : '');
+        techItem.setAttribute('data-tech-vehicle', key);
+        techItem.setAttribute('data-tech-id', tech.id);
+        techItem.setAttribute('data-tech-unlocked', unlocked ? 'true' : 'false');
+        techItem.setAttribute('data-tech-installed', installed ? 'true' : 'false');
+        techItem.title = tech.effect;
+
+        var techHead = document.createElement('div');
+        techHead.className = 'mm-tech-head';
+        var techIcon = document.createElement('span');
+        techIcon.className = 'mm-tech-icon';
+        techIcon.innerHTML = techIconSvg(tech.id);
+        var techName = document.createElement('span');
+        techName.className = 'mm-drawer-item-name mm-tech-title';
+        techName.textContent = tech.short;
+        var techCost = document.createElement('span');
+        techCost.className = 'mm-tech-cost';
+        techCost.textContent = (window.VehicleTech.unlockCost || 25) + ' XP';
+        techHead.appendChild(techIcon);
+        techHead.appendChild(techName);
+        techHead.appendChild(techCost);
+
+        var techEffect = document.createElement('div');
+        techEffect.className = 'mm-tech-effect';
+        techEffect.textContent = tech.effect;
+
+        var techAction = document.createElement('button');
+        techAction.type = 'button';
+        techAction.className = 'mm-tech-action ' + (!unlocked ? 'tech-action-locked' : (installed ? 'tech-action-installed' : 'tech-action-removed'));
+        techAction.setAttribute('data-tech-action', 'true');
+        techAction.textContent = !unlocked ? 'UNLOCK' : (installed ? 'INSTALLED' : 'INSTALL');
+        techAction.title = !unlocked ? 'Spend experience to unlock and install' : (installed ? 'Click to remove installation' : 'Click to install');
+
+        techItem.appendChild(techHead);
+        techItem.appendChild(techEffect);
+        techItem.appendChild(techAction);
+        list.appendChild(techItem);
+      }
+      return;
+    }
+
+    for (var level = 1; level <= 5; level++) {
+      var item = document.createElement('div');
+      item.className = 'mm-drawer-item';
+      item.setAttribute('data-tech-vehicle', key);
+      item.setAttribute('data-tech-level', String(level));
+      var name = document.createElement('span');
+      name.className = 'mm-drawer-item-name';
+      name.textContent = 'LEVEL ' + ('0' + level).slice(-2);
+      var state = document.createElement('span');
+      state.className = 'mm-drawer-item-en';
+      state.textContent = 'TECH DATA PENDING';
+      item.appendChild(name);
+      item.appendChild(state);
+      list.appendChild(item);
+    }
+  }
+
   // 载具创建与精确定位 (前轮坐落于转台 y=0.19m，机身超长伸出转台的后起落架尾轮精准落地于水泥地坪 y=0.00m)
   function setVehicle(team, kind) {
-    curTeam = team || 'ally';
-    curKind = kind || 'tank';
+    curTeam = team || 'blue';
+    curKind = kind || 'td';
+    saveGarageSelection(curTeam, curKind);
+    window.startSide = curTeam;
+    window.startKind = curKind;
+    if (typeof startSide !== 'undefined') startSide = curTeam;
+    if (typeof startKind !== 'undefined') startKind = curKind;
+    if (typeof el !== 'undefined' && el.siderow && el.skrow) {
+      if (typeof markSel === 'function') {
+        markSel(el.siderow, 'data-side', curTeam);
+        markSel(el.skrow, 'data-k', curKind);
+      }
+      if (typeof refreshVehicleChoiceLabels === 'function') refreshVehicleChoiceLabels();
+    }
 
     if (curTankObj && curTankObj.group) {
       scene.remove(curTankObj.group);
@@ -3700,7 +4069,7 @@ function buildHangarRearLineArt(g) {
         curTankObj.group.position.set(0, -0.2205, 0);
       } else {
         curTankObj.group.rotation.x = 0;
-        curTankObj.group.position.set(0, 0.19 + ((curKind === 'tank' && curTeam === 'ally') ? T59_LIFT : (curKind === '99' ? T99_LIFT : ((curKind === 'td' && curTeam === 'ally') ? TD89_LIFT : ((curKind === 'td' && curTeam === 'enemy') ? M1_LIFT : ((curKind === 'tank' && curTeam === 'enemy') ? M60_LIFT : 0))))), 0);   // 59叠加T59_LIFT(与对局出生点同口径);99/89/M1同理
+        curTankObj.group.position.set(0, 0.19 + ((curKind === 'tank' && curTeam === 'red') ? T59_LIFT : (curKind === '99' ? T99_LIFT : ((curKind === 'td' && curTeam === 'red') ? TD89_LIFT : ((curKind === 'td' && curTeam === 'blue') ? M1_LIFT : ((curKind === 'tank' && curTeam === 'blue') ? M60_LIFT : 0))))), 0);   // RED-MBT-1叠加T59_LIFT(与对局出生点同口径);RED-MBT-2/RED-TD/BLUE-MBT-2同理
       }
 
       scene.add(curTankObj.group);
@@ -3713,22 +4082,34 @@ function buildHangarRearLineArt(g) {
       hoistXTo = (isHeli || curKind === 'arty' || curKind === 'aa') ? 4.8 : 1.2;   // 长车身载具(直升机/火箭炮)小车左移至 4.8;不瞬移: render 里滑到目标
     }
 
-    var data = (VEH_DATA[curTeam] && VEH_DATA[curTeam][curKind]) || VEH_DATA.ally.tank;
+    var data = (VEH_DATA[curTeam] && VEH_DATA[curTeam][curKind]) || VEH_DATA.red.tank;
     updateUI(data, curTeam, curKind);
+    refreshVehicleLevelDrawer(curTeam, curKind);
   }
 
   function updateUI(data, team, kind) {
     var el = function (id) { return document.getElementById(id); };
-    if (el('hangar-veh-name')) el('hangar-veh-name').textContent = data.name || '59式 中型坦克';
-    if (el('hangar-veh-sub')) el('hangar-veh-sub').textContent = data.sub || 'TYPE 59 MBT';
-    if (el('hangar-stat-fire')) el('hangar-stat-fire').textContent = data.fire || '100mm 线膛炮';
-    if (el('hangar-stat-fire-sub')) el('hangar-stat-fire-sub').textContent = data.fireSub || '穿深 220mm · 初速 1480m/s';
-    if (el('hangar-stat-armor')) el('hangar-stat-armor').textContent = data.armor || 'RHA 均质装甲钢';
-    if (el('hangar-stat-armor-sub')) el('hangar-stat-armor-sub').textContent = data.armorSub || '首上 100mm / 炮塔 200mm';
-    if (el('hangar-stat-speed')) el('hangar-stat-speed').textContent = data.speed || '50 km/h';
-    if (el('hangar-stat-speed-sub')) el('hangar-stat-speed-sub').textContent = data.speedSub || '520马力柴油机';
+    var techData = (typeof vehicleTechHangarData === 'function') ? vehicleTechHangarData(team, kind, data) : data;
+    var fireData = (typeof vehicleTechHangarFireData === 'function') ? vehicleTechHangarFireData(team, kind, data) : techData;
+    if (el('hangar-veh-name')) el('hangar-veh-name').textContent = data.name || 'RED-MBT-1';
+    if (el('hangar-veh-sub')) el('hangar-veh-sub').textContent = data.sub || 'RED-MEDIUM TANK';
+    if (el('hangar-stat-fire')) el('hangar-stat-fire').textContent = fireData.fire || '100mm rifled gun';
+    if (el('hangar-stat-fire-sub')) el('hangar-stat-fire-sub').textContent = fireData.fireSub || 'PEN 220mm - MV 1480m/s';
+    if (el('hangar-stat-armor')) el('hangar-stat-armor').textContent = techData.armor || 'RHA steel';
+    if (el('hangar-stat-armor-sub')) el('hangar-stat-armor-sub').textContent = techData.armorSub || 'Glacis 100mm / Turret 200mm';
+    if (el('hangar-stat-speed')) el('hangar-stat-speed').textContent = techData.speed || '50 km/h';
+    if (el('hangar-stat-speed-sub')) el('hangar-stat-speed-sub').textContent = techData.speedSub || '520HP diesel';
+    var opticsStat = el('hangar-stat-optics');
+    if (opticsStat && (team === 'red' || team === 'blue') && kind === 'aa' && typeof vehicleTechThermalImagingInstalled === 'function') {
+      opticsStat.textContent = vehicleTechThermalImagingInstalled({ isPlayer: true, team: team, kind: kind })
+        ? 'THERMAL IMAGING / EO-IR FCR' : (team === 'red' ? 'AIR SEARCH RADAR' : 'SURFACE-TO-AIR SEEKER');
+      opticsStat._aaTech = true;
+    } else if (opticsStat && opticsStat._aaTech) {
+      opticsStat.textContent = 'Thermal / Laser suppressor';
+      opticsStat._aaTech = false;
+    }
     if (el('hangar-stat-hp')) el('hangar-stat-hp').textContent = data.hp || '1800 HP';
-    if (el('hangar-stat-hp-sub')) el('hangar-stat-hp-sub').textContent = data.hpSub || '战备完好率 100%';
+    if (el('hangar-stat-hp-sub')) el('hangar-stat-hp-sub').textContent = data.hpSub || 'Readiness 100%';
 
     var items = document.querySelectorAll('#hangar-veh-list .mm-drawer-item');
     items.forEach(function (it) {
@@ -3742,25 +4123,11 @@ function buildHangarRearLineArt(g) {
     });
   }
 
-  function applyHangarTheme() {
-    var box = document.getElementById('mm-cover');
-    var btnTheme = document.getElementById('hangar-btn-theme');
-
-    if (box) {
-      box.classList.remove('theme-blueprint', 'theme-dark', 'theme-cartoon');
-      if (styleMode === 0) box.classList.add('theme-cartoon');
-      else if (styleMode === 1) box.classList.add('theme-dark');
-      else if (styleMode === 2) box.classList.add('theme-blueprint');
-    }
-
-    if (btnTheme) {
-      btnTheme.textContent = STYLE_NAMES[styleMode];
-    }
-
-    // 重点优化: 雾化距离适度向外扩展至 24.5m ~ 28.5m，使两侧窗外的诊断工位、军械弹药车等外场设施恰好清晰可见，同时远端地坪边缘 (33m) 100% 柔和隐入背景中
-    var fogCol = (styleMode === 0) ? 0x272d24 : ((styleMode === 1) ? 0x191c14 : 0xded7be);
-    var fogNear = (styleMode === 1) ? 6.5 : 8.5;
-    var fogFar = (styleMode === 1) ? 24.5 : 28.5;
+  function applyHangarPresentation() {
+    // Keep the single tactical garage presentation and rebuild its environment once.
+    var fogCol = 0x272d24;
+    var fogNear = 8.5;
+    var fogFar = 28.5;
 
     if (scene) {
       scene.background = new THREE.Color(fogCol);
@@ -3773,9 +4140,7 @@ function buildHangarRearLineArt(g) {
       }
     }
 
-    if (renderer) {
-      renderer.setClearColor(fogCol, 1.0);
-    }
+    if (renderer) renderer.setClearColor(fogCol, 1.0);
 
     initMaterials();
     if (envGroup) {
@@ -3785,18 +4150,8 @@ function buildHangarRearLineArt(g) {
     envGroup = buildHangarEnv();
     scene.add(envGroup);
 
-    if (lightsGroup) {
-      lightsGroup.visible = (styleMode === 0);
-    }
-
-    if (curTankObj) {
-      applyVehicleStyle(curTankObj);
-    }
-  }
-
-  function cycleTheme() {
-    styleMode = (styleMode + 1) % 3;
-    applyHangarTheme();
+    if (lightsGroup) lightsGroup.visible = true;
+    if (curTankObj) applyVehicleStyle(curTankObj);
   }
 
   function resize() {
@@ -3955,14 +4310,71 @@ function buildHangarRearLineArt(g) {
       };
     }
 
+    var levelDrawer = document.getElementById('hangar-tech-drawer');
+    var levelDrawerToggle = document.getElementById('hangar-tech-drawer-toggle');
+    var levelDrawerClose = document.getElementById('hangar-tech-drawer-close');
+    var levelTree = document.getElementById('hangar-tech-tree');
+    if (levelTree) {
+      levelTree.onclick = function (e) {
+        var node = e.target;
+        while (node && node !== levelTree && !node.getAttribute('data-tech-id')) node = node.parentNode;
+        if (!node || node === levelTree) return;
+        var tm = levelTree.getAttribute('data-tech-tree-team') || 'red';
+        var kd = levelTree.getAttribute('data-tech-tree-kind') || 'tank';
+        var techId = node.getAttribute('data-tech-id');
+        var action = e.target;
+        while (action && action !== node && action.getAttribute && !action.getAttribute('data-tech-action')) action = action.parentNode;
+        var result;
+        if (action && action !== node && action.getAttribute('data-tech-action') === 'true' && window.VehicleTech && typeof window.VehicleTech.unlockAndInstall === 'function' && node.getAttribute('data-tech-unlocked') !== 'true') {
+          result = window.VehicleTech.unlockAndInstall(tm, kd, techId);
+          if (!result.ok && typeof aimHint === 'function') aimHint(result.reason === 'INSUFFICIENT_EXPERIENCE' ? 'NEED ' + result.required + ' XP' : 'UNLOCK FAILED');
+        } else if (window.VehicleTech && typeof window.VehicleTech.toggle === 'function' && node.getAttribute('data-tech-unlocked') === 'true') {
+          result = window.VehicleTech.toggle(tm, kd, techId);
+        } else {
+          return;
+        }
+        if (!result || !result.ok) return;
+        if (typeof playUISound === 'function') playUISound('gear');
+        if (typeof vehicleTechApplyToTank === 'function' && typeof player !== 'undefined' && player) {
+          vehicleTechApplyToTank(player);
+          if (typeof playerEquipSync === 'function') playerEquipSync();
+        }
+        if (typeof vehicleTechApplyToTank === 'function' && curTankObj && curTankObj._techPreview && curTeam === tm && curKind === kd) vehicleTechApplyToTank(curTankObj);
+        refreshVehicleLevelDrawer(tm, kd);
+        if (typeof window.vehicleTechRefreshUI === 'function') window.vehicleTechRefreshUI();
+        var techData = (VEH_DATA[tm] && VEH_DATA[tm][kd]) || VEH_DATA.red.tank;
+        updateUI(techData, tm, kd);
+      };
+    }
+    if (levelDrawerToggle && levelDrawer) {
+      levelDrawerToggle.onclick = function (e) {
+        e.stopPropagation();
+        if (typeof playUISound === 'function') playUISound('gear');
+        levelDrawer.classList.toggle('collapsed');
+        levelDrawerToggle.setAttribute('aria-expanded', levelDrawer.classList.contains('collapsed') ? 'false' : 'true');
+      };
+    }
+    if (levelDrawerClose && levelDrawer) {
+      levelDrawerClose.onclick = function (e) {
+        e.stopPropagation();
+        if (typeof playUISound === 'function') playUISound('gear');
+        levelDrawer.classList.add('collapsed');
+        if (levelDrawerToggle) levelDrawerToggle.setAttribute('aria-expanded', 'false');
+      };
+    }
+
     var drawerItems = document.querySelectorAll('#hangar-veh-list .mm-drawer-item');
     drawerItems.forEach(function (it) {
       it.onclick = function (e) {
         e.stopPropagation();
         if (typeof playUISound === 'function') playUISound('gear');
-        var tm = it.getAttribute('data-team') || 'ally';
+        var tm = it.getAttribute('data-team') || 'red';
         var kd = it.getAttribute('data-kind') || 'tank';
         setVehicle(tm, kd);
+        window.startSide = tm;
+        window.startKind = kd;
+        if (typeof startSide !== 'undefined') startSide = tm;
+        if (typeof startKind !== 'undefined') startKind = kd;
       };
     });
 
@@ -3985,14 +4397,6 @@ function buildHangarRearLineArt(g) {
         yaw = 0.65;
         pitch = 0.28;
         targetCenter.set(0, isHeli ? 1.6 : 1.05, 0);
-      };
-    }
-
-    var btnTheme = document.getElementById('hangar-btn-theme');
-    if (btnTheme) {
-      btnTheme.onclick = function () {
-        if (typeof playUISound === 'function') playUISound('gear');
-        cycleTheme();
       };
     }
 
@@ -4074,8 +4478,9 @@ function buildHangarRearLineArt(g) {
 
     scene.add(lightsGroup);
 
-    applyHangarTheme();
-    setVehicle('ally', 'tank');
+    applyHangarPresentation();
+    var initialVeh = loadGarageSelection();
+    setVehicle(initialVeh.team, initialVeh.kind);
 
     bindInput();
     resize();
@@ -4112,14 +4517,19 @@ function buildHangarRearLineArt(g) {
     pause: pause,
     resume: resume,
     setVehicle: setVehicle,
+    refreshTechUI: function () { refreshVehicleLevelDrawer(curTeam, curKind); },
+    refreshExperienceBadge: refreshVehicleExperienceBadge,
     getSelection: function () { return { team: curTeam, kind: curKind }; },
-    cycleTheme: cycleTheme,
     toggleInspectMode: toggleInspectMode
   };
 })();
+window.Hangar3D = Hangar3D;
+window.vehicleTechRefreshUI = function () {
+  if (window.Hangar3D && typeof window.Hangar3D.refreshTechUI === 'function') window.Hangar3D.refreshTechUI();
+};
 if (typeof Hangar3D !== 'undefined' && Hangar3D.init) {
   setTimeout(function () { Hangar3D.init(); }, 100);
 }
-/* ★审查C2: 删除重复的 setInterval(mmTick, 1000)——与前文同一处理器双注册(主菜单时钟每秒写两遍, 战斗期常驻空转) */
+/* The menu clock is registered once. */
 })();
 

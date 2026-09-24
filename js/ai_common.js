@@ -10,7 +10,7 @@ var AI_GRID_CELL = 100;
 
 var aiGrid = new Map(), aiGridT = -99;
 
-var aiTeamRoster = { ally: [], enemy: [] };
+var aiTeamRoster = { red: [], blue: [] };
 
 var _aiGridScratch = [];
 
@@ -21,10 +21,15 @@ function aiGridKey(x, z) { return Math.floor(x / AI_GRID_CELL) * 4096 + Math.flo
 function updateAiGrid() {
   if (gameT - aiGridT < 0.25) return;
   aiGridT = gameT; aiGrid.clear();
-  aiTeamRoster.ally.length = 0; aiTeamRoster.enemy.length = 0;
+  aiTeamRoster.red.length = 0; aiTeamRoster.blue.length = 0;
   for (var i = 0; i < aliveList.length; i++) {
     var t = aliveList[i], k = aiGridKey(t.group.position.x, t.group.position.z);
-    aiTeamRoster[t.team].push(t);
+    if (isFfaMode()) {
+      // 保留两个数组作为旧 AI 接口的兼容视图；个人死斗的敌我判定由 areHostile 统一完成。
+      aiTeamRoster.red.push(t); aiTeamRoster.blue.push(t);
+    } else {
+      aiTeamRoster[t.team].push(t);
+    }
     t._aiCellKey = k;
     var a = aiGrid.get(k); if (!a) { a = []; aiGrid.set(k, a); } a.push(t);
   }

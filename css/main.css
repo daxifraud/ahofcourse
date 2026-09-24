@@ -36,7 +36,7 @@
     --line:#3d4a2e; --bg:#0e160a; --bg2:#060c05;
     --sig:#ffc857; --sig-ring:rgba(255,200,87,.45); --sig-glow:rgba(255,200,87,.55);
     --warn:#ff8f6e; --warn-ring:rgba(255,143,110,.5);
-    --ally:#e05247; --foe:#5f97e8;
+    --red:#e05247; --blue:#5f97e8;
     --hud-radius: 3px;                    /* 统一圆角 */
 
     /* —— 分区二:菜单 UI(漫画风:纸白 + 墨线 + 漫画黄)—— */
@@ -47,7 +47,7 @@
     --mm-text: #1d1d1d;                       /* 面板正文(纸白底) */
     --mm-dim: #a49e90;                        /* 次级文字(暗底提示/标签) */
     --mm-em: #e05a2b;                         /* 手册 em 强调 */
-    --mm-green: #ffd93b;                      /* 主按钮底(漫画黄,渐变亮端沿用旧名) */
+    --mm-green: #ffd93b;                      /* Primary menu button fill. */
     --mm-green2: #ffc61a;                     /* 主按钮底 暗端 */
     --mm-amber: #ffd93b;                      /* 暗底标题(漫画黄) */
     --mm-amber-selbg: #ffd93b;                /* 选中态底色(漫画黄实底) */
@@ -75,7 +75,7 @@
   .hud-frame .tick-l { left:0; } .hud-frame .tick-r { right:0; }
   .hud-frame .topmark { position:absolute; left:50%; top:-4px; width:10px; height:10px; transform:translateX(-50%) rotate(45deg);
     background:#141414; border:2px solid #ffd21f; }
-  .sigmod { position:absolute; top:2px; right:2px;   /* 上移:独立FPS框删除后顶边对齐 */ display:flex; align-items:flex-end; gap:7px;
+  .sigmod { position:absolute; top:2px; right:2px; display:flex; align-items:flex-end; gap:7px;
     background:rgba(10,16,10,.82); border:1px solid rgba(157,255,168,.5); padding:5px 8px;
     font:13px VT323,Consolas,monospace; color:#9dffa8; }
   .sigmod .bars { display:flex; align-items:flex-end; gap:2px; height:16px; }
@@ -90,17 +90,194 @@
   .sigmod #sigfps::after { content:' FPS'; font-size:11px; opacity:.8; }
 
   /* 顶部信息条 — 磷光战术 BIOS */
-  /* 独立FPS框已删(帧率只走右上信号组#sigfps段);帧率统计/开关逻辑不动 */
+  /* FPS is shown in the signal group. */
   #topbar { position:absolute; top:10px; left:50%; transform:translateX(-50%);
     display:flex; flex-direction:column; align-items:center; gap:6px; }
-  #winfo { font-size:16px; letter-spacing:2px; color:#9dffa8; font-weight:400;
+  #winfo, #ffa-winfo { font-size:16px; letter-spacing:2px; color:#9dffa8; font-weight:400;
     font-family:VT323, "ZCOOL QingKe HuangYou", "Courier New", monospace;
     background:rgba(6,12,5,.92); padding:5px 16px; border:1px solid #3d4a2e; border-radius:0;
     box-shadow:0 0 12px rgba(157,255,168,.12), 3px 3px 0 #040704;
     text-shadow:0 0 6px rgba(140,255,158,.28); white-space:nowrap; }   /* 恒一行 */
-  @media (pointer: coarse) {
-    #winfo { font-size:13px; letter-spacing:1px; padding:3px 10px; }   /* 触屏紧凑化保一行 */
+  /* #winfo / #ffa-winfo 顶栏战术信息 */
+
+  /* TDM strategic-support progress: a compact second line directly beneath the force bar. */
+  #strategic-support-hud { position:absolute; top:48px; left:50%; transform:translateX(-50%); z-index:44;
+    width:318px; box-sizing:border-box; padding:4px 8px 5px; color:#c8ffc0;
+    background:rgba(6,12,5,.94); border:1px solid rgba(157,255,168,.48);
+    box-shadow:0 0 12px rgba(157,255,168,.14), 3px 3px 0 #040704;
+    font:11px VT323,"Courier New",monospace; letter-spacing:1px; pointer-events:none; }
+  #strategic-support-hud.hidden { display:none !important; }
+  .strategic-support-values { display:flex; justify-content:space-between; gap:10px; margin-top:0; white-space:nowrap; font-size:12px; }
+  #strategic-support-our-value { color:#9dffa8; }
+  #strategic-support-enemy-value { color:#ff7168; }
+  .strategic-support-track { position:relative; height:5px; margin-top:3px; overflow:hidden; background:#141c13; border:1px solid rgba(157,255,168,.25); }
+  .strategic-support-track i { position:absolute; top:0; height:100%; display:block; transition:width .18s linear; }
+  #strategic-support-our-fill { left:0; width:0; background:linear-gradient(90deg,#4fd477,#c8ffc0); }
+  #strategic-support-enemy-fill { right:0; width:0; background:linear-gradient(90deg,#ff8a79,#d43a25); }
+  #strategic-support-timers { position:absolute; top:88px; left:50%; transform:translateX(-50%); z-index:44;
+    display:flex; flex-wrap:wrap; justify-content:center; gap:5px; max-width:calc(100vw - 24px); pointer-events:none; }
+  #strategic-support-timers.hidden { display:none !important; }
+  .strategic-support-timer { display:flex; align-items:center; gap:7px; min-width:156px; padding:4px 8px;
+    color:#fcf9f0; background:rgba(6,12,5,.94); border:1px solid rgba(157,255,168,.48);
+    box-shadow:2px 2px 0 #040704; font:12px VT323,"Courier New",monospace; letter-spacing:.7px; }
+  .strategic-support-timer b { margin-left:auto; font:bold 15px Consolas,monospace; color:#9dffa8; }
+  .strategic-support-timer.hostile { border-color:rgba(255,93,85,.68); color:#ffd1cb; }
+  .strategic-support-timer.hostile b { color:#ff7168; }
+  #strategic-support-alert { position:fixed; left:50%; top:28%; transform:translate(-50%,-50%); z-index:125;
+    min-width:300px; box-sizing:border-box; padding:10px 24px; text-align:center; white-space:nowrap;
+    color:#c8ffc0; background:linear-gradient(90deg,rgba(6,12,5,.86),rgba(17,31,14,.97),rgba(6,12,5,.86));
+    border:1px solid #9dffa8; box-shadow:0 0 20px rgba(157,255,168,.28),4px 4px 0 #040704;
+    font:bold 22px VT323,"Courier New",monospace; letter-spacing:3px; text-shadow:0 0 8px rgba(157,255,168,.55);
+    opacity:0; visibility:hidden; pointer-events:none; }
+  #strategic-support-alert.hidden { display:none !important; }
+  #strategic-support-alert.on { display:block; opacity:1; visibility:visible; animation:strategicSupportAlertIn .24s steps(2,end), strategicSupportAlertPulse 1.1s steps(2,end) .24s infinite; }
+  #strategic-support-alert.hostile { color:#ff9087; border-color:#ff5d55; box-shadow:0 0 20px rgba(255,75,62,.3),4px 4px 0 #040704; text-shadow:0 0 8px rgba(255,93,85,.55); }
+  #strategic-support-alert::before,#strategic-support-alert::after { content:""; position:absolute; top:50%; width:38px; height:1px; background:currentColor; opacity:.7; }
+  #strategic-support-alert::before { right:100%; margin-right:12px; } #strategic-support-alert::after { left:100%; margin-left:12px; }
+  @keyframes strategicSupportAlertIn { from { opacity:0; transform:translate(-50%,-50%) scale(.94); } to { opacity:1; transform:translate(-50%,-50%) scale(1); } }
+  @keyframes strategicSupportAlertPulse { 0%,100% { filter:brightness(1); } 50% { filter:brightness(1.22); } }
+
+  /* FFA active item strip: circular BIOS countdown rings with a distinct inner glyph. */
+  #powerup-hud { position:absolute; top:64px; left:50%; transform:translateX(-50%); z-index:42;
+    display:flex; align-items:flex-start; justify-content:center; gap:7px; pointer-events:none;
+    max-width:calc(100vw - 24px); }
+  #powerup-hud.hidden { display:none !important; }
+  /* BLUE-MBT-2 player-tech status: stays in the upper tactical strip and is
+     separate from FFA powerups so the permanent upgrade is visible in TDM too. */
+  #vehicle-tech-status-hud { position:absolute; top:64px; left:calc(50% - 106px); transform:translateX(-100%); z-index:42;
+    display:flex; align-items:flex-start; justify-content:center; pointer-events:none; max-width:calc(100vw - 24px); }
+  #vehicle-tech-status-hud.hidden { display:none !important; }
+  .tech-status-slot { --pu-color:#ffd447; min-width:138px; }
+  .tech-status-icon { --pu-color:#ffd447; }
+  @keyframes vehicle-tech-status-shake {
+    0%,100% { transform:translate3d(0,0,0); }
+    18% { transform:translate3d(-3px,1px,0); }
+    36% { transform:translate3d(3px,-1px,0); }
+    54% { transform:translate3d(-2px,0,0); }
+    72% { transform:translate3d(2px,0,0); }
   }
+  #vehicle-tech-status-hud.tech-status-shake .tech-status-slot {
+    animation:vehicle-tech-status-shake .26s steps(2,end);
+  }
+  #vehicle-tech-status-note { color:#ffe08a; }
+  /* BLUE-MBT-1 battlefield repair uses the same top-strip visual language as
+     FFA powerups, but remains available in TDM and is driven by real module HP. */
+  #battle-repair-hud { position:absolute; top:64px; left:calc(50% + 106px); z-index:42;
+    display:flex; align-items:flex-start; justify-content:center; pointer-events:none; max-width:calc(100vw - 24px); }
+  #battle-repair-hud.hidden { display:none !important; }
+  .battle-repair-slot { --pu-color:#9dffa8; min-width:128px; }
+  .battle-repair-icon { --pu-color:#9dffa8; }
+  #battle-repair-hud[data-state="PREPARING"] .battle-repair-slot { --pu-color:#ffd447; }
+  #battle-repair-hud[data-state="REPAIRING"] .battle-repair-slot { --pu-color:#9dffa8; }
+  #battle-repair-note { color:#ffcf73; }
+  /* The capture card stays in the upper HUD strip and reports the live
+     remaining progress rather than a fixed capture duration. */
+  #control-zone-capture-hud { position:absolute; top:142px; left:50%; transform:translateX(-50%); z-index:43;
+    display:flex; align-items:flex-start; justify-content:center; pointer-events:none; max-width:calc(100vw - 24px); }
+  #control-zone-capture-hud.hidden { display:none !important; }
+  .control-zone-capture-slot { --pu-color:#f4f4ec; min-width:154px; }
+  .control-zone-capture-icon { --pu-color:#f4f4ec; }
+  #control-zone-capture-hud[data-state="CAPTURING"] .control-zone-capture-slot { --pu-color:#7ab0ff; }
+  #control-zone-capture-hud[data-state="CONTESTED"] .control-zone-capture-slot { --pu-color:#ffd447; }
+  #control-zone-capture-note { color:#d9e7ff; }
+  #control-zone-capture-hud[data-state="CONTESTED"] #control-zone-capture-note { color:#ffe08a; }
+  /* TDM control-zone repair is intentionally a second card.  BLUE-MBT-1 can
+     therefore show its VehicleTech repair card and this location repair card
+     at the same time. */
+  #control-zone-repair-hud { position:absolute; top:142px; left:calc(50% + 106px); z-index:42;
+    display:flex; align-items:flex-start; justify-content:center; pointer-events:none; max-width:calc(100vw - 24px); }
+  #control-zone-repair-hud.hidden { display:none !important; }
+  .control-zone-repair-slot { --pu-color:#ffd447; min-width:138px; }
+  .control-zone-repair-icon { --pu-color:#ffd447; }
+  #control-zone-repair-hud[data-state="REPAIRING"] .control-zone-repair-slot { --pu-color:#9dffa8; }
+  #control-zone-repair-hud[data-state="PREPARING"] .control-zone-repair-slot { --pu-color:#ffd447; }
+  #control-zone-repair-note { color:#ffcf73; }
+  .powerup-slot { min-width:72px; box-sizing:border-box; padding:4px 4px 5px; color:#d8ffe5;
+    background:rgba(6,12,5,.88); border:1px solid rgba(157,255,168,.38);
+    box-shadow:2px 2px 0 #040704; text-align:center; font-family:VT323,"Courier New",monospace;
+    letter-spacing:.5px; }
+  .powerup-slot-icon { position:relative; --pu-color:#9dffa8; --pu-progress:1; width:38px; height:38px; margin:0 auto 3px;
+    display:grid; place-items:center; border-radius:50%; border:2px solid rgba(20,25,20,.92);
+    background:conic-gradient(var(--pu-color) 360deg, rgba(20,25,20,.92) 0deg);
+    box-shadow:0 0 8px color-mix(in srgb,var(--pu-color) 45%,transparent), inset 0 0 0 2px rgba(6,12,5,.82); }
+  .powerup-slot-icon::before { content:""; position:absolute; width:28px; height:28px; border:1px solid color-mix(in srgb,var(--pu-color) 80%,white); border-radius:50%; opacity:.65; }
+  .powerup-slot-glyph { position:relative; z-index:1; display:grid; place-items:center; width:25px; height:25px;
+    color:var(--pu-color); background:rgba(10,16,10,.92); border:1px solid var(--pu-color);
+    border-radius:50%; font:bold 10px Consolas,monospace; letter-spacing:-.4px; text-shadow:0 0 5px var(--pu-color); }
+  .powerup-slot-label { max-width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; color:#fcf9f0; }
+  .powerup-slot-time { font:bold 15px Consolas,monospace; line-height:16px; color:var(--pu-color); }
+  .powerup-slot-note { max-width:104px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:9px; color:rgba(216,255,229,.74); }
+  .powerup-superPen { --pu-color:#ff4b3e; } .powerup-superArmor { --pu-color:#4fc3ff; }
+  .powerup-superReload { --pu-color:#ffd447; } .powerup-rocketBoost { --pu-color:#9dffa8; }
+  .powerup-emergencyRepair { --pu-color:#ffb020; }
+
+  /* 真实俯视小地图：与顶部 BIOS 信息条同一套暗底/磷光/硬墨线语言 */
+  #minimap-panel {
+    position:absolute; left:26px; top:86px; z-index:28;
+    width:276px; box-sizing:border-box; padding:7px 9px 8px;
+    background:rgba(6,12,5,.92); border:1px solid #3d4a2e;
+    box-shadow:0 0 16px rgba(157,255,168,.12), 4px 4px 0 #040704;
+    color:#9dffa8; font-family:VT323,"ZCOOL QingKe HuangYou","Courier New",monospace;
+    pointer-events:none;
+  }
+  #minimap-panel::before { content:""; position:absolute; inset:3px; border:1px solid rgba(157,255,168,.16); pointer-events:none; }
+  .minimap-head,.minimap-foot { position:relative; z-index:2; display:flex; justify-content:space-between; gap:8px; white-space:nowrap; overflow:hidden; }
+  .minimap-head { font-size:13px; letter-spacing:1.1px; padding:0 2px 5px; }
+  #minimap-zone-state { color:#ffd21f; }
+  .minimap-foot { font-size:11px; letter-spacing:.7px; padding:5px 2px 0; color:rgba(157,255,168,.76); }
+  #minimap-cv { position:relative; z-index:1; display:block; width:256px; height:256px; background:#071008; image-rendering:auto; }
+  /* 位置偏好：只允许三个战术站位；左下时将击杀信息移到左上，避免同屏重叠。 */
+  #minimap-panel.minimap-pos-tl { left:26px; right:auto; top:86px; bottom:auto; }
+  #minimap-panel.minimap-pos-tr { left:auto; right:26px; top:86px; bottom:auto; }
+  #minimap-panel.minimap-pos-bl { left:26px; right:auto; top:auto; bottom:26px; }
+  #log.minimap-log-top-left { left:14px; right:auto; top:86px; bottom:auto; }
+  /* M 键尺寸档：固定循环为中 → 大 → 关 → 小 → 中。 */
+  #minimap-panel.minimap-size-small { width:210px; padding:6px 7px 7px; }
+  #minimap-panel.minimap-size-small #minimap-cv { width:190px; height:190px; }
+  #minimap-panel.minimap-size-medium { width:276px; padding:7px 9px 8px; }
+  #minimap-panel.minimap-size-medium #minimap-cv { width:256px; height:256px; }
+  #minimap-panel.minimap-size-large { width:356px; padding:8px 11px 10px; }
+  #minimap-panel.minimap-size-large #minimap-cv { width:332px; height:332px; }
+  #minimap-panel.minimap-size-off { display:none !important; }
+  #minimap-panel.zone-danger { border-color:#ffd21f; box-shadow:0 0 18px rgba(255,210,31,.28), 4px 4px 0 #040704; }
+  #zone-msg {
+    position:fixed; left:50%; top:31%; transform:translate(-50%,-50%); z-index:120;
+    min-width:220px; box-sizing:border-box; padding:7px 18px; text-align:center;
+    color:#ffd21f; background:rgba(6,12,5,.92); border:1px solid #ffd21f;
+    box-shadow:0 0 18px rgba(255,210,31,.22), 3px 3px 0 #040704;
+    font:18px VT323,"ZCOOL QingKe HuangYou","Courier New",monospace; letter-spacing:3px;
+    opacity:0; visibility:hidden; transition:opacity .12s linear; pointer-events:none;
+  }
+  #zone-msg.on { opacity:1; visibility:visible; animation:minimapMsgBlink .42s steps(2,end) 2; }
+  #zone-msg.danger { color:#ff6656; border-color:#ff6656; box-shadow:0 0 18px rgba(255,75,62,.3), 3px 3px 0 #040704; }
+  @keyframes minimapMsgBlink { 0%,100% { opacity:1; } 50% { opacity:.62; } }
+  @media (max-width:700px) {
+    #strategic-support-hud { top:46px; width:calc(100vw - 28px); max-width:318px; font-size:10px; }
+    #strategic-support-timers { top:82px; width:calc(100vw - 20px); }
+    .strategic-support-timer { min-width:142px; padding:3px 6px; font-size:10px; }
+    #strategic-support-alert { top:27%; min-width:250px; max-width:calc(100vw - 24px); padding:8px 12px; font-size:17px; letter-spacing:2px; }
+    #strategic-support-alert::before,#strategic-support-alert::after { width:18px; }
+    #strategic-support-alert::before { margin-right:6px; } #strategic-support-alert::after { margin-left:6px; }
+    #minimap-panel { left:14px; top:76px; width:214px; padding:5px 6px 6px; }
+    #minimap-cv { width:200px; height:200px; }
+    .minimap-head { font-size:10px; letter-spacing:.5px; padding-bottom:3px; }
+    .minimap-foot { font-size:9px; letter-spacing:.3px; padding-top:3px; }
+    #zone-msg { top:34%; min-width:190px; font-size:16px; letter-spacing:2px; }
+    #minimap-panel.minimap-pos-tl { left:14px; right:auto; top:76px; bottom:auto; }
+    #minimap-panel.minimap-pos-tr { left:auto; right:14px; top:76px; bottom:auto; }
+    #minimap-panel.minimap-pos-bl { left:14px; right:auto; top:auto; bottom:14px; }
+    #minimap-panel.minimap-size-small { width:184px; padding:4px 5px 5px; }
+    #minimap-panel.minimap-size-small #minimap-cv { width:172px; height:172px; }
+    #minimap-panel.minimap-size-medium { width:214px; padding:5px 6px 6px; }
+    #minimap-panel.minimap-size-medium #minimap-cv { width:200px; height:200px; }
+    #minimap-panel.minimap-size-large { width:250px; padding:5px 7px 7px; }
+    #minimap-panel.minimap-size-large #minimap-cv { width:234px; height:234px; }
+    #log.minimap-log-top-left { left:10px; top:76px; bottom:auto; }
+  }
+  .minimap-setting-row { display:flex; align-items:center; gap:8px; }
+  .minimap-pos-select,.minimap-size-select { flex:1 1 auto; min-width:0; color:#9dffa8; background:#060c05; border:1px solid #3d4a2e; padding:5px 7px; font:13px VT323,"Courier New",monospace; letter-spacing:1px; }
+  .minimap-pos-select option,.minimap-size-select option { color:#141414; background:#fbf7ec; }
+  .minimap-setting-note { flex:0 0 auto; color:#6f9a63; font:11px VT323,"Courier New",monospace; letter-spacing:.5px; }
 
   /* 准星 */
   #ch { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:60px; height:60px; }
@@ -121,7 +298,7 @@
   #lwsring.hidden { display:none; }
   /* 火箭炮炮镜镜心环 = 第三人称 #ring 完全克隆(同 60px 盒/27–29px 环带/同 ringConic 同源驱动:
      就绪绿满环 / 装填黄环倒计时 / 齐射橙环计数)。十字准星 cp 追逐镜心不常驻中心,#ring 随之移位——故镜心用同款独立环;
-     射击计数不用数字、由圆环承担;黑色墨底环废弃(ringConic 剩余段 rgba(20,20,20,.55) 即暗色轨道) */
+     The ring is the artillery shot counter; its dark remainder is the track. */
   #artyring { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:60px; height:60px; border-radius:50%;
     background:conic-gradient(var(--hud-fg) 360deg, rgba(20,20,20,.55) 0);
     -webkit-mask:radial-gradient(circle, transparent 26px, #000 27px, #000 29px, transparent 30px);
@@ -260,7 +437,7 @@
   /* 05 激光告警标记层(统一标记 .tgtmk 系, 与 MAWS 同笔触) */
   #lwr-hud-layer { position: fixed; inset: 0; pointer-events: none; z-index: 103; }
   /* HUD 统一标记系 .tgtmk (B方案: 导弹红/激光橙): 四角括弧=我方火控 / 三角=敌方威胁; 笔触=墨线衬底+主色主线 */
-  /* 旧 radar-target-box/maws-missile-box/maws-edge-arrow 系已删除(统一标记替代, 勿复用旧类名) */
+
   .tgtmk { --mk: #fff; position: absolute; width: 44px; height: 44px; transform: translate(-50%,-50%); pointer-events: none; }
   .tgtmk svg { width: 44px; height: 44px; display: block; overflow: visible; }
   .tgtmk .ink { fill: none; stroke: #141414; stroke-width: 5.5; stroke-linecap: square; }
@@ -286,8 +463,7 @@
   @keyframes mkBreathe { 0% { opacity: .55; } 100% { opacity: 1; } }
   @keyframes mkArrowFlash { 0% { opacity: .35; transform: scale(.9); } 100% { opacity: 1; transform: scale(1.18); } }
 
-  /* 作战边界警示框: 磷光战术 BIOS(与 #topbar/#winfo/右上信号组/.sigmod 同族)——
-     暗底 1px 细边 + VT323 等宽字 + 硬投影 + 慢呼吸;弃用旧版"黄黑警戒线 + 纸白面板 + 红色大字 + 缩放脉冲"漫画横幅 */
+  /* Phosphor combat-boundary warning with a compact BIOS treatment. */
   #boundwarn {
     position: fixed;
     top: 88px;                                  /* 让开 #topbar(10px) 与 #rwr-warning(52px) */
@@ -323,10 +499,7 @@
     #boundwarn .bw-text { font-size: 12.5px; letter-spacing: 1px; }
     #boundwarn .bw-sep { height: 12px; }
   }
-  @media (pointer: coarse) {                    /* 触屏紧凑化,与 #winfo 同口径 */
-    #boundwarn { padding: 3px 9px; }
-    #boundwarn .bw-text { font-size: 13px; letter-spacing: 1px; }
-  }
+  /* 边界警戒提示 */
 
   /* 直升机武器切换栏: 屏幕底部居中, 战术军规 HUD 风格 */
   #heliweaponbar {
@@ -362,12 +535,6 @@
     border-color: #6f9a63;
     color: #a8e890;
   }
-  /* 诱饵弹槽:非武器位(永不 .active)——琥珀色键帽标识 + 按住高亮(触屏长按释放反馈);
-     touch-action:none 钉死长按手势,防止安卓派生滚动/缩放/上下文菜单 */
-  #hwp-4 { touch-action: none; -webkit-touch-callout: none; }
-  #hwp-4 .hwp-key { background: #1a1408; color: #ffc857; border-color: #5a481e; }
-  #hwp-4:active { border-color: #ffc857; color: #ffd76e; transform: translateY(-2px);
-    box-shadow: 0 0 14px rgba(255, 200, 87, 0.3), inset 0 0 10px rgba(255, 200, 87, 0.12), 3px 3px 0 #040704; }
   .hwp-item.active {
     background: rgba(14, 28, 12, 0.95);
     border-color: #9dffa8;
@@ -658,7 +825,7 @@
     border-top:1.8vmin solid #ffd21f; pointer-events:none; }
   .cdot { position:absolute; left:50%; top:50%; width:5px; height:5px; background:#141414; border-radius:50%;
     transform:translate(-50%,-50%); box-shadow:0 0 0 1.5px rgba(252,249,240,.8); }
-  /* 瞄准镜十字线(参考图口径):墨色细线三段(左/右/下,顶部段随"瞄准镜"字样一并删除),中央断口 6vmin 留空 */
+  /* Three-part scope reticle; the center gap keeps the sight readable. */
   .sl { position:absolute; background:#141414; box-shadow:0 0 0 1px rgba(252,249,240,.75); }
   .s-b { left:50%; top:calc(50% + 6vmin); width:3px; height:23vmin; transform:translateX(-1.5px); }
   .s-l { top:50%; right:calc(50% + 6vmin); height:3px; width:23vmin; transform:translateY(-1.5px); }
@@ -785,13 +952,13 @@
   .pb.lasline.cooling .disc { box-shadow:inset 0 0 0 1.5px rgba(255,200,87,.45); }
   .pb.lasline.cooling .pring .prfg { filter:drop-shadow(0 0 4px rgba(255,200,87,.6)); }
   /* 阵营色(指挥键) */
-  .pb.faction-ally { color:var(--ally); }
-  .pb.faction-ally .disc { box-shadow:inset 0 0 0 1.5px rgba(224,82,71,.5); }
-  .pb.faction-ally svg { filter:drop-shadow(0 0 6px rgba(224,82,71,.5)); }
-  .pb.faction-foe { color:var(--foe); }
-  .pb.faction-foe .disc { box-shadow:inset 0 0 0 1.5px rgba(95,151,232,.5); }
-  .pb.faction-foe svg { filter:drop-shadow(0 0 6px rgba(95,151,232,.5)); }
-  .pb.faction-ally.lit .disc, .pb.faction-foe.lit .disc { box-shadow:inset 0 0 0 2px currentColor, 0 0 18px var(--bloom); }
+  .pb.faction-red { color:var(--red); }
+  .pb.faction-red .disc { box-shadow:inset 0 0 0 1.5px rgba(224,82,71,.5); }
+  .pb.faction-red svg { filter:drop-shadow(0 0 6px rgba(224,82,71,.5)); }
+  .pb.faction-blue { color:var(--blue); }
+  .pb.faction-blue .disc { box-shadow:inset 0 0 0 1.5px rgba(95,151,232,.5); }
+  .pb.faction-blue svg { filter:drop-shadow(0 0 6px rgba(95,151,232,.5)); }
+  .pb.faction-red.lit .disc, .pb.faction-blue.lit .disc { box-shadow:inset 0 0 0 2px currentColor, 0 0 18px var(--bloom); }
   /* 方形角括号按钮(菜单/直升机子键) */
   .pbx { /* ★同上:定位只许来自 .tbtn,此处禁 position(直升机子键由 .tbtn.theli-sub 置 static 进网格) */
     display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px;
@@ -865,13 +1032,13 @@
   /* 指挥指令键(占领/跟随):左上角并排(tmenu 正下方);仅指挥模式显示(自定义编辑器内恒显) */
   #tcap { left:16px; top:84px; width:64px; height:64px; }
   #tfol { left:88px; top:84px; width:64px; height:64px; }
-  /* 行3 热成像|弃车 · 行2 夜视|指挥模式键 · 行1 炮镜|开火 · 激光压制(仅99式)在弃车正上方 */
+  /* 行3 热成像|弃车 · 行2 夜视|指挥模式键 · 行1 炮镜|开火 · 激光压制(仅RED-MBT-2)在弃车正上方 */
   #tth { right:122px; bottom:274px; width:64px; height:64px; }
   /* 摇杆感应圈:仅自定义界面可见(22% 透明度虚线圈,无填充);运行期隐形纯逻辑判定,pointer-events 恒无 */
   #tsense { position:fixed; z-index:149; border:2px dashed rgba(157,255,168,.22); border-radius:50%;
     background:transparent; transform:translate(-50%,-50%); pointer-events:none; touch-action:none; }
   #tquit { right:32px; bottom:274px; width:64px; height:64px; }
-  #tlas { right:32px; bottom:332px; width:52px; height:52px; }   /* 激光压制键(仅99式):弃车正上方,右列顶 */
+  #tlas { right:32px; bottom:332px; width:52px; height:52px; }   /* 激光压制键(仅RED-MBT-2):弃车正上方,右列顶 */
   #tmenu { left:16px; top:16px; width:52px; height:52px; }
   /* 直升机双十字键(H1/H2;与摇杆互斥显示;编辑器可拖/缩;竖屏上下/横屏并排) */
   #theliu, #thelid { position:fixed; z-index:150; display:grid; grid-template-columns:repeat(3,46px); grid-template-rows:repeat(3,46px); gap:4px;
@@ -913,22 +1080,21 @@
      (tap-highlight 已并入文件首的全局重置) */
   button { -webkit-appearance: none; appearance: none; touch-action: manipulation; }
   button:focus, input:focus, select:focus, a:focus, button:focus-visible { outline: none; }
-  /* 旧版触屏按压覆盖层 #btnfx(三层漫画多边形+集中线)样式已删除——
-     触屏按压反馈与桌面统一由下方 .bigbtn:active / .optbtn:active 的提亮规则提供。 */
+  /* Touch and desktop press feedback share the active-state rules below. */
   /* 副标题:墨底白字色带+反向微倾斜 */
   .overlay h2 { font-size:16px; color:#fbf7ec; letter-spacing:4px; margin-bottom:26px; font-weight:bold;
     background:#141414; padding:4px 22px; transform:rotate(1deg); box-shadow:3px 3px 0 rgba(255,217,59,.65); }
   .overlay .tip { font-size:12.5px; color:var(--mm-dim); line-height:1.9; max-width:560px; margin-bottom:24px;}
   .overlay .tip em { color:var(--mm-em); font-style:normal; }
   /* 主操作按钮:漫画黄纸+粗墨边+硬投影;悬停=倾斜变形+放大+集中线斜方框(纯 CSS 事件驱动零逐帧) */
-  .bigbtn { pointer-events:auto; cursor:pointer; font-size:20px; letter-spacing:6px; color:#141414;
+  .bigbtn { pointer-events:auto; cursor:pointer; font-size:18px; letter-spacing:3px; color:#141414;
     background:linear-gradient(180deg,var(--mm-green),var(--mm-green2)); border:3px solid #141414; border-radius:var(--mm-radius);
-    padding:14px 52px; font-family:inherit; font-weight:bold; width:280px; position:relative;
+    padding:12px 18px; font-family:inherit; font-weight:bold; width:280px; position:relative; display:inline-flex; align-items:center; justify-content:center; text-align:center; box-sizing:border-box; white-space:nowrap;
     box-shadow:5px 5px 0 rgba(0,0,0,.85); transition:transform .09s ease-out, box-shadow .09s ease-out; }
   .bigbtn:disabled { filter:grayscale(.8) brightness(.75); cursor:not-allowed; }
   /* 次级按钮(各菜单"主菜单"返回):纸灰平底墨字,与漫画黄主操作区分 */
   .bigbtn.alt { background:var(--mm-brown); color:var(--mm-brown-text); }
-  /* 旧漫画集中线斜方框已删除;车库/遭遇战/暂停用黄高亮 */
+  /* Shared active-state highlight for garage, mission, and pause buttons. */
   .bigbtn::before, .bigbtn::after, .optbtn::before, .optbtn::after { content:''; position:absolute; display:none; pointer-events:none; }
   #pauseov .bigbtn { margin:8px auto; }
   #startbtn { margin:8px auto; }
@@ -936,10 +1102,13 @@
 
   /* 复活重新部署界面 */
   .rrow { display:flex; gap:16px; pointer-events:auto; }
+  /* 重部署/接管型号行会被战术 BIOS 窗口重新挂入 flex 槽位；必须让按钮自身换行，
+     否则 FFA 的红/蓝全型号列表被单行宽度裁掉，用户只能看到前几个选项。 */
+  #respawnov .rrow, #possessov .rrow { width:100%; min-width:0; flex-wrap:wrap; }
   .rrow + .rrow { margin-top:16px; }   /* 行间距规范化=与列间距(gap:16px)一致(#respawnov flex-column 无容器 gap,两行原间距为 0) */
   /* 选择类按钮:createOptionButton 统一生成 .optbtn,尺寸+外观只此一处定义
      (外观并入 .optbtn 本体,不依赖 .rrow button——预览/接管面板按钮同款生效;
-      :disabled=JS 置 disabled 属性;.dim=接管置灰旧类名,一并收口)。
+      `:disabled` is controlled by JS; `.dim` marks unavailable takeover options)。
      漫画悬停三件套:倾斜变形+放大+集中线背景(选项框.png)——纯 CSS :hover 事件驱动,
      transform 为合成器属性,静止零成本、无任何 JS/逐帧参与。 */
   .optbtn { min-width:100px; padding:6px 10px; font-size:13px; font-weight:bold; letter-spacing:1px; cursor:pointer; font-family:inherit;
@@ -961,7 +1130,7 @@
   /* ===== 触屏(无真悬停)特效改挂 :active:按住显示集中框,松手即收——根除粘滞 hover;
      hover 规则在触屏被点击后会粘滞,此处逐项回位(背景/边框/投影/变形/伪元素) ===== */
   @media (hover: none) {
-    .bigbtn:hover:not(:disabled), #mainbtns .bigbtn:nth-child(even):hover:not(:disabled) {
+    .bigbtn:hover:not(:disabled) {
       transform:none; background:linear-gradient(180deg,var(--mm-green),var(--mm-green2));
       border-color:#141414; box-shadow:5px 5px 0 rgba(0,0,0,.85); color:#141414; text-shadow:none; }
     .bigbtn.alt:hover:not(:disabled) { background:var(--mm-brown); color:var(--mm-brown-text); }
@@ -972,8 +1141,7 @@
        按压期由上方 :active !important 接管显示 */
     .bigbtn:hover:not(:disabled)::before, .bigbtn:hover:not(:disabled)::after,
     .optbtn:hover:not(:disabled):not(.dim)::before, .optbtn:hover:not(:disabled):not(.dim)::after { display:none; }
-    /* #btnfx 覆盖层删除后，不再需要隐藏原按钮的 .fxhide 规则；
-       按压反馈由上方 :active 提亮统一承担（触屏与桌面同款）。 */
+    /* Touch feedback uses the shared :active highlight. */
   }
   /* v12：遭遇战崎岖度恢复 range，并与游戏设置滑块统一使用荧光绿强调色。
      设置面板后段 #settingssub input[type=range] 也是 #9dffa8；不再保留孤立红色规则。 */
@@ -988,23 +1156,10 @@
      子视图 auto 外边距=有余量时居中、超高时可滚到顶,两态兼得 ===== */
   #startov { overflow-y:auto; justify-content:flex-start; }
   #startov .menuview { margin-top:auto; margin-bottom:auto; padding-top:18px; padding-bottom:26px; }
-  /* ===== 遭遇战参数排版:桌面=横排卡片流;粗指针(触屏)=每项竖排单列 ===== */
-  #startcards { display:flex; gap:16px; justify-content:center; flex-wrap:wrap; align-items:flex-start; max-width:1100px; }
+  /* ===== 遭遇战参数排版: 桌面横排卡片流 ===== */
   #setuproot { display:flex; gap:16px; justify-content:center; flex-wrap:wrap; }
-  @media (pointer: coarse) {
-    #startcards, #setuproot { flex-direction:column; align-items:center; flex-wrap:nowrap; }
-  }
-  /* 操作手册双端切换:粗指针只看触屏版,精确指针只看键鼠版 */
-  .manual-touch { display:none; }
-  @media (pointer: coarse) {
-    .manual-pc { display:none; }
-    .manual-touch { display:block; }
-  }
-  /* 安卓端游戏设置里的按钮说明(操作控制指南)整段删除:触屏版图例仍是旧按钮美术,
-     与新磷光键对不上,留着误导;桌面端原样保留(同一文件,媒体查询隔离)。 */
-  @media (pointer: coarse) {
-    #manualsec { display:none; }
-  }
+  .manual-pc { display:block; }
+  .manual-touch { display:none !important; }
   /* 手册按钮图例:统一尺寸迷你实键复刻(46px 圆纸底墨边,一行一键) */
   .mrow { display:flex; align-items:center; gap:12px; margin:7px auto; max-width:360px; text-align:left; }
   .mbtn { flex:none; width:46px; height:46px; border-radius:50%; background:var(--hud-paper);
@@ -1026,18 +1181,13 @@
   
   /* 载具选项内框:漫画统一风(纸白+墨边+硬投影),唯一滚动区——自然高=选项首顶到末底,
      超出可用高才内滚(flex min-height:0 允许收缩);面板标题/模式/复位/返回按钮恒不滚 */
-  #pvlistbox { border:2px solid #141414; background:var(--mm-panel-bg); border-radius:var(--mm-radius);
-    box-shadow:3px 3px 0 rgba(0,0,0,.8); padding:8px; overflow-y:auto; flex:0 1 auto; min-height:0; }
-  
-  
-  #siderow button[data-side="ally"] { border-color:#c53a22; color:#c53a22; }
-  #siderow button[data-side="ally"].sel { border-color:#141414; background:#ff6a4d; color:#fff;
+  #siderow button[data-side="red"] { border-color:#c53a22; color:#c53a22; }
+  #siderow button[data-side="red"].sel { border-color:#141414; background:#ff6a4d; color:#fff;
     box-shadow:3px 3px 0 rgba(0,0,0,.8); }
-  #siderow button[data-side="enemy"] { border-color:#2456b8; color:#2456b8; }
-  #siderow button[data-side="enemy"].sel { border-color:#141414; background:#4d86ff; color:#fff;
+  #siderow button[data-side="blue"] { border-color:#2456b8; color:#2456b8; }
+  #siderow button[data-side="blue"].sel { border-color:#141414; background:#4d86ff; color:#fff;
     box-shadow:3px 3px 0 rgba(0,0,0,.8); }
   #rconfirm { margin-top:24px; }
-  #endstats { font-size:15px; color:#efeadb; line-height:2; margin-bottom:24px; }   /* 暗底覆盖层直排文字,不取纸白面板正文色 */
   /* 结算界面按屏幕尺寸缩放:矮视口整体降档(标题/统计/按钮),超出仍可滚(auto 外边距=居中可滚兼得) */
   #endov { overflow-y:auto; }
   #endov > :first-child { margin-top:auto; }
@@ -1045,18 +1195,12 @@
   @media (max-height: 600px) {
     #endov h1 { font-size:30px; margin:4px 0 8px; }
     #endov h2 { font-size:14px; margin-bottom:10px; padding:3px 14px; }
-    #endstats { font-size:12.5px; line-height:1.7; margin-bottom:12px; }
     #endov .bigbtn { padding:8px 30px; font-size:16px; letter-spacing:4px; width:240px; margin:5px auto; }
   }
-  #endtitle.dead { color:var(--mm-red); text-shadow:-2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 3px 3px 0 #000, 0 0 26px var(--mm-red-glow); }
 
   /* ===== 主菜单(四视图切换:主菜单/遭遇战参数/操作手册/游戏设置) ===== */
   .menuview { display:flex; flex-direction:column; align-items:center; width:100%; }
-  #mainmenu { margin-top:26px; }                     /* 主菜单整体上移,给竖排按钮留空间 */
-  #mainbtns { display:flex; flex-direction:column; align-items:center; margin-top:10px; }
-  #mainbtns .bigbtn { width:330px; margin:9px auto; } /* 主菜单按钮统一宽,竖排四宫格 */
   #startsub { overflow-y:auto; padding:24px 0 20px; }  /* 参数卡片区,内容过多时滚动 */
-  #manualsub .tip { margin-bottom:10px; }
   .manual-h { font-size:13px; color:var(--mm-amber); letter-spacing:3px; margin:16px 0 8px; }
   #settingssub h2 { margin-bottom:30px; }
 
@@ -1211,10 +1355,10 @@
   transform: none !important;
   box-shadow: 0 0 12px rgba(157,255,168,.35) !important;
 }
-#startsub #siderow .optbtn[data-side="ally"].sel {
+#startsub #siderow .optbtn[data-side="red"].sel {
   background: #ff5d55 !important; border-color: #ffb0ac !important; color: #1a0606 !important;
 }
-#startsub #siderow .optbtn[data-side="enemy"].sel {
+#startsub #siderow .optbtn[data-side="blue"].sel {
   background: #57a8ff !important; border-color: #b3d8ff !important; color: #061018 !important;
 }
 #startsub .optbtn:hover:not(:disabled):not(.sel),
@@ -1268,6 +1412,33 @@
   box-shadow: inset 0 0 12px rgba(0,0,0,.65) !important;
   margin: 0 !important;
 }
+
+#endov #airsupportbtn,
+#airsupportbtn {
+  width: auto !important;
+  min-width: 260px !important;
+  max-width: 360px !important;
+  height: 42px !important;
+  min-height: 42px !important;
+  line-height: 38px !important;
+  padding: 0 16px !important;
+  font-size: 15px !important;
+  letter-spacing: 1.5px !important;
+  border: 2px solid #ffd93b !important;
+  color: #121212 !important;
+  background: #ffd93b !important;
+  font-weight: bold !important;
+  box-shadow: 0 0 16px rgba(255, 217, 59, 0.6) !important;
+  cursor: pointer !important;
+  white-space: nowrap !important;
+}
+#endov #airsupportbtn:hover,
+#airsupportbtn:hover {
+  background: #ffe970 !important;
+  color: #000 !important;
+  box-shadow: 0 0 24px rgba(255, 233, 112, 0.9) !important;
+  transform: scale(1.02) !important;
+}
 #startsub .bios-num,
 #startsub .setupcard .srow input[type=number] {
   width: 96px !important;
@@ -1283,6 +1454,28 @@
   box-shadow: inset 0 0 16px rgba(0,0,0,.7);
 }
 #startsub .setupcard .srow input[type=number] { width: 72px !important; }
+#startsub .ffa-heli-select {
+  width: 96px !important;
+  padding: 4px 6px !important;
+  font-size: 15px !important;
+  font-family: VT323, "Courier New", monospace !important;
+  color: #9dffa8 !important;
+  background: #060c05 !important;
+  border: 1px solid #3d4a2e !important;
+  border-radius: 0 !important;
+  text-align: center !important;
+  outline: none !important;
+  box-shadow: inset 0 0 16px rgba(0,0,0,.7);
+}
+#startsub .ffa-heli-select:focus { border-color: #9dffa8 !important; }
+#startsub .ffa-powerup-slider {
+  width: 116px !important; min-width: 92px; accent-color: #9dffa8;
+  cursor: pointer; filter: drop-shadow(0 0 3px rgba(157,255,168,.35));
+}
+#startsub .ffa-powerup-value {
+  min-width: 34px; color: #c8ffc0; font: 16px VT323, "Courier New", monospace;
+  text-align: right; letter-spacing: .04em;
+}
 #startsub .bios-num:focus { border-color: #9dffa8 !important; }
 #startsub .bios-unit, #startsub .bios-mini { color: #6f9a63; font-size: 13px; letter-spacing: .08em; }
 #startsub .bios-camp { align-items: center; }
@@ -1507,7 +1700,21 @@
    底色本就是 rgba(6,12,5,.92)(92% 不透明),去掉模糊后视觉损失几乎看不出来。
    桌面端(index 精确指针)保持原样,不做任何改动。
    ============================================================ */
-@media (pointer: coarse) {
-  .hwp-item, #log div { backdrop-filter: none; }
+
+
+
+@media (max-width: 760px) {
+  #vehicle-tech-status-hud { left:12px; transform:none; }
+  #battle-repair-hud { left:auto; right:12px; transform:none; }
+  #control-zone-capture-hud { left:12px; transform:none; }
+  #control-zone-repair-hud { left:auto; right:12px; transform:none; }
 }
 
+@media (max-width: 600px) {
+  /* Four helicopter slots must remain usable on narrow touch screens. */
+  #heliweaponbar { width: calc(100vw - 8px); gap: 3px; bottom: 12px; justify-content: center; }
+  #heliweaponbar .hwp-item { flex: 1 1 0; min-width: 0; padding: 2px 1px; gap: 1px; justify-content: center; flex-direction: column; font-size: 11px; letter-spacing: .3px; }
+  #heliweaponbar .hwp-key { font-size: 11px; line-height: 1.05; padding: 0 3px; }
+  #heliweaponbar .hwp-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; letter-spacing: .2px; }
+  #heliweaponbar .hwp-ammo { font-size: 11px; line-height: 1.05; padding: 1px 2px; letter-spacing: .2px; }
+}

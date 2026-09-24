@@ -80,35 +80,3 @@
   margin-left: 4px;
   font-weight: 700;
 }
-/* ===== 加载完成后的「按任意键开始游戏」闪烁层 (等待真实用户手势,兼作 Autoplay 解锁) ===== */
-#boot-pak {
-  position: absolute;
-  inset: 0;
-  display: none;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 18px;
-  z-index: 2;
-  background: #000000;
-}
-#boot-pak.pak-on { display: flex; }
-#boot-pak .pak-title {
-  font-family: "ZCOOL QingKe HuangYou", "Microsoft YaHei", sans-serif;
-  font-size: clamp(30px, 5.2vw, 58px);
-  letter-spacing: 0.14em;
-  color: #9dffa8;
-  text-shadow: 0 0 10px rgba(157, 255, 168, 0.65), 0 0 34px rgba(157, 255, 168, 0.28);
-  animation: pakBlink 1.15s steps(2, start) infinite;
-  white-space: nowrap;
-}
-#boot-pak .pak-sub {
-  font-family: "VT323", "Courier New", monospace;
-  font-size: clamp(13px, 1.6vw, 18px);
-  letter-spacing: 0.22em;
-  color: #43603b;
-  animation: pakBlinkSoft 1.15s ease-in-out infinite;
-}
-@keyframes pakBlink { 50% { opacity: 0; } }
-@keyframes pakBlinkSoft { 50% { opacity: 0.25; } }
-#boot-pak.pak-off { opacity: 0; pointer-events: none; transition: opacity 0.35s ease-out; }

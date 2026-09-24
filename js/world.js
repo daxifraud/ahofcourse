@@ -8,17 +8,6 @@
 /* 阴影纹素对齐暂存(抗移动抖动) */
 var _sunLook = new THREE.Vector3(), _sunRight = new THREE.Vector3(), _sunUpAx = new THREE.Vector3(),
     _sunUpV = new THREE.Vector3(0, 1, 0), _sunCorr = new THREE.Vector3(), _shAim = new THREE.Vector3();
-/* ★P0-③(性能优化报告 2026-09-13):开镜阴影视圈半径上限按画质档收缩——
-   高档 420/2400 逐位不变(桌面体验不动);中档(触屏默认)第三人称 ≤160m / 火箭炮俯视 ≤260m;
-   低档 120/200。旧口径随全屏对角放大到 420~2400m,1024²/512² 贴图覆盖上千平方米:
-   纹素粗(0.4~2.3m)阴影糊,且片元侧 PCF 覆盖面积与 pass 光栅量随半径平方膨胀。
-   收缩后视圈中心(=瞄准着点)周围阴影反而更清晰;着点 160m 外的远景载具暂失阴影,
-   漫画描边风格下观感可接受(报告 §三-P0③)。未开镜恒 70m,不受本钳影响。 */
-var _shCap3rd = 420, _shCapArtyTop = 2400;
-if (typeof GFX_PROFILE !== 'undefined') {
-  if (GFX_PROFILE === 'low') { _shCap3rd = 120; _shCapArtyTop = 200; }
-  else if (GFX_PROFILE === 'mid') { _shCap3rd = 160; _shCapArtyTop = 260; }
-}
 /* ============================================================
    每帧通用更新(模块修复 / 火灾 / 烟雾)
    ============================================================ */
@@ -44,9 +33,12 @@ function commonUpdate(t, dt) {
     if (t.gunMesh) t.gunMesh.position.z = -rz;
     if (t.muzzle) t.muzzle.position.z = t.muzzZ0 - rz;
   }
+  // 出生保护期间不保留/处理玩家旧火灾状态(新车通常没有火灾，保留此闸防调试或边界事件绕过保护)。
+  if (t.fire && t.alive && t === player && isFfaMode() && t._ffaSpawnInvulUntil > gameT) t.fire = null;
   if (t.fire && t.alive) {
     t.fire.dotT += dt;
     t.struct -= CONF.fireDOT * dt;
+    if (CONF.fireDOT * dt > 0) t.lastDamageT = gameT;   // 火灾持续伤害也会立即打断战场维修
     if (t.fire.dotT > 0.8) {
       t.fire.dotT = 0;
       var keys2 = ['engine', 'fuel', 'ammo', 'turret'];
@@ -63,7 +55,7 @@ function commonUpdate(t, dt) {
     if (t.fire.extinguishAt != null && gameT >= t.fire.extinguishAt) {
       t.fire = null;
     }
-    if (t.struct <= 0) killTank(t, '火灾焚毁');
+    if (t.struct <= 0) killTank(t, 'FIRE KILL');
   }
   /* 发动机排烟、飘散烟和双履带后尘由 comic.js 的手绘 atlas 面片接管;
      贴图片段使用固定世界尺寸,不读相机距离。 */
@@ -77,6 +69,9 @@ function commonUpdate(t, dt) {
       if (typeof wreckSparkCard === 'function') wreckSparkCard(_v1, 1.6);   // 小尺寸火星贴图卡(与残骸飞溅同池)
     }
   }
+  /* BLUE-MBT-1 battlefield repair is consumed here, in the real per-vehicle
+     update path after fire damage has been applied.  It is not a HUD-only timer. */
+  if (typeof vehicleTechBattlefieldRepairTick === 'function') vehicleTechBattlefieldRepairTick(t, dt);
 }
 
 /* ============================================================
@@ -94,20 +89,19 @@ function applyScopePerf(on, zoom) {
   // ① 动态分辨率缩放(按倍率分档:倍率越高画面细节越少,低分辨率越不可感知)
   var z = on ? (zoom || 1) : 0;
   var ratio = !on ? 1 : (z <= 1 ? 0.55 : (z <= 2 ? 0.5 : (z <= 3 ? 0.45 : 0.4)));
-  /* ★P2-⑧:像素比落笔统一走 drsApply(=基准×全局DRS×开镜档);无 drsApply(模块序异常/探针)时保留原直写兜底 */
-  var _apply = (typeof drsApply === 'function') ? drsApply : function () {
-    renderer.setPixelRatio(Math.max(0.35, _basePixelRatio * _scopeResRatio));
-    renderer.setSize(innerWidth, innerHeight, false);
-  };
+  var targetPr = _basePixelRatio * ratio;
   if (on && !_scopeResHi) {
     _scopeResHi = true; _scopeResRatio = ratio;
-    _apply();                                              // 保持 CSS 尺寸,仅缩渲染缓冲
+    renderer.setPixelRatio(Math.max(0.35, targetPr));
+    renderer.setSize(innerWidth, innerHeight, false);       // 保持 CSS 尺寸,仅缩渲染缓冲
   } else if (on && Math.abs(ratio - _scopeResRatio) > 0.001) {   // 倍率档位变化时更新
     _scopeResRatio = ratio;
-    _apply();
+    renderer.setPixelRatio(Math.max(0.35, targetPr));
+    renderer.setSize(innerWidth, innerHeight, false);
   } else if (!on && _scopeResHi) {
     _scopeResHi = false; _scopeResRatio = 1;
-    _apply();
+    renderer.setPixelRatio(_basePixelRatio);
+    renderer.setSize(innerWidth, innerHeight, false);
   }
   /* 阴影常开,视锥由 cameraUpdate 动态接管 */
 }
@@ -179,8 +173,7 @@ function cameraUpdate(dt) {
        机位自 +Z(南)侧留 10° 倾角(0.176h 水平偏置):纯正俯视时视轴∥up 矢量,lookAt 退化;
        南偏下过渡期 roll 由「视轴水平分量」连续收敛到北向上,与 scopeT>0.55 的 up 切换无缝衔接。 */
     var hTop = artyTopCamHeight();
-    /* 镜头中心逐轴钳在活动界内(boundsX/Z=各自半图宽;旧版偏移±bounds 双重钳=半图宽,
-       车不在图心时远侧平移不到——「平移 3km 卡死」根因,偏移侧改宽钳见 player.js) */
+    /* Clamp the camera center to the active map bounds for the current viewport. */
     var bX = CONF.boundsX != null ? CONF.boundsX : CONF.bounds;
     var bZ = CONF.boundsZ != null ? CONF.boundsZ : CONF.bounds;
     var cX = clamp(pp.x + (player._topCamX || 0), -bX, bX);
@@ -279,7 +272,7 @@ function cameraUpdate(dt) {
     shCX = _shAim.x; shCY = _shAim.y; shCZ = _shAim.z;
     var shFov = camera.fov * Math.PI / 180;                  // 与相机实际 fov 同源(火箭炮俯视恒 52°,不走 scopeFov)
     var shAsp = camera.aspect || (innerWidth / innerHeight);
-    shR = clamp(shD * Math.tan(shFov * 0.5) * Math.sqrt(1 + shAsp * shAsp) + 25, 40, isArtyTop ? _shCapArtyTop : _shCap3rd);   // 全屏对角世界半径+25m 余量;上限按画质档收缩(见 _shCap3rd/_shCapArtyTop 注)
+    shR = clamp(shD * Math.tan(shFov * 0.5) * Math.sqrt(1 + shAsp * shAsp) + 25, 40, isArtyTop ? 2400 : 420);   // 全屏对角世界半径+25m 余量(上限随对角扩)
     shR = Math.ceil(shR / 10) * 10;                       // 10m 量化档:测距连续变化不逐帧重投影(纹素尺寸稳定不抖)
   }
   var shCam = sunLight.shadow.camera;
@@ -320,7 +313,7 @@ var _siPos = new THREE.Vector3(), _siVel = new THREE.Vector3(), _siMove = new TH
 var _fcsOkVal = true;                 // ★审查C7: 上帧火控解算门(scopeHudUpdate 每帧写入; updateScopeInfo 先于它执行, 用上帧值=至多 1 帧滞后)
 var _rgD = new THREE.Vector3(), _rgR = new THREE.Vector3(), _rgA = new THREE.Vector3(), _rgB = new THREE.Vector3();   // 散布环投影暂存
 var _lrCands = [];                    // 激光测距候选暂存(宽相位输出,独立于 losIntersect 的 _candList)
-var LASER_MAX = 10000;                // ★审查C6: 测距量程单一真源(原版为函数内字面量; 与 CONF.arty/artyE.maxRange 语义无关——后者是火箭炮最大射程配置,红 PHL-11/蓝 M142 均为 40000)
+var LASER_MAX = 10000;                // ★审查C6: 测距量程单一真源(原版为函数内字面量; 与 CONF.arty/artyE.maxRange 语义无关——后者是火箭炮最大射程配置,红 RED_MLRS/蓝 BLUE_MLRS 均为 40000)
 // 直线测距(模块/残骸/障碍物/地形,取最近)
 function laserRange(from, dir) {
   /* ★审查A1(等价换序): 返回值 = min(物体命中, 地形命中)。原版先沿全 10km 走廊取物体候选
@@ -422,7 +415,7 @@ function simRocketImpact(from, dir, v) {
 }
 /* ===== 火箭炮俯视火控 · 地面战术标记:火力覆盖范围环 + 装定点红环 + 车→装定点射击线 =====
    覆盖半径 = 齐射散布图案最大半径 + 溅射半径(按实弹图案表 artySalvoPattern 逐车型计算:
-   PHL-11 40 发黄金角螺旋 ≈147m + 22m;M142 6 发 ≈105m + 44m);环贴地形上浮 0.8m,
+   RED_MLRS 40 发黄金角螺旋 ≈147m + 22m;BLUE_MLRS 6 发 ≈105m + 44m);环贴地形上浮 0.8m,
    depthTest 关闭 = 战术叠加恒可见(俯瞰下不被山体/建筑遮挡)。 */
 var _topRV = new THREE.Vector3();                        // 光标反投影射线 scratch
 var _artyTopGrp = null, _artyTopRing = null, _artyTopDot = null, _artyTopLine = null, _artyTopLinePos = null;
@@ -502,11 +495,31 @@ function updateScopeInfo() {
     return;
   }
 
+  /* RED-TD weapon 2: the HE round has its own 1400m/s gravity solution in the
+     same scope camera/impact pipeline. Switching back to AP immediately restores
+     the normal effective shell speed, so the sight never reuses the wrong TOF. */
+  if (typeof isPlayerRedTdHighExplosiveVehicle === 'function' && isPlayerRedTdHighExplosiveVehicle(player) && player._tdReloadKind === 2) {
+    var heFrom = new THREE.Vector3();
+    player.muzzle.getWorldPosition(heFrom);
+    var heDir = new THREE.Vector3();
+    player.gunPivot.getWorldDirection(heDir);
+    scopeInfo.laser = laserRange(heFrom, heDir);
+    var heImp = _fcsOkVal ? simulateImpact(heFrom, heDir, 1400) : null;
+    scopeInfo.point = heImp ? heImp.point : null;
+    scopeInfo.rkPointL = null;
+    scopeInfo.rkPointR = null;
+    scopeInfo._mDir = _siD.copy(heDir);
+    scopeInfo._mPos = _siP.copy(heFrom);
+    scopeInfo.impDist = heImp ? heImp.dist : 0;
+    scopeInfo.tof = heImp ? heImp.tof : 0;
+    return;
+  }
+
   // 直升机多武器独立炮口与落点分流
   if (isHeliVehicle(player)) {
     var curWp = player._heliWeapon || 3;
     if (curWp === 3) {
-      // 武器3: 导弹模式 - 彻底删除机炮落点指示器与落点仿真,不出现落点指示器
+      // Weapon 3 is missile mode; it has no gun impact marker or impact simulation.
       var camDir3 = new THREE.Vector3();
       camera.getWorldDirection(camDir3);
       scopeInfo.laser = laserRange(player.group.position, camDir3);
@@ -528,7 +541,7 @@ function updateScopeInfo() {
       var vHeliX = player._heliVx || 0, vHeliY = player._heliVy || 0, vHeliZ = player._heliVz || 0;
       var rkSpecHud = HELI_RKT_SPEC[player.kind] || HELI_RKT_SPEC.ah64;
       var rkV0Hud = rkSpecHud.v0;                                   // 两型统一规格初速(与 fireHeliRocket 同源)
-      var rkGHud = (rkSpecHud.guidance === 'datalink') ? CONF.gravity : CONF.gravity * 0.35;   // 制导型全重力 / Hydra-70 0.35g
+      var rkGHud = (rkSpecHud.guidance === 'datalink') ? CONF.gravity : CONF.gravity * 0.35;   // 制导型全重力 / 70mm火箭弹 0.35g
       var rVel = new THREE.Vector3(vHeliX + fireDir.x * rkV0Hud, vHeliY + fireDir.y * rkV0Hud, vHeliZ + fireDir.z * rkV0Hud);
       var impL = simulateHeliRocketImpact(fromL, rVel, rkGHud, rkSpecHud.dragK);
       var impR = simulateHeliRocketImpact(fromR, rVel, rkGHud, rkSpecHud.dragK);
@@ -550,7 +563,7 @@ function updateScopeInfo() {
   var dir = new THREE.Vector3();
   player.gunPivot.getWorldDirection(dir);
   scopeInfo.laser = laserRange(from, dir);
-  /* ★审查C7: 落点显示本就受火控门(59/M60 行进间≥3s 无落点、89/99/M1 状态保持 0.5s)——
+  /* ★审查C7: 落点显示本就受火控门(基础主战坦克 行进间≥3s 无落点、高阶装甲载具 状态保持 0.5s)——
      隐藏期照跑全额 simulateImpact(≤140 步弹道积分)纯浪费; 99 例外保留(其 LWS 落点解算以 point 为瞄准源)。 */
   var imp = (player.kind === '99' || _fcsOkVal) ? simulateImpact(from, dir, effectiveShellSpeed(player)) : null;
   scopeInfo.point = imp ? imp.point : null;
@@ -587,15 +600,17 @@ function scopeHudUpdate() {
   var isHeli = player && player.alive && isHeliVehicle(player);
   var curWp = isHeli ? (player._heliWeapon || 3) : 1;
 
-  // 火控计算机: 59/M60=人工装表(静止3s才出落点/测距), 89/99/M1=计算机解算(状态保持0.5s), 直升机=计算机解算(无等待); 突变状态即清零
+  // 火控状态:未安装科技的 RED-MBT-1 仍是人工装表(静止3s);安装火控计算机后沿用已有计算机链路(0.5s)。
+  // 99/89/M1 与直升机的原有计算机规则不变；压制只关断原本属于计算机的载具。
   var _fcsDt = (_fcsPrevT < 0) ? 0 : Math.min(0.1, Math.max(0, gameT - _fcsPrevT)); _fcsPrevT = gameT;
   var _fcsOk = true;
   if (player && player.alive && !isHeli && player.kind !== 'arty') {
     var _mv = Math.abs(player.speed || 0) > 0.5;
+    var _playerTankFcs = player.kind === 'tank' && typeof vehicleTechInstalled === 'function' && vehicleTechInstalled(player, 'fcs');
     if (_fcsState === null || _fcsState !== _mv) { _fcsState = _mv; _fcsT = 0; }
     _fcsT += _fcsDt;
-    _fcsOk = (player.kind === 'tank') ? (!_mv && _fcsT >= 3.0) : (_fcsT >= 0.5);
-    if (player._laserSuppressed && player.kind !== 'tank') _fcsOk = false;   // 被激光压制: 计算机解算载具(99/89/M1)落点指示永久不可用(压制期内); 59/M60人工装表不受影响
+    _fcsOk = (player.kind === 'tank' && !_playerTankFcs) ? (!_mv && _fcsT >= 3.0) : (_fcsT >= 0.5);
+    if (player._laserSuppressed && (player.kind !== 'tank' || _playerTankFcs)) _fcsOk = false;
   }
   _fcsOkVal = _fcsOk;                  // ★审查C7: 供 updateScopeInfo(先于本函数)读的上帧门
 
@@ -640,32 +655,35 @@ function scopeHudUpdate() {
   var _rt = '';
   if (player && player.kind === 'arty') {
     _rt = scopeInfo.point
-      ? ('装定 ' + scopeInfo.laser.toFixed(0) + ' m · 首发弹着 ' + scopeInfo.impDist.toFixed(0) +
-         ' m · 飞行 ' + scopeInfo.tof.toFixed(1) + ' s · 覆盖半径 ' + artyCoverageRadius(player).toFixed(0) + ' m' +
-         (!scopeInfo.reach ? ' ⚠ 超出射程,显示首弹实际落点' : ''))
-      : '光标装定中…';
+      ? ('LAID ' + scopeInfo.laser.toFixed(0) + ' m - 1ST IMPACT ' + scopeInfo.impDist.toFixed(0) +
+         ' m - TOF ' + scopeInfo.tof.toFixed(1) + ' s - BLAST R ' + artyCoverageRadius(player).toFixed(0) + ' m' +
+         (!scopeInfo.reach ? ' [!] OUT OF RANGE, SHOWING 1ST IMPACT' : ''))
+      : 'LAYING...';
     if (el.rangeinfo._last !== _rt) { el.rangeinfo._last = _rt; el.rangeinfo.textContent = _rt; }
   } else if (isHeli && curWp === 3) {
     // 导弹模式: 仅显示激光测距,无任何炮弹落点
-    _rt = (L === Infinity || L > 20000) ? '测距 --- m' : ('测距 ' + L.toFixed(0) + ' m');   // 直升机=计算机解算(标注按需求仅留注释, 不显示)
+    _rt = (L === Infinity || L > 20000) ? 'RANGE --- m' : ('RANGE ' + L.toFixed(0) + ' m');   // 直升机=计算机解算(标注按需求仅留注释, 不显示)
     if (el.rangeinfo._last !== _rt) { el.rangeinfo._last = _rt; el.rangeinfo.textContent = _rt; }
   } else if (isHeli && curWp === 2) {
     // 火箭弹模式: 呈现测距与航空火箭双落点弹道信息
-    var txtR = (L === Infinity || L > 2000) ? '测距 --- m' : ('测距 ' + L.toFixed(0) + ' m');
-    if (scopeInfo.point) txtR += ' · 火箭弹着 ' + scopeInfo.impDist.toFixed(0) + ' m · 飞行 ' + scopeInfo.tof.toFixed(1) + ' s';
+    var txtR = (L === Infinity || L > 2000) ? 'RANGE --- m' : ('RANGE ' + L.toFixed(0) + ' m');
+    if (scopeInfo.point) txtR += ' - RKT IMPACT ' + scopeInfo.impDist.toFixed(0) + ' m - TOF ' + scopeInfo.tof.toFixed(1) + ' s';
     // 火箭弹模式=计算机解算(标注按需求仅留注释, 不显示)
     if (el.rangeinfo._last !== txtR) { el.rangeinfo._last = txtR; el.rangeinfo.textContent = txtR; }
   } else {
-    var _fcsLabel = '';   // 火控类型标注按需求移除显示: tank=人工装表 / 89,99,M1,直升机=计算机解算(仅留注释)
-    if (!isHeli && player._laserSuppressed && player.kind !== 'tank') {
-      var _supTxt = '—— 激光压制中 ——';
+    var _fcsLabel = (typeof vehicleTechScopeBallisticText === 'function')
+      ? vehicleTechScopeBallisticText(player, scopeInfo.impDist || L)
+      : '';
+    var _tankFcsInstalled = player && player.kind === 'tank' && typeof vehicleTechInstalled === 'function' && vehicleTechInstalled(player, 'fcs');
+    if (!isHeli && player._laserSuppressed && (player.kind !== 'tank' || _tankFcsInstalled)) {
+      var _supTxt = '-- LASER SUPPRESSED --';
       if (el.rangeinfo._last !== _supTxt) { el.rangeinfo._last = _supTxt; el.rangeinfo.textContent = _supTxt; }
     } else if (!isHeli && !_fcsOk) {
       if (el.rangeinfo._last !== '') { el.rangeinfo._last = ''; el.rangeinfo.textContent = ''; }   // 解算未完成: 无测距信息
     } else {
-      var txt = (L === Infinity || L > 2000) ? '测距 --- m' : ('测距 ' + L.toFixed(0) + ' m');
-      if (scopeInfo.point) txt += ' · 弹着 ' + scopeInfo.impDist.toFixed(0) + ' m · 飞行 ' + scopeInfo.tof.toFixed(1) + ' s';
-      txt += _fcsLabel;
+      var txt = (L === Infinity || L > 2000) ? 'RANGE --- m' : ('RANGE ' + L.toFixed(0) + ' m');
+      if (scopeInfo.point) txt += ' - IMPACT ' + scopeInfo.impDist.toFixed(0) + ' m - TOF ' + scopeInfo.tof.toFixed(1) + ' s';
+      if (_fcsLabel) txt += ' - ' + _fcsLabel;
       if (el.rangeinfo._last !== txt) { el.rangeinfo._last = txt; el.rangeinfo.textContent = txt; }
     }
   }

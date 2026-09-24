@@ -67,9 +67,7 @@ var FXQ_PROFILE = (function () {
     if (FXQ_PRESETS[s]) return s;
     if (localStorage.getItem('prefGfxProfile') === 'low') return 'mid';   // 迁移默认:画质救急档用户保持旧低档体验(=新中)
   } catch (e) {}
-  var touch = false;
-  try { touch = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in window; } catch (e3) {}
-  return touch ? 'low' : 'high';   // ★2026-09-13:安卓(触屏)默认爆炸低,桌面默认高
+  return 'high';   // 纯桌面端适配: 默认高质量特效与完整粒子表现
 })();
 var FXQ = FXQ_PRESETS[FXQ_PROFILE];
 
@@ -113,14 +111,7 @@ var MODQ_PROFILE = (function () {
     if (MODQ_PRESETS[s]) return s;
     if (localStorage.getItem('prefGfxProfile') === 'low') return 'low';   // 迁移默认:画质救急档用户不被默认抬档
   } catch (e) {}
-  /* ★P0-①(性能优化报告 2026-09-13):触屏设备默认降回「中」——太阳阴影 1024²PCFSoft 是
-     移动填充率头号消耗源(报告 §二A:阴影 pass 重渲全部投影体 + 全屏 9+ 采样/像素),
-     中档=512²PCF 硬阴影,漫画描边风格下观感损失近不可察;机库像素比同档回落 1.5。
-     此前「两端收敛默认高」与战场规模翻倍叠加导致触屏帧率崩塌,故设备默认回调;
-     用户显式选择(?modq= / 设置页)仍完全尊重,不被此默认覆盖。桌面默认高,逐位不变。 */
-  var _mqTouch = false;
-  try { _mqTouch = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in window; } catch (e2) {}
-  return _mqTouch ? 'mid' : 'high';
+  return 'high';   // ★2026-09-13:安卓默认模型高,桌面默认高,两端收敛(触屏不再默认中)
 })();
 var MODQ = MODQ_PRESETS[MODQ_PROFILE];
 /* 模型质量取值器(gfxFx 同构:惰性读取,无头/sandbox 无 MODQ 时回落默认值=高档原值)。 */
@@ -183,19 +174,19 @@ var BIOMES = [
      [0.11, 0.28) 就会沿地貌边界描出断续脏边并随视角闪烁。初版沃土过暗(L=0.186),
      与干草原/沙土等 7 对组合全部踩进危险带 —— 已整体压缩亮度、改用"色相"而非"明度"区分。
      区分度由色相承担:草原偏绿、沃土偏红棕、沙土偏黄、砾石/裸岩近中性灰、石楠偏灰绿。 */
-  { id:'grass', name:'干草原',   tex:0, rock:0.20, veg:0.85,
+  { id:'grass', name:'DRY GRASSLAND',   tex:0, rock:0.20, veg:0.85,
     g:[0.365,0.425,0.275],d:[0.500,0.480,0.320],r:[0.455,0.450,0.415] },
-  { id:'soil',  name:'沃土',     tex:1, rock:0.25, veg:0.45,
+  { id:'soil',  name:'FERTILE SOIL',     tex:1, rock:0.25, veg:0.45,
     g:[0.360,0.300,0.225],d:[0.470,0.395,0.285],r:[0.400,0.360,0.320] },
-  { id:'sand',  name:'沙土戈壁', tex:1, rock:0.35, veg:0.12,
+  { id:'sand',  name:'SANDY GOBI', tex:1, rock:0.35, veg:0.12,
     g:[0.430,0.395,0.285],d:[0.560,0.510,0.370],r:[0.470,0.440,0.375] },
-  { id:'gravel',name:'砾石滩',   tex:2, rock:0.70, veg:0.18,
+  { id:'gravel',name:'GRAVEL',   tex:2, rock:0.70, veg:0.18,
     g:[0.385,0.380,0.360],d:[0.495,0.487,0.458],r:[0.450,0.445,0.432] },
-  { id:'scrub', name:'灌木丘陵', tex:0, rock:0.40, veg:0.62,
+  { id:'scrub', name:'SCRUB HILLS', tex:0, rock:0.40, veg:0.62,
     g:[0.330,0.400,0.268],d:[0.462,0.463,0.325],r:[0.430,0.425,0.385] },
-  { id:'rock',  name:'断崖裸岩', tex:2, rock:0.92, veg:0.08,
+  { id:'rock',  name:'CLIFF ROCK', tex:2, rock:0.92, veg:0.08,
     g:[0.352,0.345,0.335],d:[0.450,0.440,0.425],r:[0.398,0.393,0.383] },
-  { id:'heath', name:'石楠高地', tex:0, rock:0.55, veg:0.50,
+  { id:'heath', name:'HEATH HIGHLAND', tex:0, rock:0.55, veg:0.50,
     g:[0.330,0.365,0.318],d:[0.445,0.443,0.372],r:[0.418,0.414,0.398] }
 ];
 var BIOME_N = BIOMES.length;
@@ -398,6 +389,46 @@ function approachSpeed(cur, target, accel, decel, dt) {
   return cur < target ? Math.min(target, cur + d) : Math.max(target, cur - d);
 }
 
+/* Ground-vehicle input inertia.  The old command path was rate-limited only at
+   the final yaw/speed step, so a digital key reversal could still feel like a
+   direction switch.  These small, bounded filters add engine spool and steering
+   inertia without changing the vehicle's top speed or maximum turn rate. */
+var GROUND_THROTTLE_TAU_UP = 0.18;
+var GROUND_THROTTLE_TAU_DOWN = 0.28;
+var GROUND_STEER_TAU_HEAVY = 0.22;
+var GROUND_STEER_TAU_LIGHT = 0.15;
+var GROUND_STEER_RELEASE_TAU = 0.13;
+function groundThrottleInertia(t, raw, dt) {
+  raw = clamp(Number(raw) || 0, -1, 1);
+  var cur = t && t._driveThrottle != null ? t._driveThrottle : 0;
+  var rising = Math.abs(raw) > Math.abs(cur) && (cur === 0 || (raw > 0) === (cur > 0));
+  var tau = rising ? GROUND_THROTTLE_TAU_UP : GROUND_THROTTLE_TAU_DOWN;
+  var step = 1 / Math.max(0.001, tau);
+  var out = approachSpeed(cur, raw, step, step, Math.max(0, dt || 0));
+  if (cur * raw < 0 && cur * out < 0) out = 0;   // reverse input must pass through neutral
+  if (Math.abs(out) < 0.0005 && Math.abs(raw) < 0.0005) out = 0;
+  if (t) t._driveThrottle = out;
+  return out;
+}
+function groundYawInertia(t, desiredRate, maxRate, dt) {
+  maxRate = Math.max(0.001, Math.abs(maxRate) || 0.001);
+  desiredRate = clamp(Number(desiredRate) || 0, -maxRate, maxRate);
+  var cur = t && t._steerRate != null ? t._steerRate : 0;
+  var light = t && (t.kind === 'arty' || (t.kind === 'aa' && t.team === 'blue'));
+  var tauUp = light ? GROUND_STEER_TAU_LIGHT : GROUND_STEER_TAU_HEAVY;
+  var accel = maxRate / Math.max(0.001, tauUp);
+  var release = maxRate / Math.max(0.001, GROUND_STEER_RELEASE_TAU);
+  var rate = approachSpeed(cur, desiredRate, accel, release, Math.max(0, dt || 0));
+  if (cur * desiredRate < 0 && cur * rate < 0) rate = 0;   // track reversal brakes to neutral first
+  rate = clamp(rate, -maxRate, maxRate);
+  if (t) {
+    t._steerRate = rate;
+    t.yaw = normAng(t.yaw + rate * Math.max(0, dt || 0));
+    t._turnCmd = rate;
+  }
+  return rate;
+}
+
 // —— 障碍绕行转向:行进方向前方的固定障碍产生"法向推离 + 切向绕行"的合力,
 //    AI 会贴着障碍边缘绕过去,而不是一直顶着它 ——
 var _av = { x: 0, z: 0 };
@@ -505,7 +536,7 @@ function mobOf(t) {
   var m = (t && t.mob) || MOB_DEFAULT;
   if (m === MOB_DEFAULT && t && t.kind !== 'ah64' && t.kind !== 'wz10' && !t._mobWarned) {
     t._mobWarned = 1;
-    if (typeof console !== 'undefined' && console.warn) console.warn('[mob] 地面载具缺 mob 数据,已按 40t 通用兜底:', t.kind, t.team);
+    if (typeof console !== 'undefined' && console.warn) console.warn('[mob] ground vehicle missing mob data, using 40t default:', t.kind, t.team);
   }
   if (m._tanMax == null) {
     m._tanMax = Math.max(0.05, m.mu - m.crr);
@@ -540,6 +571,12 @@ function mobEffOf(t) {   // 物理链有效档案：CONF 基值 + 路面分档 c
   var px = 0, pz = 0;
   if (t && t.group && t.group.position) { px = t.group.position.x; pz = t.group.position.z; }
   _mobEff.crr = crrGround(t ? t.kind === 'arty' : false, px, pz);
+  /* RED-MBT-1 Non-Skid Track is a player-only loadout effect. AI always keeps the base ground coefficient. */
+  if (t && t.isPlayer) {
+    var _techCrrMul = t._techGroundCrrMul != null ? t._techGroundCrrMul : 1;
+    if (typeof vehicleTechResistanceMultiplier === 'function') _techCrrMul = vehicleTechResistanceMultiplier(t);
+    _mobEff.crr *= _techCrrMul;
+  }
   _mobEff._tanMax = Math.max(0.05, _mobEff.mu - _mobEff.crr);
   _mobEff._tanSide = Math.max(0.05, _mobEff.muLat);
   return _mobEff;
@@ -632,11 +669,19 @@ var _slOut = { vCapF: 0, vCapR: 0, fAvailF: 0, fAvailR: 0, fResF: 0, fResR: 0, s
 function slopeArbitrate(t, dt) {
   var spec = mobEffOf(t);   // MR1：路面分档 crr（CONF 基值仅留作剪枝/门限保守口径）
   gradeProbe(t, _gpOut);
-  var sLong = _gpOut.sLong, sLat = _gpOut.sLat;
+  var sLongRaw = _gpOut.sLong, sLatRaw = _gpOut.sLat;
+  if (t._sLongF == null) { t._sLongF = sLongRaw; t._sLatF = sLatRaw; }
+  var kSlopeF = 1 - Math.exp(-dt / 0.1);
+  t._sLongF += (sLongRaw - t._sLongF) * kSlopeF;
+  t._sLatF += (sLatRaw - t._sLatF) * kSlopeF;
+  var sLong = t._sLongF, sLat = t._sLatF;
   var locked = !!t._throttleLock;   // 齐射驻锄:无驱动+驻锄不溜坡
-  var thr = locked ? 0 : (t._throttle || 0);
+  var rawThr = locked ? 0 : (t._throttle || 0);
+  var thr = groundThrottleInertia(t, rawThr, dt);
+  if (locked) { thr = 0; t._driveThrottle = 0; }
   var eff = (typeof engineEff === 'function') ? engineEff(t) : 1;
   var v = t.speed, v0 = t.speed0 || 10;
+  var vBoost = typeof powerupSpeedBonusMps === 'function' ? powerupSpeedBonusMps(t) : 0;
   slopePhys(spec, sLong, sLat, v, thr, v0, eff, trackGripMult(t), t._yawRate || 0, (typeof SIM_K === 'undefined') ? 1 : SIM_K, _slOut);
   var sm = (typeof speedMult === 'function') ? speedMult(t) : 1;
   // MR2 动量滤波：vCap 上升（阻力骤降，如过坡顶）快跟随 τ≈0.3s，下跌（上坡）慢跟随 τ≈1.6s（动能带车冲短坡）；
@@ -650,7 +695,7 @@ function slopeArbitrate(t, dt) {
   t._vcapFF += (vcF - t._vcapFF) * (vcF >= t._vcapFF ? kUpF : kDnF);
   var kUpR = 1 - Math.exp(-dt / 0.3), kDnR = (fTrac0 - _slOut.fResR < 0) ? 1 : 1 - Math.exp(-dt / 1.6);
   t._vcapFR += (vcR - t._vcapFR) * (vcR >= t._vcapFR ? kUpR : kDnR);
-  var target = thr >= 0 ? Math.min(thr * v0 * sm, t._vcapFF) : Math.max(thr * v0 * sm, -t._vcapFR);
+  var target = thr >= 0 ? Math.min(thr * v0 * sm, t._vcapFF + vBoost) : Math.max(thr * v0 * sm, -(t._vcapFR + vBoost));
   if (locked) target = 0;
   var a0 = (t.accel0 || 2.5) * eff * (1 - 0.55 * Math.min(Math.abs(v) / Math.max(v0, 0.01), 1));   // MR2 扭矩曲线：低速有劲、高速乏力（调速器 droop 一阶近似）
   var d0 = (t.decel0 || 5) * Math.max(eff, 0.3);
@@ -672,14 +717,44 @@ function slopeArbitrate(t, dt) {
     // 驱动:P 伺服趋近 target,驱动 authority 受 fAvail(牵引/功率)钳制
     var aWant = (target - v) * 4;
     if (aWant > a0) aWant = a0; else if (aWant < -d0) aWant = -d0;
-    if (aWant > 0) { if (aWant > _slOut.fAvailF) aWant = _slOut.fAvailF; }
-    else if (aWant < 0 && target < 0 && -aWant > _slOut.fAvailR) aWant = -_slOut.fAvailR;   // 倒车驱动才受 fAvailR 钳;刹车只走 d0(旧式无 target 门,高速重刹被负 fAvailR 反号成加速)
-    // 逆向滑动(爬坡失败倒滑/溜坡):驾驶员踩刹车对抗,净加速度=fAvail+0.5·d0;硬上限 6m/s
-    if ((v > 0.1 && target < -0.1) || (v < -0.1 && target > 0.1)) aWant += (v > 0 ? -d0 * 0.5 : d0 * 0.5);
+    if (aWant > 0) {
+      if (target > 0) {
+        // 前进油门:若坡度阻力大于驱动力(fAvailF <= 0),当车速已归零则停驻,绝不反向倒车!
+        if (v <= 0 && _slOut.fAvailF <= 0) {
+          aWant = 0;
+          v = 0;
+        } else if (aWant > _slOut.fAvailF) {
+          aWant = _slOut.fAvailF;
+        }
+      } else if (aWant > _slOut.fAvailF) {
+        aWant = _slOut.fAvailF;
+      }
+    } else if (aWant < 0) {
+      if (target < 0) {
+        if (v >= 0 && _slOut.fAvailR <= 0) {
+          aWant = 0;
+          v = 0;
+        } else if (-aWant > _slOut.fAvailR) {
+          aWant = -_slOut.fAvailR;
+        }
+      }
+    }
+    // 逆向滑动对抗(爬坡冲量用尽倒滑/挂倒挡前冲时踩油门):全力拉回,杜绝持续逆向
+    if (v < -0.05 && (target > 0 || thr > 0.05)) {
+      var aRecov = Math.max(d0 * 0.8, 2.5);
+      aWant = aRecov;
+    } else if (v > 0.05 && (target < 0 || thr < -0.05)) {
+      var aRecovR = Math.max(d0 * 0.8, 2.5);
+      aWant = -aRecovR;
+    }
     v += aWant * dt;
+    // 关键安全门:前进油门(target > 0 或 thr > 0)驱动下,绝不允许速度跨零跌入倒车!
+    if ((target > 0 || thr > 0.05) && v < 0) v = 0;
+    if ((target < 0 || thr < -0.05) && v > 0) v = 0;
     if (v > 6 && target <= 0.1) v = 6; else if (v < -6 && target >= -0.1) v = -6;
   }
-  if (v > v0) v = v0; else if (v < -v0 * 0.6) v = -v0 * 0.6;   // 下坡溜车带刹:纵速不超平路极速(驱动分支 target 已内含此界,本钳只约束滑行/静止溜坡)
+  var vLimit = v0 + vBoost;
+  if (v > vLimit) v = vLimit; else if (v < -vLimit * 0.6) v = -vLimit * 0.6;   // 下坡溜车带刹:纵速不超平路极速(含火箭推进固定 +10 km/h)
   if (!isFinite(v)) v = 0;
   t.speed = v;
   // 横向漂移(车体右轴 signed 速度):超附着加速,附着内指数回零;驻锄强阻尼
@@ -708,6 +783,7 @@ function slopeArbitrate(t, dt) {
 
 /* ===== 共享工具:重复逻辑归一(玩家/AI/弹道链路同口径) ===== */
 function tickReload(t, dt) {
+  if (typeof vehicleTechBurstLoadingTick === 'function') vehicleTechBurstLoadingTick(t, dt);
   t.reload = Math.max(0, t.reload - dt * reloadDamageMult(t));   // 装填速率:人工=炮塔血量方案/自动装弹机=弹药架血量方案(reloadDamageMult 分流;转速另走 turretMult)
 }
 
@@ -719,9 +795,7 @@ function shellTof0(dirY, v) {                      // 抛物线到时(纵速/重
   return Math.max(0.1, 2 * dirY * v / CONF.gravity);
 }
 
-var _losEmptyHits = [];                            // ★P1-⑥:零候选早退的冻结空数组(免 Raycaster 空转/排序;调用方只读)
 function losIntersect(ax, az, bx, bz, ray) {       // LOS 宽相位候选+求交核心(ray 由调用方配置 origin/dir/far)
   collectCands(ax, az, bx, bz, _candList);
-  if (!_candList.length) return _losEmptyHits;     // 开阔地带无残骸/障碍:整段 Raycaster 调用免掉(炮弹步进每步每弹一次,量最大)
   return ray.intersectObjects(_candList, false);
 }

@@ -24,13 +24,14 @@ function playerAimPitchClamp(t, pitch) {
     }
   }
   if (isAAVehicle(t)) {
-    // 防空载具射界(任务25 用户设定):PGZ-95 机炮 -5°~+90°(可对天顶射击);复仇者保持 -10°~+70°
-    if (t.team === 'ally') return clamp(pitch, -5 * Math.PI / 180, 90 * Math.PI / 180);
+    // 防空载具射界(任务25 用户设定):RED_AA 机炮 -5°~+90°(可对天顶射击);蓝方防空车保持 -10°~+70°
+    if (t.team === 'red') return clamp(pitch, -5 * Math.PI / 180, 90 * Math.PI / 180);
     return clamp(pitch, -0.1745, 1.2217);
   }
   var hi = t && t.kind === 'arty' ? 1.05 : 0.3;
   return clamp(pitch, -0.14, hi);
 }
+
 /* 将逻辑炮架角写入 Three 层级。火箭炮炮镜的 yaw 由 playerUpdate 世界反馈伺服直接积分,
    不能只改 turretYaw 数值而漏写 turret.rotation(两者需同帧同步写,否则镜头转了发射架实体不跟)。 */
 function playerArtySyncMount(t, syncWorld) {
@@ -71,7 +72,7 @@ function playerArtyStartSalvo(t) {
     t._salvoAimX = ppA.x + Math.sin(bAz) * dR;
     t._salvoAimZ = ppA.z + Math.cos(bAz) * dR;
   }
-  t.salvoLeft = artyConfOf(t).salvo;   // 红 PHL-11=40 发 / 蓝 M142=6 发
+  t.salvoLeft = artyConfOf(t).salvo;   // 红 RED_MLRS=40 发 / 蓝 BLUE_MLRS=6 发
   t.salvoT = 0.05;
   t._servoHoldT = 0;
   t._topFireWish = false; t._artyCreepFwd = 0;   // 射击任务已发起:解除点选与蠕行(覆盖环随齐射装定点)
@@ -135,7 +136,7 @@ var _agCounts = [];                // 复用对象池 {track,count,same}(按 _ag
 /* 检测直升机火控雷达是否通电完成就绪 (发动机工作后通电15秒) */
 function isHeliRadarReady(t) {
   if (!t || !t.alive) return false;
-  if (isAAVehicle(t)) return t.team === 'ally' && (t._heliRadarWarmup != null && t._heliRadarWarmup >= HELI_RADAR_WARMUP_TIME);   // 任务23:PGZ-95 雷达需启动(部署后通电预热 15s,时长=直升机雷达);复仇者无车载雷达(搜索=导弹导引头自理)
+  if (isAAVehicle(t)) return t.team === 'red' && (t._heliRadarWarmup != null && t._heliRadarWarmup >= HELI_RADAR_WARMUP_TIME);   // 任务23:RED_AA 雷达需启动(部署后通电预热 15s,时长=直升机雷达);蓝方防空车无车载雷达(搜索=导弹导引头自理)
   if (!isHeliVehicle(t)) return false;
   return t._heliEngineState === 'running' && (t._heliRadarWarmup != null && t._heliRadarWarmup >= HELI_RADAR_WARMUP_TIME);
 }
@@ -241,7 +242,7 @@ function _heliCancelDesignation(p, trk, announce) {
   p._heliMissileTarget = (typeof allocateGuidedFireTarget === 'function')
     ? allocateGuidedFireTarget(p, HELI_MSL_SPEC[heliMslTypeOf(p)]) : null;
   if (announce && typeof aimHint === 'function')
-    aimHint('取消锁定: ' + (cancelledTank ? cancelledTank.name : '') + ' [火力已重分配]');
+    aimHint('LOCK CANCELLED: ' + (cancelledTank ? cancelledTank.name : '') + ' [FIRE REDISTRIBUTED]');
 }
 
 /* 新增一条指定航迹:达 4 锁上限时 FIFO 顶掉最早指定的那条。 */
@@ -263,7 +264,7 @@ function _heliAddDesignation(p, trk, tracks, announce) {
   trk.designatedSeq = p._heliRadarDesignateSeq;
   trk.lockEnergy = 0.0;
   trk.isLocked = false;
-  if (announce && typeof aimHint === 'function') aimHint('手动指定目标: ' + trk.tank.name + ' [锁定中]');
+  if (announce && typeof aimHint === 'function') aimHint('DESIGNATED: ' + trk.tank.name + ' [LOCKING]');
 }
 
 function heliRadarRightClickDesignate(p) {
@@ -301,7 +302,7 @@ function heliRadarRightClickDesignate(p) {
 }
 
 function startHeliRadarScan(p) {
-  if (!p || !p.alive || !(isHeliVehicle(p) || (typeof isAAVehicle === 'function' && isAAVehicle(p) && p.team === 'ally'))) return;   // 任务23:PGZ-95 车载雷达与直升机同套扫描状态机
+  if (!p || !p.alive || !(isHeliVehicle(p) || (typeof isAAVehicle === 'function' && isAAVehicle(p) && p.team === 'red'))) return;   // 任务23:RED_AA 车载雷达与直升机同套扫描状态机
   if (!isHeliRadarReady(p)) return;
   p._heliRadarActive = true;
   if (!p._heliRadarTracks) p._heliRadarTracks = [];
@@ -334,7 +335,7 @@ function stopHeliRadarScan(p) {
    从 _heliMissileLeft 挪走)或 AI 时间片没排到, 地形穿透就复发。
    修复: ①创建航迹前先实测 LOS, 被遮蔽目标根本不建航迹(消灭 fail-open 窗口);
         ②维护期测量与弹药态解耦(MFD 显示/锁定晋升/数据链都消费 _occ, 正确性优先);
-        ③测量原点=雷达天线位置(_radarEyeH: 直升机 1.2m / PGZ-95 桅顶 4.12m);
+        ③测量原点=雷达天线位置(_radarEyeH: 直升机 1.2m / RED_AA 桅顶 4.12m);
         ④同文件函数直连调用, 不再 typeof 静默降级。 ===== */
 function radarOccMeasure(p, cand, tPos2) {
   var pPos = p.group.position;
@@ -361,11 +362,10 @@ function updateHeliRadar(p, dt) {
   var tracks = p._heliRadarTracks;
 
   var pPos = p.group.position;
-  var enemyTeam = p.team === 'ally' ? 'enemy' : 'ally';
-  var roster = aiTeamRoster[enemyTeam] || [];
+  var roster = hostileRosterOf(p);
 
   // 1. 机身正前方固定圆锥视场 (严密固联机身坐标系,不随相机与准星移动变形)
-  //    PGZ-95:锥轴=炮塔朝向(玩家用光标瞄准控制搜索方向,无需转车体);复仇者无雷达不进本函数
+  //    RED_AA:锥轴=炮塔朝向(玩家用光标瞄准控制搜索方向,无需转车体);蓝方防空车无雷达不进本函数
   if (isAAVehicle(p)) {
     _vRadarNoseDir.set(0, 0, 1);
     if (p.turret) _vRadarNoseDir.applyQuaternion(p.turret.getWorldQuaternion(new THREE.Quaternion()));
@@ -388,7 +388,7 @@ function updateHeliRadar(p, dt) {
   _radarCandN = 0;
   for (var i = 0; i < roster.length; i++) {
     var tgt = roster[i];
-    if (!tgt || !tgt.alive || !tgt.group) continue;
+    if (!tgt || !tgt.alive || !tgt.group || !areHostile(p, tgt)) continue;
     var tPos = tgt.group.position;
 
     var pdx = tPos.x - pPos.x, pdy = (tPos.y + 1.2) - (pPos.y + 1.2), pdz = tPos.z - pPos.z;
@@ -413,8 +413,8 @@ function updateHeliRadar(p, dt) {
 
   // 3. 维护与更新现有航迹 (最多保持 8 个追踪航迹)
   _radarActiveStamp++;                         // 本拍活动航迹标记戳(替代 activeTrackMap{} 分配,方案2)
-  // 制导弹药可用性: 导弹 或 制导火箭(火蛇-70A) 任一有弹即需要锁定质量。
-  // ★不能只看导弹: 火蛇-70A 也靠雷达锁定做火力分配, 只带火箭时若降级为纯跟踪,
+  // 制导弹药可用性: 导弹 或 制导火箭(70mm火箭弹) 任一有弹即需要锁定质量。
+  // ★不能只看导弹: 70mm火箭弹 也靠雷达锁定做火力分配, 只带火箭时若降级为纯跟踪,
   //   航迹永远晋升不到 isLocked → allocateGuidedFireTarget 拿不到锁定航迹 → 火箭不分配火力。
   var _rktGuided = (HELI_RKT_SPEC[p.kind] || {}).guidance === 'datalink';
   var mslAny = (p._heliMissileLeft || 0) > 0 || (_rktGuided && (p._heliRocketLeft == null || p._heliRocketLeft > 0));
@@ -524,8 +524,7 @@ function updateHeliRadar(p, dt) {
       var toAdd = Math.min(slotsFree, _radarUntracked.length);
       for (var ai = 0; ai < toAdd; ai++) {
         var addCand = _radarUntracked[ai];
-        /* ★创建前实测 LOS: 被地形/静态物遮蔽的目标不建航迹——消灭"删除→重建 fail-open"循环
-           (穿地形复发的直接出口; 旧版新航迹恒 _occ:false 且要等下一拍节流/授权才补测) */
+        /* Measure LOS before creating a track; an occluded target never enters the radar list. */
         if (radarOccMeasure(p, addCand, addCand.tgt.group.position)) continue;
         var dTerr2 = calcTerrain3DProximity(addCand.tgt.group.position.x, addCand.tgt.group.position.y, addCand.tgt.group.position.z);
         tracks.push({
@@ -657,7 +656,7 @@ function renderHeliRadarMFD(p) {
      不会因为"缓存值恰好等于目标值"而漏掉一次 hidden 切换、导致 MFD 残留。 */
   if (window._touchLayoutEditing) { mfdEl._on = null; return; }
 
-  var isHeli = p && p.alive && (isHeliVehicle(p) || (isAAVehicle(p) && p.team === 'ally')) && gameState === 'playing';   // PGZ-95 车载搜索雷达 MFD 与直升机火控雷达同套呈现(复仇者无雷达)
+  var isHeli = p && p.alive && (isHeliVehicle(p) || (isAAVehicle(p) && p.team === 'red')) && gameState === 'playing';   // RED_AA 车载搜索雷达 MFD 与直升机火控雷达同套呈现(蓝方防空车无雷达)
   if (!isHeli) {
     if (mfdEl._on !== false) { mfdEl._on = false; mfdEl.classList.add('hidden'); }
     return;
@@ -675,7 +674,7 @@ function renderHeliRadarMFD(p) {
 
   var isCutoff = p._heliEngineState === 'cutoff';
   var isStarting = p._heliEngineState === 'starting';
-  var isWarming = (p._heliEngineState === 'running' || (typeof isAAVehicle === 'function' && isAAVehicle(p) && p.team === 'ally' && !p._heliRadarActive)) && ((p._heliRadarWarmup || 0) < HELI_RADAR_WARMUP_TIME);   // 任务23:PGZ 雷达启动期同显预热倒计时
+  var isWarming = (p._heliEngineState === 'running' || (typeof isAAVehicle === 'function' && isAAVehicle(p) && p.team === 'red' && !p._heliRadarActive)) && ((p._heliRadarWarmup || 0) < HELI_RADAR_WARMUP_TIME);   // 任务23:PGZ 雷达启动期同显预热倒计时
 
   var cx = w * 0.5;
   var cy = h - 20;
@@ -723,10 +722,10 @@ function renderHeliRadarMFD(p) {
   ctx.fill();
 
   if (isCutoff) {
-    if (statusLbl) { statusLbl.textContent = 'FCR: OFF [断电]'; statusLbl.style.color = '#7f8c8d'; }
+    if (statusLbl) { statusLbl.textContent = 'FCR: OFF [POWER OFF]'; statusLbl.style.color = '#7f8c8d'; }
     if (rngLbl) rngLbl.textContent = '10km';
-    if (tgtLine) tgtLine.textContent = '雷达电源未接通';
-    if (teleLine) teleLine.textContent = '发动机停机 (全机断电)';
+    if (tgtLine) tgtLine.textContent = 'RADAR POWER OFF';
+    if (teleLine) teleLine.textContent = 'ENGINE SHUTDOWN (POWER OFF)';
 
     ctx.fillStyle = 'rgba(127, 140, 141, 0.6)';
     ctx.font = 'bold 12px Consolas, monospace';
@@ -738,10 +737,10 @@ function renderHeliRadarMFD(p) {
 
   if (isStarting) {
     var remainStart = heliRemainSec(p._heliStartPhaseT, HELI_ENGINE_START_TIME);
-    if (statusLbl) { statusLbl.textContent = 'FCR: OFF [启动中]'; statusLbl.style.color = '#e67e22'; }
+    if (statusLbl) { statusLbl.textContent = 'FCR: OFF [STARTING]'; statusLbl.style.color = '#e67e22'; }
     if (rngLbl) rngLbl.textContent = '10km';
-    if (tgtLine) tgtLine.textContent = '发动机启动中 (' + remainStart + 's)';
-    if (teleLine) teleLine.textContent = '电源未接通';
+    if (tgtLine) tgtLine.textContent = 'ENGINE STARTING (' + remainStart + 's)';
+    if (teleLine) teleLine.textContent = 'POWER OFF';
 
     ctx.fillStyle = '#e67e22';
     ctx.font = 'bold 11px Consolas, monospace';
@@ -753,10 +752,10 @@ function renderHeliRadarMFD(p) {
 
   if (isWarming) {
     var remainWarm = heliRemainSec(p._heliRadarWarmup, HELI_RADAR_WARMUP_TIME);
-    if (statusLbl) { statusLbl.textContent = 'FCR: 预热通电中'; statusLbl.style.color = '#f1c40f'; }
+    if (statusLbl) { statusLbl.textContent = 'FCR: WARMING UP'; statusLbl.style.color = '#f1c40f'; }
     if (rngLbl) rngLbl.textContent = '10km';
-    if (tgtLine) tgtLine.textContent = '雷达通电预热中 (' + remainWarm + 's)';
-    if (teleLine) teleLine.textContent = '电源通电进行中';
+    if (tgtLine) tgtLine.textContent = 'RADAR WARMING UP (' + remainWarm + 's)';
+    if (teleLine) teleLine.textContent = 'POWERING UP';
 
     ctx.fillStyle = '#f1c40f';
     ctx.font = 'bold 11px Consolas, monospace';
@@ -767,10 +766,10 @@ function renderHeliRadarMFD(p) {
   }
 
   if (!p._heliRadarActive) {
-    if (statusLbl) { statusLbl.textContent = 'FCR: 通电中'; statusLbl.style.color = '#95a5a6'; }
+    if (statusLbl) { statusLbl.textContent = 'FCR: POWERING'; statusLbl.style.color = '#95a5a6'; }
     if (rngLbl) rngLbl.textContent = '10km';
-    if (tgtLine) tgtLine.textContent = 'TGT: 雷达自检中…';
-    if (teleLine) teleLine.textContent = '雷达电源: 正常 [即将自动开机]';
+    if (tgtLine) tgtLine.textContent = 'TGT: SELF-TEST...';
+    if (teleLine) teleLine.textContent = 'RADAR PWR: NOMINAL [AUTO-START]';
 
     ctx.fillStyle = 'rgba(149, 165, 166, 0.7)';
     ctx.font = 'bold 12px Consolas, monospace';
@@ -830,7 +829,7 @@ function renderHeliRadarMFD(p) {
   var sharedTracks = [];
   var sharedSeen = {};
   function addShared(tk, srcHeli) {
-    if (!tk || !tk.alive || !tk.group || tk.team === p.team) return;
+    if (!tk || !tk.alive || !tk.group || !areHostile(p, tk)) return;
     var key = tk.id || tk.name;
     if (seenOwn[key] || sharedSeen[key]) return;            // 本机已探测/已上报过 → 不重复绘制
     var sq = tk.group.position;
@@ -846,7 +845,7 @@ function renderHeliRadarMFD(p) {
   if (aliveList && aliveList.length) {
     for (var fi = 0; fi < aliveList.length; fi++) {
       var fh = aliveList[fi];
-      if (fh === p || !fh.alive || !isHeliVehicle(fh) || fh.team !== p.team) continue;
+      if (isFfaMode() || fh === p || !fh.alive || !isHeliVehicle(fh) || !areFriendly(p, fh)) continue;
       var ftracks = (fh._heliRadarActive && fh._heliRadarTracks) ? fh._heliRadarTracks : null;   // 源1: 友机 FCR 航迹
       if (ftracks) for (var ft = 0; ft < ftracks.length; ft++) { var ftr = ftracks[ft]; if (ftr && ftr.tank) addShared(ftr.tank, fh); }
       if (fh.ai) {                                                                              // 源2: 友机 AI 感知接触
@@ -872,7 +871,7 @@ function renderHeliRadarMFD(p) {
       var mDirX = mdx / md, mDirY = mdy / md, mDirZ = mdz / md;
       var mDotNose = mDirX * _vRadarNoseDir.x + mDirY * _vRadarNoseDir.y + mDirZ * _vRadarNoseDir.z;
       if (mDotNose >= 0.8660254) {
-        var isFriend = s.owner && s.owner.team === p.team;
+        var isFriend = s.owner && areFriendly(p, s.owner);
         missilesInFov.push({
           x: s.pos.x, y: s.pos.y, z: s.pos.z,
           vx: s.vel.x || 0, vy: s.vel.y || 0, vz: s.vel.z || 0,
@@ -1027,9 +1026,9 @@ function renderHeliRadarMFD(p) {
   }
 
   // 5. 底部文字栏状态 (只显示电源与多目标战术火控状态,不显示旋翼状态)
-  var dlStr = sharedTracks.length > 0 ? (' [DL ' + sharedTracks.length + ' 友机共享]') : '';
+  var dlStr = sharedTracks.length > 0 ? (' [DL ' + sharedTracks.length + ' DATALINK]') : '';
   if (lockedCount > 0) {
-    if (statusLbl) { statusLbl.textContent = 'FCR: LCK [' + lockedCount + '/4 锁定]'; statusLbl.style.color = '#ff2d20'; }
+    if (statusLbl) { statusLbl.textContent = 'FCR: LCK [' + lockedCount + '/4 LOCKED]'; statusLbl.style.color = '#ff2d20'; }
     if (primaryTrack && primaryTrack.tank) {
       var dTxt = primaryTrack.dist >= 1000 ? (primaryTrack.dist / 1000).toFixed(1) + 'km' : Math.round(primaryTrack.dist) + 'm';
       if (tgtLine) tgtLine.textContent = 'PRI: ★ ' + primaryTrack.tank.name + ' (' + dTxt + ')' + dlStr;
@@ -1041,37 +1040,61 @@ function renderHeliRadarMFD(p) {
       var elDeg = Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)) * 180 / Math.PI;
       if (teleLine) teleLine.textContent = 'AZ: ' + (azDeg >= 0 ? '+' : '') + azDeg.toFixed(0) + '°  EL: ' + (elDeg >= 0 ? '+' : '') + elDeg.toFixed(0) + '°';
     } else {
-      if (tgtLine) tgtLine.textContent = '已锁定 ' + lockedCount + ' 目标 [多通道引导]' + dlStr;
-      if (teleLine) teleLine.textContent = '雷达电源: 正常 [TWS 多目标锁定]';
+      if (tgtLine) tgtLine.textContent = 'LOCKED ' + lockedCount + ' TGTS [MULTI-CH]' + dlStr;
+      if (teleLine) teleLine.textContent = 'RADAR NOMINAL [TWS MULTI-LOCK]';
     }
   } else if (lockingCount > 0) {
-    if (statusLbl) { statusLbl.textContent = 'FCR: TRK [' + lockingCount + '/4 跟踪]'; statusLbl.style.color = '#3498db'; }
-    if (tgtLine) tgtLine.textContent = '正在相干锁定 ' + lockingCount + ' 个目标...' + dlStr;
-    if (teleLine) teleLine.textContent = '多目标跟踪与雷达能量积分中';
+    if (statusLbl) { statusLbl.textContent = 'FCR: TRK [' + lockingCount + '/4 TRACKING]'; statusLbl.style.color = '#3498db'; }
+    if (tgtLine) tgtLine.textContent = 'ACQUIRING ' + lockingCount + ' TARGETS...' + dlStr;
+    if (teleLine) teleLine.textContent = 'MULTI-TGT TRACKING + ENERGY BUILD-UP';
   } else {
     var cnt = validTracks.length;
     var mslCnt = missilesInFov.length;
-    var mslStr = mslCnt > 0 ? (' | 导弹: ' + mslCnt + '枚') : '';
-    if (statusLbl) { statusLbl.textContent = 'FCR: TWS [扫描中]'; statusLbl.style.color = '#2ecc71'; }
-    if (tgtLine) tgtLine.textContent = 'CONTACTS: ' + cnt + '/8 目标' + mslStr + dlStr;
-    if (teleLine) teleLine.textContent = p._heliRadarManualInhibit ? '雷达电源: 正常 [手动待机模式]' : '雷达电源: 正常 [TWS 自动扫描]';
+    var mslStr = mslCnt > 0 ? (' | MSL: ' + mslCnt + ' RDS') : '';
+    if (statusLbl) { statusLbl.textContent = 'FCR: TWS [SCANNING]'; statusLbl.style.color = '#2ecc71'; }
+    if (tgtLine) tgtLine.textContent = 'CONTACTS: ' + cnt + '/8 TGTS' + mslStr + dlStr;
+    if (teleLine) teleLine.textContent = p._heliRadarManualInhibit ? 'RADAR NOMINAL [MAN STBY]' : 'RADAR NOMINAL [TWS AUTO]';
   }
 
   ctx.restore();
 }
 
 function updateHeliWeapons(p, dt) {
+  var _puReloadRate = typeof powerupReloadRate === 'function' ? powerupReloadRate(p) : 1;
   if (p._heliWeapon == null) p._heliWeapon = 3;   // 默认1号位=导弹
+  if (p.kind === 'aa') {
+    if (p._aaWeapon !== 1 && p._aaWeapon !== 2) p._aaWeapon = 1;
+    if (p._aaReloadKind !== 1 && p._aaReloadKind !== 2) p._aaReloadKind = 1;
+    /* AI and non-upgraded AA never inherit a player ATGM state. */
+    if (!isPlayerAaAtgmVehicle(p)) {
+      p._aaWeapon = 1;
+      p._aaReloadKind = 1;
+      if (p._heliWeapon === 2) p._heliWeapon = 3;
+    }
+  }
   if (p._heliRocketLeft == null) p._heliRocketLeft = rocketPodCountOf(p);
   if (p._heliMissileNextSide == null) p._heliMissileNextSide = 0;
+  if (p._heliDecoyLeft == null) p._heliDecoyLeft = HELI_DECOY_CAPACITY;
+  if (p._heliDecoyReloadT == null) p._heliDecoyReloadT = 0;
+  if (p._heliDecoyCooldown == null) p._heliDecoyCooldown = 0;
+  if (p._heliDecoyThreatT == null) p._heliDecoyThreatT = -Infinity;
+
+  if (p._heliDecoyCooldown > 0) p._heliDecoyCooldown = Math.max(0, p._heliDecoyCooldown - dt);
+  if (p._heliDecoyReloadT > 0) {
+    p._heliDecoyReloadT = Math.max(0, p._heliDecoyReloadT - dt);
+    if (p._heliDecoyReloadT <= 0) {
+      p._heliDecoyLeft = HELI_DECOY_CAPACITY;
+      if (p.isPlayer && typeof aimHint === 'function') aimHint('DECOY FLARES RELOADED (20/20)');
+    }
+  }
 
   // 火箭弹装填=rocketReloadTimeOf(1s×装弹量) 与 0.2s 发射间隔
   if (p._heliRocketReloadT > 0) {
-    p._heliRocketReloadT = Math.max(0, p._heliRocketReloadT - dt);
+    p._heliRocketReloadT = Math.max(0, p._heliRocketReloadT - dt * _puReloadRate);
     if (p._heliRocketReloadT <= 0) {
       p._heliRocketLeft = rocketPodCountOf(p);
       if (p.isPlayer && typeof sfxReloadCue === 'function') sfxReloadCue('heli_rocket');   // 装填完成提示音
-      if (p.isPlayer && typeof aimHint === 'function' && p._heliWeapon === 2) aimHint('火箭弹装填完毕 (' + p._heliRocketLeft + '/' + rocketPodCountOf(p) + ')');
+      if (p.isPlayer && typeof aimHint === 'function' && p._heliWeapon === 2) aimHint('ROCKETS RELOADED (' + p._heliRocketLeft + '/' + rocketPodCountOf(p) + ')');
     }
   }
   if (p._heliRocketCooldown > 0) {
@@ -1081,43 +1104,39 @@ function updateHeliWeapons(p, dt) {
   // 多联装挂架——每侧挂架独立计算装填(打空一侧才开始该侧 40s 装填,另一侧可继续发射)
   if (p._heliMslRounds == null) { var _mx = heliMslTubesOf(p); p._heliMslRounds = [_mx, _mx]; p._heliMslTube = [0, 0]; }
   if (p._heliMissileReloadTL > 0) {
-    p._heliMissileReloadTL = Math.max(0, p._heliMissileReloadTL - dt);
+    p._heliMissileReloadTL = Math.max(0, p._heliMissileReloadTL - dt * _puReloadRate);
     if (p._heliMissileReloadTL <= 0) {
       p._heliMslRounds[0] = heliMslTubesOf(p); p._heliMslTube[0] = 0;
       if (p._heliMslMeshesL) for (var _mi = 0; _mi < p._heliMslMeshesL.length; _mi++) p._heliMslMeshesL[_mi].visible = true;
       if (p.isPlayer && typeof sfxReloadCue === 'function') sfxReloadCue('heli_missile');   // 装填完成提示音
-      if (p.isPlayer && typeof aimHint === 'function' && p._heliWeapon === 3) aimHint('左挂架导弹装填完毕');
+      if (p.isPlayer && typeof aimHint === 'function' &&
+          (p._heliWeapon === 3 || (p.kind === 'aa' && p._heliWeapon === 2))) {
+        aimHint(p.kind === 'aa' ? ('LEFT ' + (p._aaReloadKind === 2 ? 'ATGM' : 'SAM') + ' RACK RELOADED') : 'LEFT PYLON RELOADED');
+      }
     }
   }
   if (p._heliMissileReloadTR > 0) {
-    p._heliMissileReloadTR = Math.max(0, p._heliMissileReloadTR - dt);
+    p._heliMissileReloadTR = Math.max(0, p._heliMissileReloadTR - dt * _puReloadRate);
     if (p._heliMissileReloadTR <= 0) {
       p._heliMslRounds[1] = heliMslTubesOf(p); p._heliMslTube[1] = 0;
       if (p._heliMslMeshesR) for (var _mi = 0; _mi < p._heliMslMeshesR.length; _mi++) p._heliMslMeshesR[_mi].visible = true;
       if (p.isPlayer && typeof sfxReloadCue === 'function') sfxReloadCue('heli_missile');   // 装填完成提示音
-      if (p.isPlayer && typeof aimHint === 'function' && p._heliWeapon === 3) aimHint('右挂架导弹装填完毕');
+      if (p.isPlayer && typeof aimHint === 'function' &&
+          (p._heliWeapon === 3 || (p.kind === 'aa' && p._heliWeapon === 2))) {
+        aimHint(p.kind === 'aa' ? ('RIGHT ' + (p._aaReloadKind === 2 ? 'ATGM' : 'SAM') + ' RACK RELOADED') : 'RIGHT PYLON RELOADED');
+      }
     }
   }
   if (p._heliMissileCooldown > 0) {
     p._heliMissileCooldown = Math.max(0, p._heliMissileCooldown - dt);
   }
 
-  // 诱饵弹:0.5s 齐射防抖 + 打空后 60s 整包装填(与火箭弹"打空才装填"同范式)
-  if (p._heliFlareCooldown > 0) p._heliFlareCooldown = Math.max(0, p._heliFlareCooldown - dt);
-  if (p._heliFlareReloadT > 0) {
-    p._heliFlareReloadT = Math.max(0, p._heliFlareReloadT - dt);
-    if (p._heliFlareReloadT <= 0) {
-      p._heliFlareLeft = HELI_FLARE_MAX;
-      if (p.isPlayer && typeof aimHint === 'function') aimHint('诱饵弹装填完毕 (' + HELI_FLARE_MAX + '/' + HELI_FLARE_MAX + ')');
-    }
-  }
-
   // 维护剩余可用导弹数量(两侧在筒之和)
   p._heliMissileLeft = (p._heliMslRounds[0] || 0) + (p._heliMslRounds[1] || 0);
 
-  // 任务23:PGZ-95 车载雷达启动序列——每次部署需启动一次,时长=直升机雷达预热(HELI_RADAR_WARMUP_TIME 15s);
+  // 任务23:RED_AA 车载雷达启动序列——每次部署需启动一次,时长=直升机雷达预热(HELI_RADAR_WARMUP_TIME 15s);
   // 就绪即开(startHeliRadarScan),开机后无关断路径(地面载具无发动机熄火态);击毁/重新部署由 createTank 重新冷启动。
-  if (typeof isAAVehicle === 'function' && isAAVehicle(p) && p.team === 'ally' && p.alive && !p._heliRadarActive) {
+  if (typeof isAAVehicle === 'function' && isAAVehicle(p) && p.team === 'red' && p.alive && !p._heliRadarActive) {
     if (p._heliRadarWarmup == null) p._heliRadarWarmup = 0;
     if (p._heliRadarWarmup < HELI_RADAR_WARMUP_TIME) p._heliRadarWarmup = Math.min(HELI_RADAR_WARMUP_TIME, p._heliRadarWarmup + dt);
     if (p._heliRadarWarmup >= HELI_RADAR_WARMUP_TIME) startHeliRadarScan(p);
@@ -1138,6 +1157,13 @@ function updateHeliWeapons(p, dt) {
         p._heliRadarAccT = 0;
       }
     }
+  }
+
+  /* BLUE-HELI automatic cannon target selection is a player-tech effect.
+     AI helicopters never enter this consumer and keep their existing fire-control path. */
+  if (p.isPlayer && p.team === 'blue' && p.kind === 'ah64' &&
+      typeof vehicleTechBlueHeliAutoCannonTick === 'function') {
+    vehicleTechBlueHeliAutoCannonTick(p, dt);
   }
 }
 
@@ -1222,25 +1248,25 @@ function heliABGToggle() {
   if (heliABG.on) {
     var n0 = heliABG.wings.length;
     heliABGClear();
-    if (typeof aimHint === 'function') aimHint('已解除 ' + n0 + ' 架友军');
+    if (typeof aimHint === 'function') aimHint('RELEASED ' + n0 + ' WINGMEN');
     return false;
   }
   if (typeof player === 'undefined' || !player || !player.alive || !isHeliVehicle(player)) return false;
   if (typeof aliveList === 'undefined' || !aliveList.length) {
-    if (typeof aimHint === 'function') aimHint('场上无载具');
+    if (typeof aimHint === 'function') aimHint('NO VEHICLES IN PLAY');
     return false;
   }
   var pp = player.group.position, cands = [], i, t;
   for (i = 0; i < aliveList.length; i++) {
     t = aliveList[i];
     if (t === player || !t.alive || t.isPlayer || !isHeliVehicle(t)) continue;
-    if (t.team !== player.team || !t.ai) continue;   // 只借友军 AI 直升机(玩家自己不在名单内)
+    if (isFfaMode() || !areFriendly(player, t) || !t.ai) continue;   // 个人死斗不启用僚机借出
     var dx = t.group.position.x - pp.x, dy = t.group.position.y - pp.y, dz = t.group.position.z - pp.z;
     var d2 = dx * dx + dy * dy + dz * dz;
     cands.push({ t: t, d2: d2, b: Math.floor(Math.sqrt(d2) / 40), j: Math.random() });   // b=40m 距离壳层, j=壳层内随机抽序
   }
   if (!cands.length) {
-    if (typeof aimHint === 'function') aimHint('附近无可借用的友军直升机');
+    if (typeof aimHint === 'function') aimHint('NO SAME-SIDE HELI IN RANGE');
     return false;
   }
   /* 随机抽取: 同一 40m 距离壳层内的候选真随机抽取(编队僚机互距几十米=同壳层,每次按 Backspace 换不同批),
@@ -1249,26 +1275,212 @@ function heliABGToggle() {
   var n = Math.min(HELI_ABG_MAX, cands.length);
   for (i = 0; i < n; i++) heliABG.wings.push(cands[i].t);
   heliABG.on = true;
-  if (typeof aimHint === 'function') aimHint('已借用 ' + n + ' 架友军');
+  if (typeof aimHint === 'function') aimHint('BORROWED ' + n + ' WINGMEN');
+  return true;
+}
+
+function isPlayerMbtMissileVehicle(p) {
+  /* BLUE-MBT-1 no longer has the gun-launched missile node.  Keep this shared
+     compatibility gate, but make the real weapon/HUD/input path RED-MBT-1 only. */
+  return !!(p && p.isPlayer === true && p.team === 'red' && p.kind === 'tank' && p._techGunLaunchedMissile === true);
+}
+function isPlayerRedMbtMissileVehicle(p) {
+  /* Keep this predicate self-contained because the loader/input regression and
+     the live HUD both use it as their red-side capability boundary. */
+  return !!(p && p.isPlayer === true && p.team === 'red' && p.kind === 'tank' && p._techGunLaunchedMissile === true);
+}
+
+/* AA launchers use the same two-state loader model as RED-MBT-1.
+   _aaWeapon is the player's selection for the next loading cycle; _aaReloadKind
+   is the SAM/ATGM kind currently in the launcher (or currently being loaded).
+   A ready rack is never rewritten by a selection change. */
+function isPlayerAaAtgmVehicle(p) {
+  return !!(p && p.isPlayer === true && p.kind === 'aa' &&
+    (p._techAaAtgm === true ||
+      (typeof vehicleTechAaAtgmInstalled === 'function' && vehicleTechAaAtgmInstalled(p)) ||
+      (typeof vehicleTechRedAaAtgmInstalled === 'function' && vehicleTechRedAaAtgmInstalled(p))));
+}
+function aaWeaponLabel(kind) {
+  return kind === 2 ? 'ATGM' : 'SAM';
+}
+function selectAAWeapon(p, weapon) {
+  if (!isPlayerAaAtgmVehicle(p)) return false;
+  weapon = weapon === 2 ? 2 : 1;
+  if (p._aaWeapon !== 1 && p._aaWeapon !== 2) p._aaWeapon = 1;
+  if (p._aaReloadKind !== 1 && p._aaReloadKind !== 2) p._aaReloadKind = p._aaWeapon;
+  if (p._aaWeapon === weapon) {
+    p._heliWeapon = weapon === 2 ? 2 : 3;
+    return true;
+  }
+
+  p._aaWeapon = weapon;
+  /* Any active rack reload is the AA equivalent of MBT's breech loading.  A
+     switch interrupts both sides, clears their old rounds, and starts one new
+     synchronized cycle so a single cycle can never contain mixed types. */
+  var loading = (p._heliMissileReloadTL || 0) > 0 || (p._heliMissileReloadTR || 0) > 0;
+  if (loading) {
+    var aaReloadTime = typeof heliMslReloadTimeOf === 'function' ? heliMslReloadTimeOf(p) : 20;
+    if (!p._heliMslRounds) p._heliMslRounds = [0, 0];
+    if (!p._heliMslTube) p._heliMslTube = [0, 0];
+    p._heliMslRounds[0] = 0;
+    p._heliMslRounds[1] = 0;
+    p._heliMslTube[0] = 0;
+    p._heliMslTube[1] = 0;
+    p._heliMissileReloadTL = aaReloadTime;
+    p._heliMissileReloadTR = aaReloadTime;
+    p._aaReloadKind = weapon;
+    p._heliMissileLeft = 0;
+    if (typeof aimHint === 'function') aimHint(aaWeaponLabel(weapon) + ' LOADING RESET');
+  }
+  p._heliWeapon = weapon === 2 ? 2 : 3;
+  if (typeof camAimP !== 'undefined') camAimP = playerAimPitchClamp(p, camAimP);
+  return true;
+}
+
+/* Player MBT-1 has one physical breech/loader.  _mbtWeapon is the player's
+   selection for the next loading cycle; _mbtReloadKind is the round currently
+   in the breech (or the weapon currently being loaded).  Keeping those states
+   separate is essential: changing selection after READY cannot rewrite a round
+   that has already been loaded. */
+function selectRedMbtWeapon(p, weapon) {
+  if (!isPlayerRedMbtMissileVehicle(p)) return false;
+  weapon = weapon === 2 ? 2 : 1;
+  if (p._mbtWeapon == null) p._mbtWeapon = 1;
+  if (p._mbtReloadKind !== 1 && p._mbtReloadKind !== 2) p._mbtReloadKind = p._mbtWeapon;
+  if (p._mbtWeapon === weapon) return true;
+  p._mbtWeapon = weapon;
+  /* During loading, a weapon switch interrupts the old cycle and starts a fresh
+     cycle for the newly selected weapon.  Once reload reaches zero, do not touch
+     _mbtReloadKind: that already-loaded round owns the next trigger pull. */
+  if (p.reload > 0) {
+    p.reload = typeof redMbtMissileReloadTimeOf === 'function' ? redMbtMissileReloadTimeOf(p) : p.reloadTime;
+    p._mbtReloadKind = weapon;
+    if (typeof aimHint === 'function') aimHint(weapon === 2 ? 'MISSILE LOADING RESET' : 'MAIN GUN LOADING RESET');
+  }
+  if (typeof camAimP !== 'undefined') camAimP = playerAimPitchClamp(p, camAimP);
+  return true;
+}
+
+function triggerRedMbtFire(p) {
+  if (!isPlayerRedMbtMissileVehicle(p) || !p.alive || gameState !== 'playing') return false;
+  if (p._mbtWeapon !== 1 && p._mbtWeapon !== 2) p._mbtWeapon = 1;
+  if (p._mbtReloadKind !== 1 && p._mbtReloadKind !== 2) p._mbtReloadKind = p._mbtWeapon;
+  var loadedWeapon = p._mbtReloadKind;
+  var nextWeapon = p._mbtWeapon;
+  if (p.reload > 0) {
+    if (typeof aimHint === 'function') aimHint(loadedWeapon === 2 ? 'MISSILE LOADING (' + p.reload.toFixed(1) + 's)' : 'MAIN GUN LOADING (' + p.reload.toFixed(1) + 's)');
+    return false;
+  }
+  if (loadedWeapon === 2) {
+    if (typeof fireRedMbtMissile !== 'function' || !fireRedMbtMissile(p)) return false;
+    p.reload = typeof redMbtMissileReloadTimeOf === 'function' ? redMbtMissileReloadTimeOf(p) : p.reloadTime;
+    /* The shot just fired was the loaded missile.  The selected weapon now
+       becomes the weapon loaded by the new post-shot cycle. */
+    p._mbtReloadKind = nextWeapon;
+    return true;
+  }
+  var oldReload = p.reload;
+  tryFire(p);
+  if (p.reload > oldReload) {
+    /* The shot just fired was the loaded main-gun round, regardless of a READY-
+       state selection change.  The next cycle follows the current selection. */
+    p._mbtReloadKind = nextWeapon;
+    return true;
+  }
+  return false;
+}
+
+function isPlayerRedTdHighExplosiveVehicle(p) {
+  return !!(p && p.isPlayer === true && p.team === 'red' && p.kind === 'td' && p._techHighExplosive === true);
+}
+
+/* RED-TD has one physical breech: _tdWeapon is the next loading selection and
+   _tdReloadKind is the round currently loaded/being loaded. */
+function selectRedTdWeapon(p, weapon) {
+  if (!isPlayerRedTdHighExplosiveVehicle(p)) return false;
+  weapon = weapon === 2 ? 2 : 1;
+  if (p._tdWeapon !== 1 && p._tdWeapon !== 2) p._tdWeapon = 1;
+  if (p._tdReloadKind !== 1 && p._tdReloadKind !== 2) p._tdReloadKind = p._tdWeapon;
+  if (p._tdWeapon === weapon) return true;
+  p._tdWeapon = weapon;
+  if (p.reload > 0) {
+    p.reload = p.reloadTime;
+    p._tdReloadKind = weapon;
+    if (typeof aimHint === 'function') aimHint(weapon === 2 ? 'HE LOADING RESET' : 'AP LOADING RESET');
+  }
+  if (typeof camAimP !== 'undefined') camAimP = playerAimPitchClamp(p, camAimP);
+  return true;
+}
+
+function triggerRedTdFire(p) {
+  if (!isPlayerRedTdHighExplosiveVehicle(p) || !p.alive || gameState !== 'playing') return false;
+  if (p._tdWeapon !== 1 && p._tdWeapon !== 2) p._tdWeapon = 1;
+  if (p._tdReloadKind !== 1 && p._tdReloadKind !== 2) p._tdReloadKind = p._tdWeapon;
+  var loadedWeapon = p._tdReloadKind, nextWeapon = p._tdWeapon;
+  if (p.reload > 0) {
+    if (typeof aimHint === 'function') aimHint(loadedWeapon === 2 ? 'HE LOADING (' + p.reload.toFixed(1) + 's)' : 'AP LOADING (' + p.reload.toFixed(1) + 's)');
+    return false;
+  }
+  if (loadedWeapon === 2) {
+    if (typeof fireRedTdHighExplosive !== 'function' || !fireRedTdHighExplosive(p)) return false;
+    p.reload = p.reloadTime;
+    p._tdReloadKind = nextWeapon;
+    return true;
+  }
+  var oldReload = p.reload;
+  tryFire(p);
+  if (p.reload > oldReload) {
+    p._tdReloadKind = nextWeapon;
+    return true;
+  }
+  return false;
+}
+
+function triggerHeliDecoy(p) {
+  if (!p || !p.alive || !isHeliVehicle(p) || gameState !== 'playing') return false;
+  if (p._heliDecoyLeft == null) p._heliDecoyLeft = HELI_DECOY_CAPACITY;
+  if (p._heliDecoyReloadT > 0 || p._heliDecoyCooldown > 0) {
+    if (p.isPlayer && p._heliDecoyReloadT > 0 && typeof aimHint === 'function') aimHint('DECOY FLARES LOADING (' + p._heliDecoyReloadT.toFixed(1) + 's)');
+    return false;
+  }
+  if (p._heliDecoyLeft < HELI_DECOY_BURST_SIZE) {
+    p._heliDecoyReloadT = HELI_DECOY_RELOAD_TIME;
+    if (p.isPlayer && typeof aimHint === 'function') aimHint('DECOY FLARES EMPTY - LOADING (20s)');
+    return false;
+  }
+  if (typeof fireHeliDecoyBurst !== 'function' || !fireHeliDecoyBurst(p)) return false;
+  p._heliDecoyLeft = Math.max(0, p._heliDecoyLeft - HELI_DECOY_BURST_SIZE);
+  p._heliDecoyCooldown = 0.75;
+  if (p._heliDecoyLeft < HELI_DECOY_BURST_SIZE) {
+    p._heliDecoyReloadT = HELI_DECOY_RELOAD_TIME;
+    if (p.isPlayer && typeof aimHint === 'function') aimHint('DECOY FLARES DEPLOYED - LOADING (20s)');
+  } else if (p.isPlayer && typeof aimHint === 'function') {
+    aimHint('DECOY FLARES DEPLOYED (' + p._heliDecoyLeft + '/20)');
+  }
   return true;
 }
 
 function triggerHeliFire(p) {
   var wp = p._heliWeapon || 3;
   if (wp === 1) {
+    /* AUTO CANNON owns BLUE-HELI weapon-1 firing while a tech target exists;
+       main.js fires after the automatic servo has updated the real cannon pose. */
+    if (p.isPlayer && p.team === 'blue' && p.kind === 'ah64' && p._techAutoCannonTarget &&
+        typeof vehicleTechBlueHeliAutoCannonInstalled === 'function' &&
+        vehicleTechBlueHeliAutoCannonInstalled(p)) return;
     tryFire(p);
   } else if (wp === 2) {
     if (p.mods.ammo && p.mods.ammo.hp <= 0) {
-      if (p.isPlayer && typeof aimHint === 'function') aimHint('弹药架受损，无法发射火箭');
+      if (p.isPlayer && typeof aimHint === 'function') aimHint('RACK DAMAGED - ROCKETS DOWN');
       return;
     }
     if (p._heliRocketReloadT > 0) {
-      if (p.isPlayer && typeof aimHint === 'function') aimHint('火箭弹装填中 (' + p._heliRocketReloadT.toFixed(1) + 's)');
+      if (p.isPlayer && typeof aimHint === 'function') aimHint('ROCKETS LOADING (' + p._heliRocketReloadT.toFixed(1) + 's)');
       return;
     }
     if (p._heliRocketLeft <= 0) {
       p._heliRocketReloadT = rocketReloadTimeOf(p);
-      if (p.isPlayer && typeof aimHint === 'function') aimHint('火箭弹耗尽，开始装填 (' + p._heliRocketReloadT.toFixed(0) + 's)');
+      if (p.isPlayer && typeof aimHint === 'function') aimHint('ROCKETS EMPTY - LOADING (' + p._heliRocketReloadT.toFixed(0) + 's)');
       return;
     }
     if (p._heliRocketCooldown <= 0) {
@@ -1280,12 +1492,12 @@ function triggerHeliFire(p) {
       if (p._heliRocketLeft <= 0) {
         p._heliRocketLeft = 0;
         p._heliRocketReloadT = rocketReloadTimeOf(p);
-        if (p.isPlayer && typeof aimHint === 'function') aimHint('火箭弹发射完毕，装填中 (' + p._heliRocketReloadT.toFixed(0) + 's)');
+        if (p.isPlayer && typeof aimHint === 'function') aimHint('ROCKETS FIRED - LOADING (' + p._heliRocketReloadT.toFixed(0) + 's)');
       }
     }
   } else if (wp === 3) {
     if (p.mods.ammo && p.mods.ammo.hp <= 0) {
-      if (p.isPlayer && typeof aimHint === 'function') aimHint('弹药架受损，无法发射导弹');
+      if (p.isPlayer && typeof aimHint === 'function') aimHint('RACK DAMAGED - MISSILES DOWN');
       return;
     }
     // 就绪=该侧不在装填且在筒弹药>0(多联装:单发消耗,打空才开该侧 40s 装填)
@@ -1297,7 +1509,7 @@ function triggerHeliFire(p) {
       var rlT = p._heliMissileReloadTL || 0, rrT = p._heliMissileReloadTR || 0;
       var defRTime = heliMslReloadTimeOf(p);
       var minT = Math.min(rlT > 0 ? rlT : defRTime, rrT > 0 ? rrT : defRTime);
-      if (p.isPlayer && typeof aimHint === 'function') aimHint('导弹装填中 (' + minT.toFixed(1) + 's)');
+      if (p.isPlayer && typeof aimHint === 'function') aimHint('MISSILES LOADING (' + minT.toFixed(1) + 's)');
       return;
     }
 
@@ -1325,76 +1537,107 @@ function triggerHeliFire(p) {
       fireHeliMissile(p, fireSide, target);      // 弹体内转写为 sh._abgLoan(见 fireHeliMissile)
       p._abgLoanFire = false;
 
-      // 消耗该挂架一发;打空才开启该挂架独立装填 (AH-64D 10s, 直-10 40s)
+      // 消耗该挂架一发;打空才开启该挂架独立装填 (BLUE_HELI 10s, 红方武装直升机 40s)
       var tubeFired = p._heliMslTube[fireSide] | 0;
       p._heliMslTube[fireSide] = tubeFired + 1;
       p._heliMslRounds[fireSide] = Math.max(0, p._heliMslRounds[fireSide] - 1);
       if (p._heliMslRounds[fireSide] <= 0) {
         var rTime = heliMslReloadTimeOf(p);
         if (fireSide === 0) p._heliMissileReloadTL = rTime; else p._heliMissileReloadTR = rTime;
-        if (p.isPlayer && typeof aimHint === 'function') aimHint((fireSide === 0 ? '左' : '右') + '挂架打空，开始装填 (' + rTime.toFixed(0) + 's)');
+        if (p.isPlayer && typeof aimHint === 'function') aimHint((fireSide === 0 ? 'L' : 'R') + ' PYLON EMPTY - LOADING (' + rTime.toFixed(0) + 's)');
       }
       p._heliMissileLeft = p._heliMslRounds[0] + p._heliMslRounds[1];
     }
   }
 }
 
-/* 防空载具触发消费(与直升机 triggerHeliFire 同款多武器分支,显示/选择方式参考直升机代码):
-   wp3=防空导弹(左右发射架交替,多联装独立 40s 装填);wp1=双联机炮(仅 PGZ-95,走标准 tryFire 装填管线)。 */
+/* 防空载具触发消费:
+   _heliWeapon=3/2 selects SAM/ATGM for the next loading cycle, while
+   _aaReloadKind decides the projectile that is actually in the launcher now.
+   _heliWeapon=1 remains RED-AA's twin cannon. */
 function triggerAAFire(p) {
   var wp = p._heliWeapon || 3;
   if (wp === 1) {
-    if (p.team !== 'ally') return;   // 复仇者无机炮
+    if (p.team !== 'red') return;   // BLUE-AA has no cannon
     if (!p.alive || p.reload > 0 || gameState !== 'playing') return;
-    if (p.mods.gun.hp <= 0) { if (typeof aimHint === 'function') aimHint('不可发射'); return; }
-    fireAAGun(p);                    // 双联齐射(±1.02 耳轴各1发),每把性能=直升机机炮;装填 0.125s/次(任务25 射速×2;fireAAGun 内置)
+    if (p.mods.gun.hp <= 0) { if (typeof aimHint === 'function') aimHint('CANNOT FIRE'); return; }
+    fireAAGun(p);                    // Twin salvo; fireAAGun owns the short cannon reload.
     return;
   }
-  if (wp === 3) {
-    if (p.mods.ammo && p.mods.ammo.hp <= 0) {
-      if (p.isPlayer && typeof aimHint === 'function') aimHint('导弹发射架受损，无法发射');
-      return;
+  if (wp !== 2 && wp !== 3) return;
+
+  var aaAtgmReady = isPlayerAaAtgmVehicle(p);
+  if (!aaAtgmReady) {
+    p._aaWeapon = 1;
+    p._aaReloadKind = 1;
+    p._heliWeapon = 3;
+  }
+  if (p._aaWeapon !== 1 && p._aaWeapon !== 2) p._aaWeapon = (wp === 2 && aaAtgmReady) ? 2 : 1;
+  if (p._aaReloadKind !== 1 && p._aaReloadKind !== 2) p._aaReloadKind = 1;
+  if (!aaAtgmReady) { p._aaWeapon = 1; p._aaReloadKind = 1; }
+  var nextKind = (aaAtgmReady && p._aaWeapon === 2) ? 2 : 1;
+  /* The live projectile type comes from the current rack cycle, never from the
+     selected HUD slot.  This preserves a ready SAM when ATGM is selected. */
+  var loadedKind = (aaAtgmReady && p._aaReloadKind === 2) ? 2 : 1;
+  p._aaReloadKind = loadedKind;
+
+  if (p.mods.ammo && p.mods.ammo.hp <= 0) {
+    if (p.isPlayer && typeof aimHint === 'function') aimHint('LAUNCHER DAMAGED - HOLD FIRE');
+    return;
+  }
+  // Ready = that side is not loading and still has a round in its rack.
+  if (p._heliMslRounds == null) { var _mx = heliMslTubesOf(p); p._heliMslRounds = [_mx, _mx]; p._heliMslTube = [0, 0]; }
+  if (p._heliMslTube == null) p._heliMslTube = [0, 0];
+  var leftReady = (p._heliMissileReloadTL == null || p._heliMissileReloadTL <= 0) && p._heliMslRounds[0] > 0;
+  var rightReady = (p._heliMissileReloadTR == null || p._heliMissileReloadTR <= 0) && p._heliMslRounds[1] > 0;
+  if (!leftReady && !rightReady) {
+    var rlT = p._heliMissileReloadTL || 0, rrT = p._heliMissileReloadTR || 0;
+    var defRTime = heliMslReloadTimeOf(p);
+    var minT = Math.min(rlT > 0 ? rlT : defRTime, rrT > 0 ? rrT : defRTime);
+    if (p.isPlayer && typeof aimHint === 'function') aimHint(aaWeaponLabel(loadedKind) + ' LOADING (' + minT.toFixed(1) + 's)');
+    return;
+  }
+  /* AI still uses only its stock SAM and keeps the existing in-flight cap. */
+  if (!p.isPlayer) {
+    var _aaInFlight = 0;
+    for (var _fi = 0; _fi < airborneMissiles.length; _fi++) if (airborneMissiles[_fi].owner === p) _aaInFlight++;
+    if (_aaInFlight >= AA_AI_MSL_INFLIGHT) return;
+  }
+  if (!p._heliMissileCooldown || p._heliMissileCooldown <= 0) {
+    p._heliMissileCooldown = p.isPlayer ? 0.20 : AA_AI_MSL_INTERVAL;
+    var fireSide = 0;
+    if (leftReady && rightReady) {
+      fireSide = (p._heliMissileNextSide != null) ? p._heliMissileNextSide : 0;
+      p._heliMissileNextSide = 1 - fireSide;
+    } else if (leftReady) { fireSide = 0; p._heliMissileNextSide = 1; }
+    else { fireSide = 1; p._heliMissileNextSide = 0; }
+
+    // Guidance/target allocation remains unchanged; only the loaded projectile
+    // spec now follows _aaReloadKind through heliMslTypeOf().
+    var mSpec = HELI_MSL_SPEC[heliMslTypeOf(p)];
+    var target = null;
+    var aaTgt = p.ai && p.ai.aaTgt && p.ai.aaTgt.alive ? p.ai.aaTgt : null;
+    if (aaTgt && typeof isHeliVehicle === 'function' && !isHeliVehicle(aaTgt)) target = aaTgt;
+    else if (p.team === 'red' && typeof allocateGuidedFireTarget === 'function') target = allocateGuidedFireTarget(p, mSpec);
+    fireAAMissile(p, fireSide, target);
+
+    var tubeFired = p._heliMslTube[fireSide] | 0;
+    p._heliMslTube[fireSide] = tubeFired + 1;
+    p._heliMslRounds[fireSide] = Math.max(0, p._heliMslRounds[fireSide] - 1);
+    var rTime = heliMslReloadTimeOf(p);
+    if (p._heliMslRounds[fireSide] <= 0) {
+      if (fireSide === 0) p._heliMissileReloadTL = rTime; else p._heliMissileReloadTR = rTime;
+      if (p.isPlayer && typeof aimHint === 'function') aimHint((fireSide === 0 ? 'L' : 'R') + ' ' + aaWeaponLabel(loadedKind) + ' RACK EMPTY - LOADING (' + rTime.toFixed(0) + 's)');
     }
-    // 就绪=该侧不在装填且在筒弹药>0(与直升机多联装同款:单发消耗,打空才开该侧 40s 装填)
-    if (p._heliMslRounds == null) { var _mx = heliMslTubesOf(p); p._heliMslRounds = [_mx, _mx]; p._heliMslTube = [0, 0]; }
-    var leftReady = (p._heliMissileReloadTL == null || p._heliMissileReloadTL <= 0) && p._heliMslRounds[0] > 0;
-    var rightReady = (p._heliMissileReloadTR == null || p._heliMissileReloadTR <= 0) && p._heliMslRounds[1] > 0;
-    if (!leftReady && !rightReady) {
-      var rlT = p._heliMissileReloadTL || 0, rrT = p._heliMissileReloadTR || 0;
-      var defRTime = heliMslReloadTimeOf(p);
-      var minT = Math.min(rlT > 0 ? rlT : defRTime, rrT > 0 ? rrT : defRTime);
-      if (p.isPlayer && typeof aimHint === 'function') aimHint('导弹装填中 (' + minT.toFixed(1) + 's)');
-      return;
+
+    /* Once both sides are empty, the current cycle is over and the selected
+       kind becomes the kind loaded by the next synchronized cycle. */
+    if (p._heliMslRounds[0] <= 0 && p._heliMslRounds[1] <= 0) {
+      p._aaReloadKind = nextKind;
+      if (!(p._heliMissileReloadTL > 0)) p._heliMissileReloadTL = rTime;
+      if (!(p._heliMissileReloadTR > 0)) p._heliMissileReloadTR = rTime;
     }
-    /* 任务24: AI 齐射纪律——每车在飞导弹上限(防 3 秒打光全弹的实体风暴);玩家不受限 */
-    if (!p.isPlayer) {
-      var _aaInFlight = 0;
-      for (var _fi = 0; _fi < airborneMissiles.length; _fi++) if (airborneMissiles[_fi].owner === p) _aaInFlight++;
-      if (_aaInFlight >= AA_AI_MSL_INFLIGHT) return;
-    }
-    if (!p._heliMissileCooldown || p._heliMissileCooldown <= 0) {
-      p._heliMissileCooldown = p.isPlayer ? 0.20 : AA_AI_MSL_INTERVAL;   // 玩家=0.2s 防抖(手感不变);AI=齐射纪律间隔
-      var fireSide = 0;
-      if (leftReady && rightReady) {
-        fireSide = (p._heliMissileNextSide != null) ? p._heliMissileNextSide : 0;
-        p._heliMissileNextSide = 1 - fireSide;
-      } else if (leftReady) { fireSide = 0; p._heliMissileNextSide = 1; }
-      else { fireSide = 1; p._heliMissileNextSide = 0; }
-      // 火控:PGZ-95 吃雷达锁定航迹(火力分配与直升机同源);复仇者无雷达 → target=null,导引头离架自搜索
-      var mSpec = HELI_MSL_SPEC[heliMslTypeOf(p)];
-      var target = null;
-      if (p.team === 'ally' && typeof allocateGuidedFireTarget === 'function') target = allocateGuidedFireTarget(p, mSpec);
-      fireAAMissile(p, fireSide, target);
-      var tubeFired = p._heliMslTube[fireSide] | 0;
-      p._heliMslTube[fireSide] = tubeFired + 1;
-      p._heliMslRounds[fireSide] = Math.max(0, p._heliMslRounds[fireSide] - 1);
-      if (p._heliMslRounds[fireSide] <= 0) {
-        var rTime = heliMslReloadTimeOf(p);
-        if (fireSide === 0) p._heliMissileReloadTL = rTime; else p._heliMissileReloadTR = rTime;
-        if (p.isPlayer && typeof aimHint === 'function') aimHint((fireSide === 0 ? '左' : '右') + '发射架打空，开始装填 (' + rTime.toFixed(0) + 's)');
-      }
-      p._heliMissileLeft = p._heliMslRounds[0] + p._heliMslRounds[1];
-    }
+    p._heliMissileLeft = p._heliMslRounds[0] + p._heliMslRounds[1];
   }
 }
 
@@ -1414,7 +1657,7 @@ function playerUpdate(dt) {
     player._abandonT = (player._abandonT || 0) + dt;
     if (player._abandonT >= ABANDON_CD) {        // 3s 倒数与 AI 弃车同常量(combat.js)
       player._abandonT = 0;
-      killTank(player, '主动弃车');
+      killTank(player, 'ABANDONED');
       return;
     }
   } else {
@@ -1444,13 +1687,6 @@ function playerUpdate(dt) {
     // 直升机多武器计时与雷达锁定循环
     updateHeliWeapons(player, dt);
 
-    // 诱饵弹: F 键(桌面)/武器栏第4槽按住(安卓)连续释放——不占武器位、不切换 _heliWeapon;
-    // 弹药/装填/0.5s 齐射防抖闸门全部内聚在 triggerHeliFlares(weapons.js)
-    if (player.isPlayer && gameState === 'playing' &&
-        (keys.KeyF || (typeof _flareBtnHeld !== 'undefined' && _flareBtnHeld))) {
-      triggerHeliFlares(player);
-    }
-
     if (mouseDown && player.isPlayer) {
       triggerHeliFire(player);
     }
@@ -1474,8 +1710,7 @@ function playerUpdate(dt) {
     var panL = Math.sqrt(panX * panX + panZ * panZ);
     if (panL > 1) { panX /= panL; panZ /= panL; }   // 斜向不加速
     var panRate = Math.min(artyTopCamHeight() * 1.10, 760);   // 平移速度∝高度(用户设定×2:0.55→1.10),封顶 760m/s(2000m 高空防一瞬扫过全图)
-    /* 偏移只做防数值跑飞的宽钳(±2×bounds);真正生效的边界=cameraUpdate 对镜头中心的逐轴钳制——
-       旧版把偏移钳在 ±bounds(=半图宽),车不在图心时远侧永远平移不到(「平移 3km 卡死」根因)。 */
+    /* Keep the pan offset within a wide numeric guard; cameraUpdate applies the map-bound clamp. */
     var offLim = CONF.bounds * 2;
     player._topCamX = clamp((player._topCamX || 0) + panX * panRate * dt, -offLim, offLim);
     player._topCamZ = clamp((player._topCamZ || 0) + panZ * panRate * dt, -offLim, offLim);
@@ -1488,14 +1723,15 @@ function playerUpdate(dt) {
     fwdIn = clamp(player._artyCreepFwd, -1, 1);
   }
 
-  // 防空载具:多武器计时与雷达锁定循环(与直升机 updateHeliWeapons 同套;PGZ-95 雷达常亮,复仇者雷达空转不扫描)
+  // 防空载具:多武器计时与雷达锁定循环(与直升机 updateHeliWeapons 同套;RED_AA 雷达常亮,蓝方防空车雷达空转不扫描)
   if (isAAVehicle(player)) updateHeliWeapons(player, dt);
 
   var sm = speedMult(player), tm = turnMult(player) * slopeTurnMul(player);
   // 火箭炮齐射中车辆锁死(与 AI 同规则:射击时不能移动)
   var salvoLock = player.kind === 'arty' && player.salvoLeft > 0;
   if (salvoLock) { fwdIn = 0; turnIn = 0; }
-  var target = fwdIn * player.speed0 * sm;
+  var driveInput = (typeof SIM_K === 'undefined' || SIM_K <= 0) ? groundThrottleInertia(player, fwdIn, dt) : fwdIn;
+  var target = driveInput * player.speed0 * sm;
   // 加/减速 ∝ 发动机效率(旧 Math.max(sm,0.35) 地板="打不坏的动力",违真实);
   // decel 留 30% 机械刹车地板:发动机/油箱全毁当帧若 decel=0,载具将带余速匀速滑行永不停车(applyMotion 无摩擦项)
   var eEffP = engineEff(player);
@@ -1508,11 +1744,12 @@ function playerUpdate(dt) {
   if (player._hullAim && !turnIn && !salvoLock) {
     var hDiff = normAng(camAimY - (player.turretYaw || 0) - player.yaw);
     var _hyD = clamp(hDiff, -player.turn0 * tm * dt, player.turn0 * tm * dt);
-    player.yaw += _hyD;
-    player._turnCmd = dt > 0 ? _hyD / dt : 0;   // 履带指令带速:横向指令(车体瞄准伺服帧)
-  } else { player.yaw += turnIn * player.turn0 * tm * dt; player._turnCmd = turnIn * player.turn0 * tm; }   // 履带指令带速:横向指令
+    groundYawInertia(player, dt > 0 ? _hyD / dt : 0, player.turn0 * tm, dt);   // 履带指令带速:带惯性的车体瞄准伺服
+  } else {
+    groundYawInertia(player, turnIn * player.turn0 * tm, player.turn0 * tm, dt);   // 履带指令带速:带惯性的转向输入
+  }
 
-  // 89式本版已进入常规旋塔伺服;驾驶转向只改车体,炮塔由瞄准循环独立360°跟随。
+  // 红方歼击车本版已进入常规旋塔伺服;驾驶转向只改车体,炮塔由瞄准循环独立360°跟随。
   applyMotion(player, dt);
 
   if (mouseDown && player.isPlayer) {
@@ -1523,12 +1760,16 @@ function playerUpdate(dt) {
         if (player.reload <= 0 && player.salvoLeft <= 0 && player.mods.gun.hp > 0 && Math.abs(player.speed) < 0.8) {
           playerArtyStartSalvo(player);
         } else if (player.mods.gun.hp <= 0) {
-          if (typeof aimHint === 'function') aimHint('不可发射');   // 定向管损毁:光标上方红字(事件触发)
+          if (typeof aimHint === 'function') aimHint('CANNOT FIRE');   // Launch tube destroyed
         }
         /* 移动中点火静默不响应(齐射须停稳;击杀播报仅载具死亡行,不设文字提示) */
       }
+    } else if (isPlayerRedMbtMissileVehicle(player)) {
+      triggerRedMbtFire(player);   // MBT-1:当前膛内弹种决定本次发射,选择只决定下一次装填
+    } else if (isPlayerRedTdHighExplosiveVehicle(player)) {
+      triggerRedTdFire(player);    // RED-TD:当前膛内弹种决定本次发射,1=AP,2=HE
     } else if (isAAVehicle(player)) {
-      triggerAAFire(player);   // 防空多武器:1=导弹(多联装交替/独立装填) 2=双联机炮(仅PGZ-95)
+      triggerAAFire(player);   // 防空多武器:1=导弹(多联装交替/独立装填) 2=双联机炮(仅RED_AA)
     } else {
       tryFire(player);
     }
@@ -1550,18 +1791,18 @@ function playerUpdate(dt) {
         if (player.salvoLeft > 0) {
           /* 齐射进行中不接新任务(防误排队) */
         } else if (player.mods.gun.hp <= 0) {
-          if (typeof aimHint === 'function') aimHint('不可发射');   // 定向管损毁
+          if (typeof aimHint === 'function') aimHint('CANNOT FIRE');   // Launch tube destroyed
         } else if (player._topHover && isFinite(player._topHover.x)) {
           var dxH = player._topHover.x - ppA.x, dzH = player._topHover.z - ppA.z;
           if (dxH * dxH + dzH * dzH < 35 * 35) {
-            if (typeof aimHint === 'function') aimHint('装定点过近,最小射程 35 米');   // 防误点自车贴脸齐射
+            if (typeof aimHint === 'function') aimHint('AIM TOO CLOSE, MIN RANGE 35M');   // 防误点自车贴脸齐射
           } else {
           player._topTgt = { x: player._topHover.x, y: player._topHover.y, z: player._topHover.z };
           player._topFireWish = true;
           player._topCreepDist = 0;
           // 边沿装定——闩锁时装一次挂起计时,按住期间不每帧重置(0.7s 宽限 + 0.8s 强制,原纪律不变)
           if (player._servoHoldT == null || player._servoHoldT === 0 || player._servoHoldT <= -0.8) player._servoHoldT = 0.7;
-          if (player.reload > 0) { if (typeof aimHint === 'function') aimHint('装填中,已标定射击点'); }
+           if (player.reload > 0) { if (typeof aimHint === 'function') aimHint('LOADING - POINT MARKED'); }
           }
         }
       }
@@ -1590,7 +1831,7 @@ function playerUpdate(dt) {
           thetaT: solP.theta, reach: solP.reach,
           settled: Math.abs(azErr) < 0.02 && Math.abs(elErr) < 0.03,
           loose: Math.abs(azErr) < 0.06 && Math.abs(elErr) < 0.08 };   // 放行用宽阈
-        if (player._topFireWish && !solP.reach) { if (typeof aimHint === 'function') aimHint('超出射程'); }
+        if (player._topFireWish && !solP.reach) { if (typeof aimHint === 'function') aimHint('OUT OF RANGE'); }
         /* —— 蠕行微调(仅点击装定后):预测首发弹着(10Hz 弹道仿真 scopeInfo.point)与装定点的
            纵向误差折算低速油门(≤2.5m/s ≈ 极速 1/3),累计行程 ≤40m(小范围约束);
            伺服未收敛(settled 未达)时不蠕行——仿真弹着此时不代表装定解,先等发射架锁到位。 */
@@ -1649,7 +1890,7 @@ function playerUpdate(dt) {
     }
   }
 
-  // 玩家火箭炮:齐射推进(与 AI 同节奏——锁车停稳后按间隔放完全部火箭(PHL-11 40 发/M142 6 发),随后长装填(40s/12s);
+  // 玩家火箭炮:齐射推进(与 AI 同节奏——锁车停稳后按间隔放完全部火箭(RED_MLRS 40 发/BLUE_MLRS 6 发),随后长装填(40s/12s);
   // salvoLeft 必须在此清零,否则打不出弹且锁死移动)
   if (player.kind === 'arty' && player.salvoLeft > 0) {
     playerArtyApplySalvoLock(player, false);
@@ -1679,19 +1920,49 @@ function playerUpdate(dt) {
 }
 
 /* ===== 移动 / 地形贴合 / 碰撞 ===== */
+/* Integrate the ground vehicle's world velocity separately from its target
+   heading.  This is the missing layer between a desired track speed and actual
+   motion: when the hull turns, the velocity vector cannot rotate in one frame. */
+var _groundMotionV = { x: 0, z: 0 };
+function groundMotionVelocity(t, desiredX, desiredZ, dt) {
+  var cx = isFinite(t._motionVx) ? t._motionVx : 0;
+  var cz = isFinite(t._motionVz) ? t._motionVz : 0;
+  var priorCx = cx, priorCz = cz;
+  var dx = desiredX - cx, dz = desiredZ - cz;
+  var d = Math.sqrt(dx * dx + dz * dz);
+  if (d > 1e-7 && dt > 0) {
+    var same = cx * desiredX + cz * desiredZ >= 0;
+    var rate = same ? Math.max(3.5, (t.accel0 || 2.5) * 2.0) : Math.max(6.0, (t.decel0 || 5) * 1.25);
+    var step = Math.min(d, rate * dt);
+    cx += dx / d * step;
+    cz += dz / d * step;
+    if (!same && priorCx * cx + priorCz * cz < 0) { cx = 0; cz = 0; }   // reverse through neutral, never through a velocity snap
+  } else if (d <= 1e-7) {
+    cx = desiredX; cz = desiredZ;
+  }
+  t._motionVx = cx; t._motionVz = cz;
+  t._motionAx = dt > 1e-6 ? (cx - priorCx) / dt : 0;
+  t._motionAz = dt > 1e-6 ? (cz - priorCz) / dt : 0;
+  _groundMotionV.x = cx; _groundMotionV.z = cz;
+  return _groundMotionV;
+}
 function applyMotion(t, dt) {
   if (!isFinite(t.speed) || !isFinite(t.yaw)) { t.speed = 0; return; }
   var fx = Math.sin(t.yaw), fz = Math.cos(t.yaw);
   var p = t.group.position;
+  var yawPrev = (t._yawPrev == null) ? t.yaw : t._yawPrev;
+  t._yawRate = dt > 1e-6 ? (t.yaw - yawPrev) / dt : 0;
+  t._yawPrev = t.yaw;
   if (typeof SIM_K !== 'undefined' && SIM_K <= 0) {
     // —— 街机分支:逐位旧代码(SIM_K=0 回归用,含 M6 vel 口径)——
+    var arcVel = groundMotionVelocity(t, fx * t.speed, fz * t.speed, dt);
     var SUB_DT = 0.016, n = Math.max(1, Math.ceil(dt / SUB_DT)), stepDt = dt / n;
     for (var s = 0; s < n; s++) {
-      var move = t.speed * stepDt;
-      if (Math.abs(move) > 1e-5) {
+      var forwardMove = (arcVel.x * fx + arcVel.z * fz) * stepDt;
+      if (Math.abs(arcVel.x) > 1e-5 || Math.abs(arcVel.z) > 1e-5) {
         var grad = terrainH(p.x + fx, p.z + fz) - terrainH(p.x, p.z);
-        var slopeF = clamp(1 - grad * Math.sign(move) * 0.7, 0.50, 1.05);
-        var dx = fx * move * slopeF, dz = fz * move * slopeF;
+        var slopeF = clamp(1 - grad * Math.sign(forwardMove) * 0.7, 0.50, 1.05);
+        var dx = arcVel.x * stepDt * slopeF, dz = arcVel.z * stepDt * slopeF;
         if (isFinite(dx) && isFinite(dz)) { p.x += dx; p.z += dz; }
       }
     }
@@ -1701,23 +1972,22 @@ function applyMotion(t, dt) {
       var atEdge = (Math.abs(p.x) >= CONF.bounds - 0.05 || Math.abs(p.z) >= CONF.bounds - 0.05);
       onPlayerBoundaryContact(atEdge);
     }
-    t.velX = fx * t.speed; t.velZ = fz * t.speed;
+    t.velX = arcVel.x; t.velZ = arcVel.z;
+    if (typeof suspDriveLoad === 'function') suspDriveLoad(t, dt);
     return;
   }
   // —— 物理分支:油门已由调用方写入 t._throttle,此处统一裁决 ——
-  var yawPrev = (t._yawPrev == null) ? t.yaw : t._yawPrev;
-  t._yawRate = dt > 1e-6 ? (t.yaw - yawPrev) / dt : 0;
-  t._yawPrev = t.yaw;
   slopeArbitrate(t, dt);
   var rx = fz, rz = -fx;   // 车体右轴(侧滑分量沿此轴)
   var sv = t._slideV || 0;
+  var motionVel = groundMotionVelocity(t, fx * t.speed + rx * sv, fz * t.speed + rz * sv, dt);
   // 子步进运动:拆分为 60Hz(16ms)小步,使帧率波动不影响每帧总移动量
   var SUB_DT2 = 0.016, n2 = Math.max(1, Math.ceil(dt / SUB_DT2)), stepDt2 = dt / n2;
   var ox = p.x, oz = p.z;
   for (var s2 = 0; s2 < n2; s2++) {
-    var mv = t.speed * stepDt2, sd = sv * stepDt2;
-    if (Math.abs(mv) > 1e-6 || Math.abs(sd) > 1e-6) {
-      var nx2 = p.x + fx * mv + rx * sd, nz2 = p.z + fz * mv + rz * sd;
+    var mvx = motionVel.x * stepDt2, mvz = motionVel.z * stepDt2;
+    if (Math.abs(mvx) > 1e-6 || Math.abs(mvz) > 1e-6) {
+      var nx2 = p.x + mvx, nz2 = p.z + mvz;
       if (isFinite(nx2) && isFinite(nz2)) { p.x = nx2; p.z = nz2; }
     }
   }
@@ -1729,6 +1999,7 @@ function applyMotion(t, dt) {
   }
   var idt = dt > 1e-6 ? 1 / dt : 0;
   t.velX = (p.x - ox) * idt; t.velZ = (p.z - oz) * idt;   // M6 修复:大脑速度=实际位移/时间(含坡度/侧滑)
+  if (typeof suspDriveLoad === 'function') suspDriveLoad(t, dt);
 }
 
 /* 复用 scratch(热路径,避免每帧 GC;模块私有) */
@@ -2222,13 +2493,14 @@ function alignTank(t, dt) {
      跳过全部采样——判据用位置而非速度,天然涵盖碰撞推挤/残骸挤压等一切位移来源。 */
   t._alT = (t._alT || 0) - dt;
   if (t._alT <= 0) {
-    t._alT = 0.066;
+    t._alT = (t.isPlayer || t === player) ? 0 : 0.066;
     if (!(p.x === t._alX && p.z === t._alZ && t.yaw === t._alYw && t._alEp === dentEpoch)) {
       t._alX = p.x; t._alZ = p.z; t._alYw = t.yaw; t._alEp = dentEpoch;
-      /* 前馈:采样点沿速度前移 v×0.144s(低通 τ=1/9≈0.111s + 采样期一半 0.033s),
+      /* 前馈:采样点沿速度前移 v×vk(低通 τ=1/9≈0.111s + 采样期一半 0.033s),
          抵消滞后——车到达时姿态恰好收敛到该处目标(26° 坡实测平均插入 0.25→0.02m)。
+         玩家车物理定步长全频刷新,前馈缩短至 0.04s,彻底消除坑缘/坡脊采样跳跃引起的姿态相机卡顿。
          残骸无速度语义(velX 为阵亡瞬间残值),前馈仅活车启用。 */
-      var vk = t.alive ? 0.144 : 0;
+      var vk = t.alive ? ((t.isPlayer || t === player) ? 0.04 : 0.144) : 0;
       var sx = p.x + (t.velX || 0) * vk, sz = p.z + (t.velZ || 0) * vk;
       var fxv = Math.sin(t.yaw), fzv = Math.cos(t.yaw);
       /* 双端支撑(5 采样,与旧口径 terrainH+terrainNormal 净零):
@@ -2241,6 +2513,16 @@ function alignTank(t, dt) {
       var hl = terrainH(sx - fzv * 1.3, sz + fxv * 1.3);
       var hc = terrainH(sx, sz);
       var sF = (hf - hb) / 5.2, sR = (hr - hl) / 2.6;   // 纵/横弦坡度(dh/dm);姿态与轮位去趋势同源
+      /* Suspension load transfer is produced by the real ground-motion
+         acceleration/yaw path in suspUpdate.  Apply it to chassis pose only;
+         keep the terrain residual used by the wheel-contact height solver pure,
+         otherwise acceleration would fake a terrain slope and alter ride height. */
+      var _drivePoseF = 0, _drivePoseR = 0;
+      if (t._suspLoad) {
+        _drivePoseF = Math.tan(Math.max(-0.16, Math.min(0.16, Number(t._suspLoad.pitch) || 0)));
+        _drivePoseR = Math.tan(Math.max(-0.18, Math.min(0.18, Number(t._suspLoad.roll) || 0)));
+      }
+      var _poseF = sF + _drivePoseF, _poseR = sR + _drivePoseR;
       /* 【贴地高度:履带线包络取 max】(2026-09-09)
          旧式 max((hf+hb)/2, hc) 只采【车体中线】3 点(前/中/后 ±2.6m),弦长 5.2m 远小于
          弹坑尺度(2km 图爆半径 22m 的弹坑口径达 28m):
@@ -2266,7 +2548,7 @@ function alignTank(t, dt) {
            这也正是真车的工作方式:车体高度是悬挂受力的结果,不是几何包络的结果。
            ★平地上 10 轮地面等高,均值 = 该高度,pen 恒为 0 —— 与旧口径逐位一致。 */
         var _gsp = SUSP_SPEC[_gk];
-        var _gw = _gsp.trkX, _gn = _gsp.n;
+        var _gw = _gsp.physicsTrkX || _gsp.trkX, _gn = _gsp.n;
         var _grx = fzv, _grz = -fxv;                     // 车体右向量(水平正交单位系)
         /* 【托底钳制:必须在俯仰系/去趋势后求值】悬挂总行程有限(t59 仅 363mm),
            而弹坑在一辆车范围内的落差可达 1~2m。行程用尽后,真车会「托底」
@@ -2295,7 +2577,7 @@ function alignTank(t, dt) {
         t._ty = Math.max((hf + hb) * 0.5, hc);           // 非履带车(arty/heli)沿用旧口径
       }
       // sF/sR 已在上方采样后求值,与履带高度去趋势同源。
-      _n.set(-sF * fxv - sR * fzv, 1, -sF * fzv + sR * fxv).normalize();   // 法线=up-sF·f-sR·r(f/r 水平正交单位系)
+      _n.set(-_poseF * fxv - _poseR * fzv, 1, -_poseF * fzv + _poseR * fxv).normalize();   // 地形法线 + 加速俯仰/转向横滚姿态
       _f.set(fxv, 0, fzv);
       _r.crossVectors(_n, _f).normalize();
       _f.crossVectors(_r, _n).normalize();
@@ -2371,7 +2653,7 @@ function collResolvePair(a, b, dx, dz, d, min, cap) {
   b.group.position.x -= dx / d * push; b.group.position.z -= dz / d * push;
   if (!a.alive) wreckPushSide(a);
   if (!b.alive) wreckPushSide(b);
-  if (a.alive && b.alive && a.team !== b.team) {   // 双方均活车 → 互相警觉
+  if (a.alive && b.alive && areHostile(a, b)) {   // 双方均活车 → 互相警觉
     if (a.ai) { a.ai.bumpFoe = b; a.ai.bumpT = gameT; }
     if (b.ai) { b.ai.bumpFoe = a; b.ai.bumpT = gameT; }
   }
@@ -2486,12 +2768,7 @@ function resolveCollisions(dt) {
     if (t._wMove) _wreckMoveQueue[wqN++] = t;          // 仍被推 → 留在队列下帧复查
   }
   _wreckMoveQueue.length = wqN;                       // 压缩
-  /* —— 残骸静态叠堆收敛:0.125s×4 片轮转扫描(事件外兜底:历史遗留叠堆/帧间残留在此分离;
-     仅配对重叠残骸,平时零操作)。C2 分帧:若 0.5s 全量唤醒残骸集中一帧配对,
-     玩家推醒成片残骸时 = 周期性帧时尖峰把 dt 顶到钳制上限(rubber-banding 放大器);
-     每 0.125s 只扫 1/4 片,每具唤醒残骸仍 0.5s 一扫(收敛速度不变),单帧峰值 /4。
-     3A 休眠化:静止≥5s 且不在复查队列的残骸直接跳过——
-     收敛后的叠堆不再产生新重叠,全量配对纯属白扫;被推时 wreckPushSide 记 _wMovedT 唤醒 —— */
+  /* Resolve overlapping wreck piles in four slices; sleeping wrecks are skipped until pushed. */
   if (gameT - _wreckPairT >= 0.125) {
     _wreckPairT = gameT;
     _wreckSlice = (_wreckSlice + 1) & 3;
@@ -2521,7 +2798,7 @@ function resolveCollisions(dt) {
 /* ============================================================
    载具状态 3D 迷你 HUD(右下角面板内专属小画布)——检视模式全套建模
    · 渲染=面板内 #phudcv 小画布(正交头正视图)+独立微型场景;
-     完全删除旧版简易代理建模(命中盒/实心梯形棱柱等), 直接调用对应载具检视模式下的建模:
+     use the inspection-mode vehicle model directly for the HUD:
      ① 外部视觉结构: 完整克隆真车全部视觉部件(车体/炮塔/身管/轮组/履带/旋翼/机身),
         应用检视模式半透蓝图装甲材质(0x384e60, 半透) + 战术青色结构边缘描线(0x44bbcc);
      ② 内部战术模块: 调用全载具高科技全息内构模块(engine/fuel/ammo/turret/gun/trackL/trackR等),
@@ -2855,7 +3132,7 @@ function _phudBuild() {
   var labs = _phudLabEls();
   if (isH) {
     if (labs.trackL) {
-      labs.trackL.textContent = '旋翼';
+      labs.trackL.textContent = 'ROTOR';
       labs.trackL.style.writingMode = 'horizontal-tb';
       labs.trackL.style.left = '50%';
       labs.trackL.style.top = '10px';
@@ -2864,7 +3141,7 @@ function _phudBuild() {
     if (labs.trackR) labs.trackR.style.display = 'none';
   } else {
     if (labs.trackL) {
-      labs.trackL.textContent = '履带';
+      labs.trackL.textContent = 'TRACK';
       labs.trackL.style.writingMode = 'vertical-rl';
       labs.trackL.style.left = '3px';
       labs.trackL.style.top = '50%';
@@ -2872,7 +3149,7 @@ function _phudBuild() {
     }
     if (labs.trackR) {
       labs.trackR.style.display = '';
-      labs.trackR.textContent = '履带';
+      labs.trackR.textContent = 'TRACK';
     }
   }
 

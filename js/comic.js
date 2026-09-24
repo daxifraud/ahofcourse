@@ -26,22 +26,12 @@ window.__FXTAG='2026-09-10 fx7';   // FX4:版本探针(F12控制台输入__FXTAG
 var _comicRT = null, _comicRTW = 0, _comicRTH = 0;   // 仅一张主 RT(原生分辨率);描边源 = 其自身,无独立描边 RT
 /* 合成 RT 降采样系数(B 优化):场景 pass+合成 pass 像素量 ×scale²(0.8→0.64);
    线宽/光晕/笔痕在着色器内按 uScale 补偿,屏幕观感尺寸不变;LinearFilter 上采样的轻微软化=印刷感。
-   与 DRS 相乘叠加;调回 1.0 即关闭。
-   ★P0-②(性能优化报告 2026-09-13):由恒 1.0 改按画质档驱动——高=1.0(桌面逐位不变)、
-   中=0.75(像素量 ×0.56,触屏设备默认档,主场景+合成两个全屏 pass 同时缩)、低=0.66。
-   漫画风描边/平涂本身容忍软化(与写实发虚不同语境);描边偏移恒 1 纹素(见着色器注②),
-   低分辨率下屏幕空间线宽略增 1.33 倍,恰是印刷加粗感,非瑕疵。开镜 DRS 仍独立相乘兜底。 */
-var COMIC_RT_SCALE = (typeof GFX_PROFILE !== 'undefined')
-  ? (GFX_PROFILE === 'low' ? 0.66 : (GFX_PROFILE === 'mid' ? 0.75 : 1.0))
-  : 1.0;
+   与 DRS 相乘叠加;调回 1.0 即关闭。 */
+var COMIC_RT_SCALE = 1.0;                                // 恒 1.0:原生分辨率合成。降此值会通屏发虚,性能一律由 applyScopePerf 的 DRS 兜底
 var _comicScene = null, _comicCam = null, _comicMat = null, _comicBrush = null;
 var _comicFailed = false;            // 初始化/渲染异常 → 永久回退直渲兜底(渲染层绝不影响游戏本体)
-/* P0 对局描边模式: 1=深度剪影(默认,对齐车库「只描建模轮廓」) / 0=旧亮度+深度(URL ?ink=0 回滚) */
+/* Match outline mode: depth silhouette by default; ?ink=0 selects the brightness-depth fallback. */
 var VEH_INK_MODE = /[?&]ink=0(?:&|$)/.test(location.search) ? 0 : 1;
-function setVehInkMode(m) {
-  VEH_INK_MODE = m ? 1 : 0;
-  if (_comicMat && _comicMat.uniforms && _comicMat.uniforms.uVehInkMode) _comicMat.uniforms.uVehInkMode.value = VEH_INK_MODE;
-}
 var _comicV2 = new THREE.Vector2();
 
 /* ===== 程序生成"水平短笔触"纸面笔痕纹理(256² 灰度,屏幕空间平铺;离线一次) ----
@@ -79,9 +69,8 @@ var _COMIC_FRAG = [
      漫画滤镜(参考业界成熟卡通后处理:Roberts-Cross 边检 @ 固定 1 纹素核)
      ------------------------------------------------------------
      三条设计约束,改动前先读 —— 每一条都对应一类曾经出现过的画面缺陷:
-       ① 合成分辨率按画质档驱动(★P0-②:高=1.0 / 中=0.75 / 低=0.66,见 COMIC_RT_SCALE 注);
-          高档即原生分辨率合成;中低档降采样放大,线宽/笔痕经 uScale 补偿观感不变。
-          开镜另有 applyScopePerf 的 DRS 动态降采样与本系数相乘兜底。
+       ① 原生分辨率合成(COMIC_RT_SCALE=1.0)。降采样再放大会通屏发虚;
+          性能由 applyScopePerf 的 DRS 动态降采样兜底,不要靠调低 RT 倍率省性能。
        ② 边检偏移恒为 1 纹素(1.0/uRes),不得乘 uThick/uScale。
           偏移一旦大于 1 纹素,薄物两侧会各描一次 = 平行双线重影,
           且重影宽度随分辨率与炮镜倍率漂移。uThick 只许乘在边检"强度"上。
@@ -381,7 +370,7 @@ function _antBuildSpecs() {                             // 懒建:与 createTank
   var m60Top = m60TurretTopY(0.52, -0.92), r89 = td89RoofY(-0.56, -1.00);
   _antSpecs = {
     t59:  [[-0.10, 0.4952, 1.4452, -0.62]],
-    t99:  [[0.66, 0.604, 1.554, -1.59]],                  // 99式:塔顶右尾竖鞭(与 turretParts99 天线 vCyl 同源,随杆下移-0.056同步)
+    t99:  [[0.66, 0.604, 1.554, -1.59]],                  // 红方重型坦克:塔顶右尾竖鞭(与 turretParts99 天线 vCyl 同源,随杆下移-0.056同步)
     m60:  [[-0.52, m60Top + 0.05, m60Top + 1.20, -0.92], [0.52, m60Top + 0.05, m60Top + 1.20, -0.92]],
     m1a1: [[-0.82, 0.71, 1.81, -1.94], [0.82, 0.71, 1.81, -1.94]],
     td89: [[-0.56, r89 + 0.03, r89 + 1.03, -1.00]]      // arty 无天线
@@ -465,6 +454,7 @@ function _comicFxTick() {
     _comicBurnSync(nw / 1000);                           // 持续燃烧实例
   _comicAntennaSync();                                 // 天线稳定线(降级直渲路径同样受益:深度/雾正确)
   _tacTick();                                          // 战术标识:门=_tacOn||指挥模式
+  _iffArrowTick();                                     // 敌我箭头:屏内且无遮挡载具
   _cmdStarTick();                                      // 指挥星:被指挥/被借用者头顶星
 }
 function comicRender(sc, cam) {
@@ -475,8 +465,7 @@ function comicRender(sc, cam) {
   try {
     _comicEnsureRT();
     _comicFxTick();
-    /* v2:删除 _comicGroundEdgePass(整整一遍无贴图地面全场景渲染)——原生分辨率下它是最大浪费。
-       描边源直接复用主 RT(tEdge=tDiffuse);地面碎花误描由 Roberts 边检阈值抬高(0.11→0.28)抑制。 */
+    /* The outline source is the main render target; Roberts thresholds suppress ground texture noise. */
     renderer.setRenderTarget(_comicRT);
     renderer.render(sc, cam);
     _comicMat.uniforms.tEdge.value = _comicRT.texture;   // 描边源=主画面本身(不再单独渲地面)
@@ -557,8 +546,6 @@ function _fxA2(g,cx,cy,R,seed,r,gg,b,shape,soft){
   hl.addColorStop(0,'rgba(255,252,240,.14)');hl.addColorStop(1,'rgba(255,252,240,0)');
   g.fillStyle=hl;g.beginPath();g.arc(cx-R*.3,cy-R*.35,R*.9,0,TAU);g.fill();}
 }
-function _fxA2col(g,cx,topY,botY,W,seed,r,gg,b){   // FX1:柱形烟(燃烧烟柱):沿竖轴串珠
-  var H=botY-topY;for(var i=0;i<5;i++){var k=i/4;_fxA2(g,cx+(mulberry32(seed+i*7)()-.5)*W*.5,botY-H*k,W*(.62-.18*k),seed+i*13,r,gg,b,i===2?0:1);}}
 
 function _fxUvW(arr,count,frames,v){var f=frames[v|0]||frames[0],o=count*4;arr[o]=f[0];arr[o+1]=f[1];arr[o+2]=f[2];arr[o+3]=f[3];}
 function _comicBurnMakeTex() {
@@ -650,22 +637,7 @@ function _comicBurnMakeTex() {
 
 /* 参考燃烧烟重绘:连续S形黑烟柱、炭黑主体、灰紫受光卷边;透明背景不使用原图棋盘。 */
 /* ===== FX7 烟样式扩充:helper+painters(与 fx_art/smoke_paint.js 同源,勿手改) ===== */
-function DP_rimSeg(g, cx, cy, r, a0, a1, color, w, alpha, seed){
-  var rnd = mulberry32(seed), n = 3, i;
-  g.save(); g.strokeStyle = color; g.lineWidth = w; g.lineCap = 'round'; g.globalAlpha = alpha;
-  for(i = 0; i < n; i++){
-    var s0 = a0 + (a1 - a0) * (i / n + rnd() * .04), s1 = a0 + (a1 - a0) * ((i + .72) / n);
-    g.beginPath(); g.arc(cx, cy, r * (0.97 + rnd() * .06), s0, s1); g.stroke();
-  }
-  g.restore();
-}
 
-function DP_softShadow(g, cx, cy, rx, ry, color, alpha){
-  g.save(); g.translate(cx, cy); g.scale(rx / ry, 1); g.translate(-cx, -cy);
-  var gr = g.createRadialGradient(cx, cy, 0, cx, cy, ry);
-  gr.addColorStop(0, 'rgba(' + color + ',' + alpha + ')'); gr.addColorStop(1, 'rgba(' + color + ',0)');
-  g.fillStyle = gr; g.beginPath(); g.arc(cx, cy, ry, 0, TAU); g.fill(); g.restore();
-}
 
 function DP_speckOut(g, x, y, w, h, seed, n, rmax, alpha){
   var rnd = mulberry32(seed), i;
@@ -682,14 +654,6 @@ function DP_dots(g, x, y, w, h, seed, n, rmin, rmax, color, alpha){
   g.restore(); g.globalAlpha = 1;
 }
 
-function DP_tendril(g, x, y, len, seed, color, w, alpha, dir){
-  var rnd = mulberry32(seed);
-  var x1 = x + (rnd() - .5) * len * .5 * dir, y1 = y - len * .33;
-  var x2 = x1 + (rnd() - .5) * len * .6 * dir, y2 = y - len * .66;
-  var x3 = x2 + (rnd() - .5) * len * .5 * dir, y3 = y - len;
-  g.save(); g.strokeStyle = color; g.lineWidth = w; g.lineCap = 'round'; g.globalAlpha = alpha;
-  g.beginPath(); g.moveTo(x, y); g.bezierCurveTo(x1, y1, x2, y2, x3, y3); g.stroke(); g.restore();
-}
 
 function DP_clod(g, x, y, r, seed){
   var rr = mulberry32(seed), pts = [], n = 9, i;
@@ -706,10 +670,9 @@ var BURN_PROF={W:376,H:493,rows:[[22, 215.0, 228.0], [24, 213.0, 230.2], [30, 20
    FX8-SMOKE 烟效重绘运行模块（v1）：发动机烟 / 行进烟 / 炮弹击中地面烟 / 地面尘 / 燃烧烟
    ------------------------------------------------------------
    · 轮廓先算后画：极坐标多谐波 + 羽流剖面 + 两端端帽；轮廓是数据，可审计、可复现
-   · 烘焙零描边：实心剪影并集 → 剪影内铺软渐变调子 → 底部 destination-out → 整体高斯羽化
-     （旧画法的 DP_rimSeg 内弧 / 直线拉丝 / DP_dots 深色点 / destination-out 挖洞全部不再使用）
-   · 通用尺寸抖动：_sfxJit() → SmokeFX.randSize()，任何烟生成时必须乘一次 [0.85,1.15]
-   · 贴图尺寸与单元格完全沿用旧的（256x256，燃烧烟 256x512），UV 帧不动
+   · 烘焙零描边：实心剪影并集 → 软渐变 → 底部透明度衰减 → 整体高斯羽化
+   · 通用尺寸抖动：_sfxJit() → SmokeFX.randSize()，每团烟只调用一次
+   · 贴图尺寸与单元格固定为 256x256；燃烧烟保持 256x512，UV 帧不变
    ============================================================ */
 /* ============================================================================
  * smoke-fx.js —— 烟效重绘 运行文件（v1，5 个烟族：发动机/行进/击中地面/地面尘/燃烧）
@@ -836,27 +799,27 @@ var CAP2_PROF = [[0, .50], [.12, .84], [.28, .90], [.50, .82], [.70, .64], [.86,
 
 var FAMILIES = {
   engine: { key: 'engine', cell: [256, 256], alpha: .62, feather: 7, draw: 96, variants: [
-    { name: 'E0 团涌', geom: { kind: 'blob', cx: 128, cy: 142, R: 86, squash: 1.02, harm: [[2, .095], [3, .05], [5, .022]], rot: -.12, topBias: .10, seed: 0x1001 },
+    { name: 'E0 SURGE', geom: { kind: 'blob', cx: 128, cy: 142, R: 86, squash: 1.02, harm: [[2, .095], [3, .05], [5, .022]], rot: -.12, topBias: .10, seed: 0x1001 },
       tone: [T(-.26, -.30, .60, 'light', .26), T(.22, .26, .62, 'dark', .22), T(.02, .10, .50, 'core', .16), T(-.42, .18, .30, 'light', .12), T(.34, -.30, .26, 'dark', .10)] },
-    { name: 'E1 横拖', geom: { kind: 'blob', cx: 122, cy: 140, R: 76, squash: .64, harm: [[2, .11], [3, .05], [5, .02]], taper: .36, rot: .05, seed: 0x1002 },
+    { name: 'E1 SWEEP', geom: { kind: 'blob', cx: 122, cy: 140, R: 76, squash: .64, harm: [[2, .11], [3, .05], [5, .02]], taper: .36, rot: .05, seed: 0x1002 },
       tone: [T(-.30, -.28, .58, 'light', .26), T(.10, .24, .60, 'dark', .22), T(-.05, .04, .44, 'core', .18), T(.30, .10, .28, 'dark', .12), T(-.46, .06, .26, 'light', .10)] },
-    { name: 'E2 双涌', geom: { kind: 'blob', cx: 128, cy: 142, R: 84, squash: 1.10, harm: [[2, .13], [3, .05], [5, .02]], phases: [Math.PI, 1.1, 2.3], rot: .04, topBias: .06, seed: 0x1003 },
+    { name: 'E2 DOUBLE SURGE', geom: { kind: 'blob', cx: 128, cy: 142, R: 84, squash: 1.10, harm: [[2, .13], [3, .05], [5, .02]], phases: [Math.PI, 1.1, 2.3], rot: .04, topBias: .06, seed: 0x1003 },
       tone: [T(-.24, -.40, .46, 'light', .24), T(-.22, .34, .44, 'light', .18), T(.24, .02, .56, 'dark', .22), T(-.02, -.06, .40, 'core', .16), T(.36, -.40, .24, 'dark', .10)] }
   ] },
   dust: { key: 'dust', cell: [256, 256], alpha: .56, feather: 7, draw: 118, variants: [
-    { name: 'D0 圆尘', geom: { kind: 'blob', cx: 128, cy: 150, R: 86, squash: .92, harm: [[2, .10], [3, .055], [5, .024]], seed: 0x2001 },
+    { name: 'D0 ROUND DUST', geom: { kind: 'blob', cx: 128, cy: 150, R: 86, squash: .92, harm: [[2, .10], [3, .055], [5, .024]], seed: 0x2001 },
       tone: [T(-.28, -.32, .58, 'light', .26), T(.24, .18, .60, 'dark', .24), T(.00, .04, .48, 'core', .18), T(.38, -.24, .26, 'dark', .12)], contact: .34 },
-    { name: 'D1 宽裙', geom: { kind: 'blob', cx: 128, cy: 156, R: 78, squash: .54, harm: [[2, .10], [3, .05], [5, .02]], taper: .18, seed: 0x2002 },
+    { name: 'D1 WIDE SKIRT', geom: { kind: 'blob', cx: 128, cy: 156, R: 78, squash: .54, harm: [[2, .10], [3, .05], [5, .02]], taper: .18, seed: 0x2002 },
       tone: [T(-.16, -.34, .60, 'light', .26), T(.10, .22, .62, 'dark', .26), T(-.30, .12, .36, 'light', .14), T(.42, -.10, .28, 'dark', .12)], contact: .42 },
-    { name: 'D2 扬柱', geom: { kind: 'blob', cx: 128, cy: 148, R: 70, squash: 1.42, harm: [[2, .09], [3, .05], [5, .022]], topBias: .22, seed: 0x2003 },
+    { name: 'D2 RISING COLUMN', geom: { kind: 'blob', cx: 128, cy: 148, R: 70, squash: 1.42, harm: [[2, .09], [3, .05], [5, .022]], topBias: .22, seed: 0x2003 },
       tone: [T(-.26, -.36, .54, 'light', .26), T(.24, .10, .58, 'dark', .22), T(-.02, .18, .44, 'core', .18), T(.30, -.28, .26, 'dark', .12)], contact: .30 }
   ] },
   hit: { key: 'hit', cell: [256, 256], alpha: .60, feather: 6, draw: 128, variants: [
-    { name: 'H0 爆散', geom: { kind: 'blob', cx: 128, cy: 140, R: 74, squash: .95, harm: [[2, .075], [3, .045], [6, .018], [7, .012]], seed: 0x3001 },
+    { name: 'H0 BURST', geom: { kind: 'blob', cx: 128, cy: 140, R: 74, squash: .95, harm: [[2, .075], [3, .045], [6, .018], [7, .012]], seed: 0x3001 },
       tone: [T(-.24, -.28, .52, 'light', .26), T(.20, .22, .56, 'dark', .24), T(-.04, .02, .40, 'ember', .18), T(.34, -.30, .26, 'dark', .14), T(-.38, .22, .24, 'light', .12)], contact: .38 },
-    { name: 'H1 滚穹', geom: { kind: 'blob', cx: 128, cy: 150, R: 74, squash: .58, harm: [[2, .10], [3, .05], [5, .02]], taper: .20, seed: 0x3002 },
+    { name: 'H1 ROLLING DOME', geom: { kind: 'blob', cx: 128, cy: 150, R: 74, squash: .58, harm: [[2, .10], [3, .05], [5, .02]], taper: .20, seed: 0x3002 },
       tone: [T(-.18, -.32, .58, 'light', .26), T(.12, .20, .60, 'dark', .24), T(-.34, .06, .34, 'light', .14), T(.40, -.14, .28, 'dark', .14)], contact: .44 },
-    { name: 'H2 冲柱', geom: { kind: 'blob', cx: 128, cy: 146, R: 66, squash: 1.38, harm: [[2, .09], [3, .05], [5, .022]], topBias: .25, seed: 0x3003 },
+    { name: 'H2 CHARGE COLUMN', geom: { kind: 'blob', cx: 128, cy: 146, R: 66, squash: 1.38, harm: [[2, .09], [3, .05], [5, .022]], topBias: .25, seed: 0x3003 },
       tone: [T(-.24, -.38, .52, 'light', .26), T(.22, .08, .56, 'dark', .22), T(-.02, .14, .40, 'ember', .16), T(.28, -.26, .24, 'dark', .12)], contact: .30 }
   ] },
   ground: { key: 'ground', cell: [256, 256], alpha: .54, feather: 7, draw: 116, variants: [
@@ -992,21 +955,19 @@ function _sfxTex(kind, i){ if(!_sfxReady){ try{ SmokeFX.build(); _sfxReady = tru
 function _sfxJit(){ try{ return SmokeFX.randSize(); }catch(e){ return 1; } }   /* ★ 每一团烟都必须乘一次 */
 
 function paintCSM_E(g, v){
-  /* FX8-SMOKE: 预烘焙贴图；已删除 v=1 的 5 条内部直线与全部 DP_rimSeg 内弧 */
+  /* FX8-SMOKE: use the pre-baked engine-smoke frame. */
   var t = _sfxTex('engine', v); if(!t) return;
   g.drawImage(t, 0, 0, 256, 256);
 }
 
 function paintCSM_D(g, v){
-  /* FX8-SMOKE 行进烟三格：0 = 新版 D0 圆尘 / 1 = 旧版 D0 圆尘（按要求加回来的原样画法）
-     / 2 = 新版 D2 扬柱。三格都由 SmokeFX 提供（1 号格走旧版画法烘焙），
-     单元格 256×256 与 UV 帧 _csmFrames 均不变。 */
+  /* FX8-SMOKE dust frames: 1 retains the specified round-dust variant; UV frames stay fixed. */
   var t = _sfxTex('dust', v); if(!t) return;
   g.drawImage(t, 0, 0, 256, 256);
 }
 
 function paintCHS(g, v){
-  /* FX8-SMOKE: 预烘焙贴图；已删除三处 DP_dots 深色点与 DP_rimSeg 内弧 */
+  /* FX8-SMOKE: use the pre-baked hit-smoke frame. */
   var t = _sfxTex('hit', v); if(!t) return;
   g.drawImage(t, 0, 0, 256, 256);
 }
@@ -1076,7 +1037,7 @@ function paintCB(g, v){
 
 function paintBurnCell(g, x0, y0, v){
   /* FX8-SMOKE: 预烘焙羽流贴图（上大下小、圆柱外形、内部零描边）；
-     已删除脊线墨脉/扭褶等 stroke() 与逐圈 _fxA2 堆壳。
+     Smoke frames use the baked atlas; runtime only selects and draws the frame.
      贴图可见底边在 0.929 处，整体放大 1.1 倍并下移，让柱底贴到单元格底边（平面原点=底边）。 */
   var t = _sfxTex('burn', v); if(!t) return;
   g.save(); g.beginPath(); g.rect(x0, y0, 256, 512); g.clip();
@@ -1167,7 +1128,7 @@ function _cmzBuildTex(){
     /* FX1/FX2:左半爆烟A2 2x2/右半上飘烟A2 2x2 */
     function burst(x,y,sd,sh){_fxA2(g,x,y,100,sd,150,160,170,sh);_fxA2(g,x+20,y+24,56,sd+9,110,120,132,0);}
     burst(128,128,0xC2B0,0);burst(384,128,0xC2B1,2);burst(128,384,0xC2B2,1);burst(384,384,0xC2B3,3);
-    /* FX4:上飘烟删除,右半留空(小爆烟复用左半0-3格随机) */
+    /* Reserve the right half; small blast smoke uses left frames 0–3. */
   },false);
   _cmzIllumTex=_cmzTex(128,128,function(g){var r=g.createRadialGradient(64,64,0,64,64,63);r.addColorStop(0,'rgba(255,255,235,.88)');r.addColorStop(.24,'rgba(255,226,130,.50)');r.addColorStop(.62,'rgba(255,151,42,.17)');r.addColorStop(1,'rgba(255,108,20,0)');g.fillStyle=r;g.fillRect(0,0,128,128);},true);
 }
@@ -1532,9 +1493,6 @@ function wreckSmokeRegister(t){
   var now=(typeof _csmClock!=='undefined')?_csmClock:0;
   _wreckSmokeList.push({t:t,born:now,seed:Math.random(),ph:Math.random(),sj:_sfxJit()});
 }
-function wreckSmokeUnregister(t){        // ★P2-⑨:残骸生命周期回收时同步熄灭烟柱(与注册同表逆向)
-  for(var i=_wreckSmokeList.length-1;i>=0;i--)if(_wreckSmokeList[i].t===t)_wreckSmokeList.splice(i,1);
-}
 function wreckSmokeClear(){_wreckSmokeList.length=0;}
 function _wreckSmokeWrite(){
   if(WRSMOKE_AMT<=0||!_wreckSmokeList.length)return;
@@ -1725,7 +1683,7 @@ function trackDigLevel(t) {   // 刨土强度 0~1(纯函数:只读 _throttle/spe
   if (t._slip) { var s = 0.45 + 0.55 * thr; if (s > dig) dig = s; }   // SLIP 兜底
   var sv = Math.abs(t._slideV || 0);
   if (sv > 0.5) { var sk = sv / 3; if (sk > 1) sk = 1; if (sk > dig) dig = sk; }   // 侧滑抛土
-  if (t._beltK !== undefined && t._beltK !== null) {   // 失配刨土:带速 vs 实际侧速 κ(无带速输入走旧分支,T5 逐位兼容)
+  if (t._beltK !== undefined && t._beltK !== null) {   // belt-speed mismatch versus actual side speed κ; without belt input use the baseline branch
     var _kk = Math.abs(t._beltK);
     var _k0 = (typeof TRK_DIG_K0 === 'undefined') ? 0.25 : TRK_DIG_K0;
     var _k1 = (typeof TRK_DIG_K1 === 'undefined') ? 0.75 : TRK_DIG_K1;
@@ -1748,7 +1706,7 @@ function _ctdEnsure(){if(_ctdMesh||typeof scene==='undefined'||!scene)return;_ct
 function _ctdRim(t,sgn,thrS,out){   // 接地片周界采样→out=[lx,lz,nx,nz](局部坐标+外法向);无表回落旧车尾点
   var rim=null,sk=(typeof suspKeyOf==='function')?suspKeyOf(t.team,t.kind):null;
   if(t.kind==='arty'){
-    var ax=(typeof ARTY_RIM_AXLES_OF!=='undefined')?(ARTY_RIM_AXLES_OF[t.team]||ARTY_RIM_AXLES_OF.ally):[2.6,-0.3,-1.4],r0=Math.random(),ai;
+    var ax=(typeof ARTY_RIM_AXLES_OF!=='undefined')?(ARTY_RIM_AXLES_OF[t.team]||ARTY_RIM_AXLES_OF.red):[2.6,-0.3,-1.4],r0=Math.random(),ai;
     var wx2=(typeof ARTY_RIM_X_OF!=='undefined')?(ARTY_RIM_X_OF[t.team]||1.10):1.10;
     if(thrS>=0)ai=r0<0.5?2:(r0<0.8?1:0);else ai=r0<0.5?0:(r0<0.8?1:2);   // 前进后轴多刨,倒车镜像
     rim={x:wx2,z0:ax[ai]-0.5,z1:ax[ai]+0.5,hw:0.28};
@@ -2392,7 +2350,7 @@ function comicArtyBurst(bp, rSplash) {
   e.life = e.deg ? 1.2 : 2.8;
   if (e.deg) _cbDegN++;
   var splashRadius = (rSplash != null && rSplash > 0) ? rSplash : 22.0;
-  e.yieldK = Math.min(splashRadius / 22.0, gfxFx('fxYieldMax', 2.0));   // 贴图大小与爆炸半径自动线性关联 (22m=1.0x, 11m=0.5x);★E1-2:当量放大上限按档钳(M142 44m 本来吃满 2.0)
+  e.yieldK = Math.min(splashRadius / 22.0, gfxFx('fxYieldMax', 2.0));   // 贴图大小与爆炸半径自动线性关联 (22m=1.0x, 11m=0.5x);★E1-2:当量放大上限按档钳(BLUE_MLRS 44m 本来吃满 2.0)
   e.burstY = bp.y; e.group.position.copy(bp);
   _cbRefreshRocketGround(e);                              // 火光/高亮先钉当前地表;爆心高度另存给炮镜判定
   e.fire.visible = e.smoke.visible = true; e.light.visible = !e.deg && _cbGroundLight; _cbRefreshActiveScale(e); _cbAnim(e, 0);   // ★任务27⑥:降级卡省掉 36m 加法高亮面;★E1-5:触屏档整档关闭该面
@@ -2581,10 +2539,10 @@ function _cbTick(dt, nowS) {
    被指挥者(_detached)不显示战术标,改走 _cmdStarTick 星系。
    数据=ai.js cmdDecide 决策期一次写入的 g._intent 纯视觉字段(AI 行为零读取)。
    Mesh:PlaneGeometry(1,1)+iUV 实例属性一次 draw;alpha<0.5 丢弃,无深度测试。
-   瞄准描边(_iffAim*)随本开关:显示期 _tacTick 末驱动 _iffAimSync();关则 _iffAimHide()。 */
+   敌我箭头与战术标识保持独立绘制；本模块不为准星瞄准目标创建三维描边。 */
 var TAC_CAP=400;                                    // 实例容量(每车≤1,全场 AI 上限)
 var TAC_S=0.8;                                      // 战术标尺寸系数(×2.1 通用基)
-var _tacOn=false,_tacMesh=null,_tacGeo=null,_tacUvA=null,_tacTex=null;
+var _tacOn=true,_tacMesh=null,_tacGeo=null,_tacUvA=null,_tacTex=null;
 var _tacM4=new THREE.Matrix4(),_tacQ=new THREE.Quaternion(),_tacP=new THREE.Vector3(),_tacS=new THREE.Vector3(),_tacY=new THREE.Vector3(0,1,0);
 function _tacBaseH(t){                               // 悬浮基准高(刚出机体不压车,按机型)
   if(t.kind==='ah64'||t.kind==='wz10')return 5.55;
@@ -2644,14 +2602,14 @@ function tacShow(){                                  // 显示:ensure+烘焙一�
   if(!_tacTex)_tacBakeAtlas();
   _tacMesh.visible=true;
 }
-function tacHideMesh(){                              // 隐藏:mesh 关+描边收走
+function tacHideMesh(){                              // 隐藏:mesh 关+敌我箭头收走
   if(_tacMesh){_tacMesh.visible=false;_tacMesh.count=0;}
-  if(typeof _iffAimHide==='function')_iffAimHide();
+  if(typeof _iffArrowHide==='function')_iffArrowHide();
 }
-function tacToggle(){                                // T 键:战术标识独立开关(只开标识+描边,不进指挥模式)
+function tacToggle(){                                // T 键:战术标识独立开关(只开标识,不进指挥模式)
   _tacOn=!_tacOn;
   if(_tacOn)tacShow();else tacHideMesh();
-  if(typeof aimHint==='function')aimHint(_tacOn?'战术标识：开':'战术标识：关');
+  if(typeof aimHint==='function')aimHint(_tacOn?'TAC MARKERS: ON':'TAC MARKERS: OFF');
 }
 function tacSyncToCmd(){                             // 与指挥模式同步:进模式则显示
   tacShow();
@@ -2660,13 +2618,18 @@ function tacForceOff(){                              // 退出指挥模式:仅 T
   if(_tacOn)return;
   tacHideMesh();
 }
-function tacBattleReset(){                           // 开局/换场:关独立开关+隐藏+描边收走(图集静态不清)
-  _tacOn=false;
-  tacHideMesh();
+function tacBattleReset(){                           // 开局/换场:默认开启独立开关+显示(图集静态不清)
+  _tacOn=true;
+  tacShow();
 }
 function _tacTick(){                                 // 每帧(_comicFxTick 登记):门=_tacOn||指挥模式
   var show=_tacOn||(typeof sqCmd!=='undefined'&&sqCmd.active);
-  if(!show||!_tacMesh||typeof aliveList==='undefined'||!camera){
+  if(!show){
+    if(_tacMesh&&_tacMesh.count)_tacMesh.count=0;
+    return;
+  }
+  if(!_tacMesh)tacShow();                         // 场景晚于战斗 reset 建立时,首帧补建默认开启的标识池
+  if(!_tacMesh||typeof aliveList==='undefined'||!camera){
     if(_tacMesh&&_tacMesh.count)_tacMesh.count=0;
     return;
   }
@@ -2684,126 +2647,106 @@ function _tacTick(){                                 // 每帧(_comicFxTick 登�
     _tacQ.setFromAxisAngle(_tacY,Math.atan2(dx,dz)); // 绕竖轴面向玩家
     _tacP.set(p.x,p.y+_tacBaseH(t),p.z);_tacS.set(sc,sc,1);
     _tacM4.compose(_tacP,_tacQ,_tacS);_tacMesh.setMatrixAt(out,_tacM4);
-    _tacUvA[out*2]=(g2._intent|0)+(t.team==='ally'?0:4);_tacUvA[out*2+1]=0;out++;
+    _tacUvA[out*2]=(g2._intent|0)+(t.team==='red'?0:4);_tacUvA[out*2+1]=0;out++;
   }
   _tacMesh.count=out;
   _tacMesh.instanceMatrix.needsUpdate=true;
   _tacGeo.attributes.iUV.needsUpdate=true;
-  if(typeof _iffAimSync==='function')_iffAimSync();   // 瞄准描边随本开关驱动
 }
-/* 瞄准外轮廓(随 T 开关):不透明反面膨胀壳,只描剪影;hull 用静止装甲,不含履带变形件。 */
-var _iffAimD = new THREE.Vector3(), _iffAimMeshes = null, _iffAimMat = null, _iffAimGeo = {};
-function _iffAimHide() {
-  if (!_iffAimMeshes) return;
-  for (var i = 0; i < _iffAimMeshes.length; i++) {
-    _iffAimMeshes[i].visible = false;
-    if (_iffAimMeshes[i].parent) _iffAimMeshes[i].parent.remove(_iffAimMeshes[i]);
-  }
+/* ===== 敌我箭头:所有可见、未被遮蔽的非玩家载具 =====
+   与战术标识共用 _tacOn||指挥模式显示门,但不读取 AI 决策字段。
+   绿=友军、红=敌军;静态障碍/地形遮挡时不写入箭头池。指挥星的载具由
+   _iffArrowStarHidden 排除,退出指挥/A射B导后自动恢复。 */
+var IFF_ARROW_CAP=1024,_iffArrowTex=null,_iffArrowGeo=null,_iffArrowGreen=null,_iffArrowRed=null;
+var _iffArrowM4=new THREE.Matrix4(),_iffArrowQ=new THREE.Quaternion(),_iffArrowH=new THREE.Vector3(),_iffArrowS=new THREE.Vector3(),_iffArrowV=new THREE.Vector3(),_iffArrowY=new THREE.Vector3(0,1,0);
+function _iffArrowTexture(){
+  if(_iffArrowTex)return _iffArrowTex;
+  var C=96,cv=document.createElement('canvas');cv.width=C;cv.height=C;
+  var g=cv.getContext('2d');
+  /* Inverted equilateral triangle: the downward point is the vehicle marker tip. */
+  g.beginPath();g.moveTo(C*.14,C*.22);g.lineTo(C*.86,C*.22);g.lineTo(C*.50,C*.22+C*.72*.8660254);g.closePath();
+  g.lineJoin='round';g.lineWidth=C*.075;g.strokeStyle='#141414';g.stroke();g.fillStyle='#ffffff';g.fill();
+  _iffArrowTex=new THREE.CanvasTexture(cv);_iffArrowTex.minFilter=THREE.LinearFilter;_iffArrowTex.magFilter=THREE.LinearFilter;
+  return _iffArrowTex;
 }
-function _iffAimPick() {
-  if (!camera || !player || !player.alive) return null;
-  camera.getWorldDirection(_iffAimD);
-  var from = camera.position, dir = _iffAimD, maxD = 2500;
-  laserRay.set(from, dir); laserRay.far = maxD;
-  collectCands(from.x, from.z, from.x + dir.x * maxD, from.z + dir.z * maxD, _lrCands);
-  var hits = laserRay.intersectObjects(_lrCands, false);
-  var objD = Infinity, tank = null, i, ud, tk, d, px, py, pz;
-  for (i = 0; i < hits.length; i++) {
-    ud = hits[i].object.userData; tk = ud && ud.tank;
-    if (!tk || tk === player || !tk.alive) continue;
-    objD = hits[i].distance; tank = tk; break;
-  }
-  if (!tank) return null;
-  for (d = 6; d < maxD && d < objD; d += (d < 2000 ? 6 : 18)) {
-    px = from.x + dir.x * d; py = from.y + dir.y * d; pz = from.z + dir.z * d;
-    if (py < terrainH(px, pz) + 0.1) return null;
-  }
-  return tank;
+function _iffArrowEnsure(){
+  if(_iffArrowGreen||typeof scene==='undefined'||!scene)return;
+  _iffArrowGeo=new THREE.PlaneGeometry(1,1);
+  var mk=function(color){
+    return new THREE.MeshBasicMaterial({map:_iffArrowTexture(),color:color,transparent:true,alphaTest:.08,depthTest:true,depthWrite:false,side:THREE.DoubleSide,toneMapped:false});
+  };
+  _iffArrowGreen=new THREE.InstancedMesh(_iffArrowGeo,mk(0x3cb44b),IFF_ARROW_CAP);
+  _iffArrowRed=new THREE.InstancedMesh(_iffArrowGeo,mk(0xff2d20),IFF_ARROW_CAP);
+  _iffArrowGreen.count=0;_iffArrowRed.count=0;
+  _iffArrowGreen.visible=false;_iffArrowRed.visible=false;
+  _iffArrowGreen.frustumCulled=false;_iffArrowRed.frustumCulled=false;
+  _iffArrowGreen.renderOrder=31;_iffArrowRed.renderOrder=31;
+  _iffArrowGreen.instanceMatrix.setUsage(THREE.DynamicDrawUsage);_iffArrowRed.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  scene.add(_iffArrowGreen);scene.add(_iffArrowRed);
 }
-function _iffAimBag(t) {
-  var key = t.team + '|' + t.kind, bag = _iffAimGeo[key], tpl, i, pk, src, g;
-  if (bag) return bag;
-  tpl = INST_TPL[key];
-  if (!tpl) return null;
-  bag = {};
-  var parts = VEH_INK_PARTS;
-  for (i = 0; i < parts.length; i++) {
-    pk = parts[i]; src = tpl[pk];
-    if (!src || !src.isBufferGeometry) continue;
-    if (pk === 'hull' && src.attributes.aVTag) {
-      g = vehInkArmorOnlyGeo(src);
-      if (!g) continue;
-      if (!g.attributes.normal) g.computeVertexNormals();
-      bag[pk] = g;
-    } else bag[pk] = src;
-  }
-  _iffAimGeo[key] = bag;
-  return bag;
+function _iffArrowHide(){
+  if(_iffArrowGreen){_iffArrowGreen.count=0;_iffArrowGreen.visible=false;}
+  if(_iffArrowRed){_iffArrowRed.count=0;_iffArrowRed.visible=false;}
 }
-function _iffAimMatMake() {
-  var vs = [
-    'uniform float uPx;',
-    '#include <common>',
-    '#include <logdepthbuf_pars_vertex>',
-    'void main(){',
-    '  vec4 mv = modelViewMatrix * vec4(position, 1.0);',
-    '  vec3 nView = normalize(normalMatrix * normal);',
-    '  vec3 nClip = (projectionMatrix * vec4(nView, 0.0)).xyz;',
-    '  gl_Position = projectionMatrix * mv;',
-    '  vec2 nxy = nClip.xy;',
-    '  float nl = length(nxy); if (nl < 1e-4) nxy = vec2(0.0, 1.0); else nxy /= nl;',
-    '  gl_Position.xy += nxy * uPx * gl_Position.w;',
-    '#include <logdepthbuf_vertex>',
-    '}'
-  ].join('\n');
-  var fs = [
-    'uniform vec3 uColor;',
-    '#include <logdepthbuf_pars_fragment>',
-    'void main(){',
-    '#include <logdepthbuf_fragment>',
-    '  gl_FragColor = vec4(uColor, 1.0);',
-    '}'
-  ].join('\n');
-  return new THREE.ShaderMaterial({
-    uniforms: { uColor: { value: new THREE.Color(0x2ee85a) }, uPx: { value: 0.005 } },
-    vertexShader: vs, fragmentShader: fs,
-    side: THREE.BackSide, depthTest: true, depthWrite: false,
-    fog: false, transparent: false, toneMapped: false
-  });
+function _iffArrowStarList(){
+  if(typeof heliABG!=='undefined'&&heliABG.on&&typeof heliABGValidate==='function'&&heliABGValidate())return heliABG.wings;
+  if(typeof sqCmd!=='undefined'&&sqCmd.active&&sqCmd.group)return sqCmd.group.members;
+  return null;
 }
-function _iffAimSync() {
-  if (!_tacOn && !(typeof sqCmd !== 'undefined' && sqCmd.active)) { _iffAimHide(); return; }   // 门=战术标识显示门(_tacOn||指挥模式)
-  var t = _iffAimPick();
-  if (!t) { _iffAimHide(); return; }
-  if (!_iffAimMat) { _iffAimMat = _iffAimMatMake(); _iffAimMeshes = []; }
-  var mine = (player && player.team) ? player.team : 'ally';
-  _iffAimMat.uniforms.uColor.value.setHex(t.team === mine ? 0x2ee85a : 0xff2a22);
-  if (typeof renderer !== 'undefined' && renderer) {
-    var h = renderer.domElement ? renderer.domElement.height : 1080;
-    _iffAimMat.uniforms.uPx.value = (3.2 * 2.0) / Math.max(240, h);
+function _iffArrowStarHidden(t,list){
+  if(!list)return false;
+  for(var i=0;i<list.length;i++)if(list[i]===t)return true;
+  return false;
+}
+function _iffArrowLineClear(t){
+  var cp=camera.position,h=_iffArrowH;
+  var dx=h.x-cp.x,dy=h.y-cp.y,dz=h.z-cp.z,dist=Math.sqrt(dx*dx+dy*dy+dz*dz);
+  if(!(dist>.1))return true;
+  var now=(typeof gameT==='number'&&isFinite(gameT))?gameT:0;
+  if(t._iffArrowOccT!=null&&now>=t._iffArrowOccT&&now-t._iffArrowOccT<.12)return !t._iffArrowOcc;
+  var occ=false,hits,hitD;
+  if(typeof worldRaycast==='function'){
+    hits=worldRaycast(cp.x,cp.y,cp.z,h.x,h.y,h.z,true);
+    if(hits&&hits.length){
+      hitD=hits[0].distance;
+      if(hitD==null&&hits[0].point&&hits[0].point.distanceTo)hitD=hits[0].point.distanceTo(cp);
+      if(hitD!=null&&hitD<dist-.7)occ=true;
+    }
   }
-  var bag = _iffAimBag(t);
-  if (!bag) { _iffAimHide(); return; }
-  var parts = VEH_INK_PARTS;
-  while (_iffAimMeshes.length < parts.length) {
-    var m0 = new THREE.Mesh(new THREE.BufferGeometry(), _iffAimMat);
-    m0.frustumCulled = false; m0.renderOrder = 4; m0.castShadow = false; m0.receiveShadow = false;
-    _iffAimMeshes.push(m0);
+  if(!occ&&typeof isRadarLineOccludedByTerrain==='function')occ=isRadarLineOccludedByTerrain(cp.x,cp.y,cp.z,h.x,h.y,h.z,dist);
+  t._iffArrowOccT=now;t._iffArrowOcc=occ;
+  return !occ;
+}
+function _iffArrowTick(){
+  var show=_tacOn||(typeof sqCmd!=='undefined'&&sqCmd.active);
+  if(!show){_iffArrowHide();return;}
+  _iffArrowEnsure();
+  if(!_iffArrowGreen||!_iffArrowRed||typeof aliveList==='undefined'||!camera){_iffArrowHide();return;}
+  _iffArrowGreen.visible=true;_iffArrowRed.visible=true;
+  var sn=typeof scoped!=='undefined'&&scoped,gn=0,rn=0,i,t,p,dx,dz,sc,friendly,starList=_iffArrowStarList();
+  for(i=0;i<aliveList.length;i++){
+    t=aliveList[i];
+    if(!t||t===player||!t.alive||!t.group)continue;
+    if(_iffArrowStarHidden(t,starList))continue;
+    p=t.group.position;
+    _iffArrowH.set(p.x,p.y+_tacBaseH(t),p.z);
+    _iffArrowV.copy(_iffArrowH).project(camera);
+    if(_iffArrowV.z<-1||_iffArrowV.z>1||Math.abs(_iffArrowV.x)>1.02||Math.abs(_iffArrowV.y)>1.02)continue;
+    if(!_iffArrowLineClear(t))continue;
+    dx=camera.position.x-p.x;dz=camera.position.z-p.z;
+    sc=1.45*scopeDistK(sn,dx*dx+dz*dz,55,1,4.2);
+    _iffArrowQ.setFromAxisAngle(_iffArrowY,Math.atan2(dx,dz));_iffArrowS.set(sc,sc,1);
+    _iffArrowM4.compose(_iffArrowH,_iffArrowQ,_iffArrowS);
+    friendly=!isFfaMode()&&player&&t.team===player.team;
+    if(friendly){if(gn>=IFF_ARROW_CAP)continue;_iffArrowGreen.setMatrixAt(gn++,_iffArrowM4);}
+    else{if(rn>=IFF_ARROW_CAP)continue;_iffArrowRed.setMatrixAt(rn++,_iffArrowM4);}
   }
-  var i, m, pk, geo, par;
-  for (i = 0; i < _iffAimMeshes.length; i++) {
-    m = _iffAimMeshes[i]; pk = parts[i]; geo = bag[pk];
-    par = vehInkParentOf(t, pk);
-    if (!geo || !par) { m.visible = false; if (m.parent) m.parent.remove(m); continue; }
-    if (m.geometry !== geo) m.geometry = geo;
-    if (m.parent !== par) { if (m.parent) m.parent.remove(m); par.add(m); }
-    m.visible = true;
-    m.position.z = (pk === 'gun' && t.gunMesh) ? t.gunMesh.position.z : 0;
-  }
+  _iffArrowGreen.count=gn;_iffArrowRed.count=rn;
+  _iffArrowGreen.instanceMatrix.needsUpdate=true;_iffArrowRed.instanceMatrix.needsUpdate=true;
 }
 /* ===== 指挥星:被指挥/被借用载具头顶五角星 =====
    星源=A射B导僚机(heliABG.wings,直升机座舱 Backspace)+地面指挥组员(sqCmd.group.members,地面 Backspace);
-   两源分属不同座舱,天然互斥。贴图一次烘焙白芯+粗墨描边星;阵营色由材质 color 染(ally 黄/余白)。
+   两源分属不同座舱,天然互斥。贴图一次烘焙白芯+粗墨描边星;阵营色由材质 color 染(red 黄/余白)。
    逐帧:双源皆无=一次布尔早退(并跑一帧隐藏收尾)。 */
 var _cmdStarTex=null,_cmdStarGeo=null,_cmdStarMeshes=[];
 function _cmdStarTexture(){
@@ -2849,7 +2792,7 @@ function _cmdStarTick(){                               // 每帧(_comicFxTick �
     m.position.set(q.x,q.y+(heli?5.5:4.6),q.z);            // 僚机 5.5(现行不动)/地面组员 4.6
     m.rotation.set(0,Math.atan2(dx,dz),0);                 // 绕竖轴面向玩家
     m.scale.set(sc,sc,1);
-    m.material.color.setHex(t.team==='ally'?0xffd21f:0xffffff);
+    m.material.color.setHex(t.team==='red'?0xffd21f:0xffffff);
     m.visible=true;
   }
   for(;i<_cmdStarMeshes.length;i++)_cmdStarMeshes[i].visible=false;
@@ -3076,6 +3019,5 @@ window.comicBattleClear = comicBattleClear;
    comic.js 是 index.html MODULES 序里最后一个玩法模块,到这一行时:
      renderer/scene/camera(scene.js) √  fx 池(fx.js) √  漫画池与贴图清单(本文件,上方已全部定义) √
    所以这里是"全部依赖就位、且仍在首帧之前"的唯一正确位置。
-   旧接线把调用写在 main.js 里,而 main.js 先于本文件执行 ⇒ typeof comicPrewarm 恒为 false,
-   预热(池构建 + 着色器预链接 + E1-6 贴图上传)整块被静默跳过,首爆必卡。 */
+   The prewarm call belongs here because this is the first point where all comic dependencies are loaded. */
 if (typeof gamePrewarm === 'function') gamePrewarm();

@@ -8,12 +8,12 @@
 /* ============================================================
    装甲部队 —— 3D 第三人称坦克会战 · 模块化伤害判定
    模式: 50 兵力消耗战(默认值,可在遭遇战参数菜单调整;每方在场 54 辆:
-         红方=59式×18+99式×18+89式×10+直-10×4+火箭炮×4,
-         蓝方=M60A1×18+M1A1×28+AH-64d×4+火箭炮×4;
+         红方=RED-MBT-1×18+RED-MBT-2×18+RED-TD×10+RED-HELI×4+RED-MLRS×4,
+         蓝方=BLUE-MBT-1×18+BLUE-MBT-2×28+BLUE-HELI×4+BLUE-MLRS×4;
          载具被摧毁后按平台延时从大本营重新部署,每次 -1 兵力;
          判负条件 = 兵力耗尽 且 场上无存活载具)
    玩家: 与 AI 完全同配置(无主角光环);阵亡后自选翼位(左/中/右)+ 任意平台重新部署,
-         占用同阵营 1 点兵力;蓝方特殊槽为M1A1旋塔主战坦克,红方特殊槽为89式旋转重炮塔战车
+         占用同阵营 1 点兵力;蓝方特殊槽为BLUE-MBT-2旋塔主战坦克,红方特殊槽为RED-TD旋转重炮战车
    机制:
    · 每辆坦克由 8 个独立模块构成(履带x2/发动机/炮塔/炮管/弹药架/油箱/车体)
    · 命中判定:射线逐模块求交,只计入射面(FrontSide)
@@ -300,8 +300,8 @@ function applyMapConfig(seed, rough, sideOrLen, mat, wid) {
   CONF.boundsX = MAP.halfW - 20;
   CONF.boundsZ = MAP.halfL - 20;
   CONF.bounds = Math.min(CONF.boundsX, CONF.boundsZ);                        // 活动界=地图边界内缩 20m
-  CONF.allySpawnZ = MAP.halfL - 200;                   // 出生线=坡起点(half-150)再内 50m
-  CONF.enemySpawnZ = -CONF.allySpawnZ;
+  CONF.redSpawnZ = MAP.halfL - 200;                   // 出生线=坡起点(half-150)再内 50m
+  CONF.blueSpawnZ = -CONF.redSpawnZ;
   MAP.wonderSalt = '';
   MAP.hqFlat = (typeof hqLayoutCompute === 'function' && typeof hqParamsFromGlobals === 'function')
     ? hqLayoutCompute(hqParamsFromGlobals()) : null;   // HQ 布局前移:地形夷平与 spawnTeams 同源(方案 §5.1)
@@ -459,7 +459,7 @@ function craterStamp(dx, dz, R, D, rimH) {
 /* ============================================================
    焦土模型(顶点层 / 像素层 / 植被判定 三层共用同一配方)
    ★统一归一化坐标 u = r / RINF ∈ [0,1](0=爆心,1=焦土外缘):
-       q  = 1 - u         —— scorchGrid 存储量(语义与旧版一致:1=爆心,0=外缘)
+       q  = 1 - u         —— scorchGrid 存储量(storage semantics: 1 = center, 0 = edge)
        f  = scorchF(u)    —— 焦土权重(0=原色,1=全焦),顶点混色与片元混色同式
        tg = scorchTg(u)   —— 色阶(0=炭黑心,1=烬褐边)
    ★换配方的原因(修「粗糙多边形边界」+「过渡带过窄」两条):
@@ -491,7 +491,6 @@ function scorchColInto(u, out) {            // 归一化半径 u 处的焦土色
   out[2] = SC_CHAR[2] + (SC_ASH[2] - SC_CHAR[2]) * g;
   return out;
 }
-function scorchTarget(u) { return scorchColInto(u, [0, 0, 0]); }      // 兼容旧调用点(新签名=u)
 
 /* ============================================================
    焦土像素层:世界瓦片索引的解析 splat(与地形顶点网格彻底解耦)
@@ -566,14 +565,14 @@ function _scSlotPut(o, sv, tx, tz) {              // o = 瓦片槽位字节偏�
     var sc = _scSplatScore(arrs[a][o + i], cx, cz);
     if (sc > worst) { worst = sc; wArr = arrs[a]; wi = i; }   // 严格大于: 并列取靠前的槽
   }
-  if (!scTileWarned) { scTileWarned = true; if (typeof console !== 'undefined') console.warn('[scorch] 瓦片 12 槽已满, 改为驱逐最不相关爆点(不再静默丢弃)'); }
+  if (!scTileWarned) { scTileWarned = true; if (typeof console !== 'undefined') console.warn('[scorch] tile slots full, evicting least relevant splat'); }
   wArr[o + wi] = sv;
   return true;
 }
 function scorchSplatAdd(x, z, RINF) {            // 登记一个爆点到像素层
   if (!scSlotA || !scParamT) return;
   if (scCount >= SC_MAX) {
-    if (!scWarned) { scWarned = true; if (typeof console !== 'undefined') console.warn('[scorch] 像素层槽位已满(' + SC_MAX + '),后续焦土退回顶点层'); }
+    if (!scWarned) { scWarned = true; if (typeof console !== 'undefined') console.warn('[scorch] pixel layer full(' + SC_MAX + '), falling back to vertex layer'); }
     return;
   }
   var id = scCount++, sv = id + 1, i;
@@ -689,21 +688,21 @@ function hqBoundsAdd(x, z) {
 }
 
 function getHQZoneDeformFactor(wx, wz) {
-  if (typeof hqList === 'undefined' || !hqList) return 1.0;
+  if ((typeof isFfaMode === 'function' && isFfaMode()) || typeof hqList === 'undefined' || !hqList) return 1.0;
   if (wx < _hqBBminX || wx > _hqBBmaxX || wz < _hqBBminZ || wz > _hqBBmaxZ) return 1.0;   // 包围盒早退
   var minDistSq = Infinity;
-  var hqsAlly = hqList.ally, hqsEnemy = hqList.enemy;
-  if (hqsAlly) {
-    for (var i = 0; i < hqsAlly.length; i++) {
-      var hq = hqsAlly[i];
+var hqsRed = hqList.red, hqsBlue = hqList.blue;
+if (hqsRed) {
+for (var i = 0; i < hqsRed.length; i++) {
+var hq = hqsRed[i];
       var dx = wx - hq.x, dz = wz - hq.z;
       var dSq = dx * dx + dz * dz;
       if (dSq < minDistSq) minDistSq = dSq;
     }
   }
-  if (hqsEnemy) {
-    for (var j = 0; j < hqsEnemy.length; j++) {
-      var hq2 = hqsEnemy[j];
+if (hqsBlue) {
+for (var j = 0; j < hqsBlue.length; j++) {
+var hq2 = hqsBlue[j];
       var dx2 = wx - hq2.x, dz2 = wz - hq2.z;
       var dSq2 = dx2 * dx2 + dz2 * dz2;
       if (dSq2 < minDistSq) minDistSq = dSq2;
@@ -847,7 +846,7 @@ function terrainChangedReanchor(points, rinf) {
     }
   }
 }
-/* ★任务27④:落弹批处理分帧预算——旧行为=0.3s 窗口把队列一次全冲:PHL-11 40 发齐射与多炮齐射/
+/* ★任务27④:落弹批处理分帧预算——旧行为=0.3s 窗口把队列一次全冲:RED-MLRS 40 发齐射与多炮齐射/
    直升机火箭点射重叠时,单批实测 247~281ms 纯 JS(每坑 26²~50² 顶点×7 点超采样冲压+法线重算+
    最多 64 块脏块全量属性上传 5.4MB)=「火箭弹爆炸必卡一下像暂停」的根因。
    现:每批处理弹坑至 6ms 预算(至少 2 坑),余坑留队 0.3s 后续批消化;脏块上传每批 ≤2 块,
@@ -875,7 +874,7 @@ function flushCraters() {
   nrmMarkId++;                                               // cw T1:脏标记版本号推进(跨批复用标记数组零分配)
   var _cfT0 = _crNowMs(), _cfN = 0;
   /* ★任务27⑤ 坑内行级游标:每坑 = 一个 _cfPart 状态对象(开坑即建、完工置 null)。冲压内环每
-     256 顶点查一次钟,预算耗尽保存 (iz,ix) 断点、下一批(0.3s 后)续冲 —— 连单个 M142 大坑
+     256 顶点查一次钟,预算耗尽保存 (iz,ix) 断点、下一批(0.3s 后)续冲 —— 连单个 BLUE-MLRS 大坑
      (44m 口径 ≈ 2500 顶点 ×7 点超采样 ≈ vm 23ms)也被切成有界片段,任何一次 flushCraters 调用都不再含不可分割的大坑。
      顺序不变性:冲压顺序 = 队列 FIFO × 行×列扫描,与分批方式无关 → 拆分后全部排干的
      dentGrid/scorchGrid/scorchVtxQ/顶点位置/顶点色/法线与不拆分【逐位一致】(dbg_rocket 场景 F 实证)。
@@ -961,7 +960,7 @@ function flushCraters() {
   }
   dentEpoch++;                          // 高度场已变:静止车贴地目标缓存整体失效(alignTank 触发器判据)
   // —— 增量解析法线——网格严格贴合高度场(dentGrid 唯一真源),触碰顶点直接中心差分解析重算,
-  //    整删 computeVertexNormals(旧:每 4 批全表 46 万三角形 JS 遍历 15~40ms 尖峰+2.78MB 法线全传 → <0.1ms) ——
+  // Geometry normals are computed only where the renderer needs them.
   for (var ni = 0; ni < nrmTouched.length; ni++) {
     var nI = nrmTouched[ni];
     terrainNormal(-MAP.halfW + (nI % GRID_N) * GRID_CELL_X, -MAP.halfL + ((nI / GRID_N) | 0) * GRID_CELL_Z, _crN);
@@ -988,7 +987,7 @@ function flushCraters() {
     if (gc.geo.computeBoundingSphere) gc.geo.computeBoundingSphere();   /* G2: refresh stale bounds after dents (prevents chunk pop) */
   }
   // 大本营 26m 内落坑:待命环重披布、旗杆重嵌入—— 通用约定:HQ 与土地永久零穿模
-  var hqa = hqList.ally.concat(hqList.enemy);
+  var hqa = hqList.red.concat(hqList.blue);
   for (var hi = 0; hi < hqa.length; hi++) {
     var hq2 = hqa[hi];
     if (!hq2.redrape) continue;
@@ -1008,17 +1007,17 @@ function terrainNormal(x, z, out) {
 
 /* ===== 配置 ===== */
 var CONF = {
-  // 玩家与 AI 用的就是 ally 这套数值 —— 全民平等,凭技术吃饭
-  ally:   { struct: 300, pen: 446, penKd: 9.5e-5, dmg: 90, reload: 8.5, speed: 13.9, turn: 0.45, turretRate: 0.175,
+  // 玩家与 AI 用的就是 red 这套数值 —— 全民平等,凭技术吃饭
+  red:   { struct: 300, pen: 446, penKd: 9.5e-5, dmg: 90, reload: 8.5, speed: 13.9, turn: 0.45, turretRate: 0.175,
             accel: 2.5, decel: 5, color: 0x4e6b38, shellSpeed: 1480,   // 50km/h=13.9m/s;炮塔 10°/s=0.175rad/s;结构统一 300
-            mob: { mass: 36000, power: 387764, eta: 0.80, mu: 0.68, muLat: 0.42, crr: 0.095, vCrawl: 1.0 },   // 59式:36t/520hp;tanθmax=μ−Crr=0.585≈58%
+            mob: { mass: 36000, power: 387764, eta: 0.80, mu: 0.68, muLat: 0.42, crr: 0.095, vCrawl: 1.0 },   // 红方主战坦克:36t/520hp;tanθmax=μ−Crr=0.585≈58%
             // 59 式(用户标尺):首上/首下物理 97~100 取 100(首上 23.8° 斜板/鼻板 25.3°,等效由命中壳几何按 LOS 折算)/侧 80/顶 20/后 40 底 25(后底区间 20~60);weak=座圈裙前缝 45 不变
             hullArmor:   { front: 100, side: 80, rear: 40, top: 20, bottom: 25, weak: 45 },
             turretArmor: { front: 200, side: 140, rear: 42, top: 30, weak: 45 } },            // 铸造穹顶最厚处 200~203 取 200/侧 130~150 取 140/顶 30;后 42 未指定照旧;weak=弱点面板 45mm
-  enemy:  { struct: 300, pen: 446, penKd: 9.5e-5, dmg: 90, reload: 8.5, speed: 13.3, turn: 0.45, turretRate: 0.419,
+  blue:  { struct: 300, pen: 446, penKd: 9.5e-5, dmg: 90, reload: 8.5, speed: 13.3, turn: 0.45, turretRate: 0.419,
             accel: 2.5, decel: 5, color: 0x8a7f4a, shellSpeed: 1480,   // 48km/h=13.3m/s;炮塔 24°/s=0.419rad/s
-            mob: { mass: 48000, power: 559275, eta: 0.80, mu: 0.68, muLat: 0.34, crr: 0.10, vCrawl: 1.0 },   // M60A1:48t/750hp;横坡短板 sideMax≈30%
-            hullArmor:   { front: 210, side: 55, rear: 40, top: 20, bottom: 25, weak: 45 },   // M60A1(物理厚度入账):首上物理210(游戏斜板~35°入射→等效≈256≈标尺258)/首下~45°→297区间/侧55/顶20/后底40/25
+            mob: { mass: 48000, power: 559275, eta: 0.80, mu: 0.68, muLat: 0.34, crr: 0.10, vCrawl: 1.0 },   // BLUE_MBT_1:48t/750hp;横坡短板 sideMax≈30%
+            hullArmor:   { front: 210, side: 55, rear: 40, top: 20, bottom: 25, weak: 45 },   // BLUE-MBT-1(物理厚度入账):首上物理210(游戏斜板~35°入射→等效≈256≈标尺258)/首下~45°→297区间/侧55/顶20/后底40/25
             turretArmor: { front: 165, side: 76, rear: 50, top: 30, weak: 45 } },              // 物理厚度:炮塔正面165(卵鼻0°=165,颊35°≈201,50°≈257≈标尺最厚254)/侧76/后50/顶30;等效=物理/cos入射角,通用算法无M60专属分支
   shellSpeedE: 1650, gravity: 9.8,   // 双方(含玩家)同用真实低伸弹道:现代动能弹级 1650m/s(提高到真实现代坦克水平≥1000m/s;3BM-42≈1650/M829≈1670/三期≈1700)+真实重力 —— 下坠 @100m≈1.8cm @300m≈16.2cm @600m≈64.8cm(较 1050 时代再平直 2.5×)
   /* 穿深随距离衰减(公式;59 式标尺重标——59 式主炮 @1000m 穿深 140mm):
@@ -1028,95 +1027,95 @@ var CONF = {
        坦克(59 式档)→ k=9.5e-5;用户标尺重标:@2400m 击穿 150mm/65° 斜板
          → 游戏内 LOS 等效 150/cos65°=354.93 → P0=354.93/e^(−k·2400)=445.8≈446
          (曲线:P0=446 / @1000m 405.6 / @2000m 368.8 / @2400m 355.1——公式计算,非改衰减);
-       歼击车 k=8.6e-5;89式 AP 弹 @2000m 穿 500mm → P0=500/e^(−k·2000)=593.9≈594;
-         M60A1 与 59 式同标尺(@2400m 穿 150/65°=等效354.93)→ P0=446;
-         M1A1 @2000m 穿深 420~470 取中 445 → P0=445/e^(−k·2000)=513.9≈514(k=7.2e-5)。
+       歼击车 k=8.6e-5;RED-TD AP 弹初始穿深上调为当前值的1.4倍: 594×1.4=831.6≈832mm;
+         BLUE-MBT-1 与 RED-MBT-1 同标尺(@2400m 穿 150/65°=等效354.93)→ P0=446;
+         BLUE-MBT-2 @2000m 穿深 420~470 取中 445 → P0=445/e^(−k·2000)=513.9≈514(k=7.2e-5)。
      机制注:弹道飞行速度恒 1650(平直低伸铁律不动),衰减只作用于命中瞬间的穿深结算;
      距离=炮弹真实飞行里程(出膛累计),跳弹/穿透链继续按现行 ×0.35/×0.62 在衰减值上叠乘。 */
   fireDOT: 7,
   // 火箭炮载具:皮薄、机动一般、超远程曲射面杀伤;齐射时不能移动
-  // 红方火箭炮 = PHL-11 122mm 轮式自行火箭炮(40 联装):射程 40km/伤害 60/装填 40s/齐射 40 发
+  // 红方火箭炮 = RED-MLRS 122mm 轮式自行火箭炮(40 联装):射程 40km/伤害 60/装填 40s/齐射 40 发
   arty: { struct: 300, dmg: 60, reload: 40, salvo: 40, salvoGap: 0.22,   // reload=salvo×1s×伤害系数(dmg/60)=40s(rocketReloadTimeOf 大修口径);齐射 40 发
           rocketSpeed: 640, splashR: 22, minRange: 130, maxRange: 40000,   // 40km 超远曲射(高抛 50.4° 需≈632m/s);溅射半径 22m(splashRadiusFromDamage 锚点)
-          pen: 1200,   // 火箭弹直击穿深(mm,战斗部化学能定型值):全场最硬板面(t99首上极限等效≈1058)必穿,与99式主炮1090同量级取上界
+          pen: 1200,   // 火箭弹直击穿深(mm,战斗部化学能定型值):全场最硬板面(RED-MBT-2首上极限等效≈1058)必穿,与RED-MBT-2主炮1090同量级取上界
           speed: 7.5, turn: 0.35, turretRate: 1.0, accel: 1.4, decel: 3.8,   // 发射架伺服 1.0rad/s(与开镜瞄具转速一致)
           mob: { mass: 22000, power: 253538, eta: 0.80, mu: 0.50, muLat: 0.35, crr: 0.12, vCrawl: 1.0 } },   // 轮式卡车:22t/340hp(估);极限≈38%,越野弱一档
-  // 蓝方火箭炮 = M142 HIMARS 高机动火箭炮(6 联装 227mm):射程 40km/伤害 120/装填 12s/齐射 6 发
-  artyE: { struct: 300, dmg: 120, reload: 12, salvo: 6, salvoGap: 0.22,   // reload=6×1s×(120/60)=12s(伤害系数=2,单发更重装填更快)
+  // 蓝方火箭炮 = BLUE-MLRS 227mm 高机动火箭炮(6 联装):射程 40km/伤害 120/装填 12s/齐射 6 发
+  artyE: { p: 0.22,   // reload=6×1s×(120/60)=12s(伤害系数=2,单发更重装填更快)
           rocketSpeed: 640, splashR: 44, minRange: 130, maxRange: 40000,   // 溅射半径 44m=120×22/60(splashRadiusFromDamage 同源自洽)
-          pen: 1200,   // GMLRS 战斗部化学能定型值,与 PHL-11 同级
+          pen: 1200,   // 战斗部化学能定型值,与 RED-MLRS 同级
           speed: 7.5, turn: 0.35, turretRate: 1.0, accel: 1.4, decel: 3.8,   // 发射架伺服 1.0rad/s(与开镜瞄具转速一致)
-          mob: { mass: 22000, power: 253538, eta: 0.80, mu: 0.50, muLat: 0.35, crr: 0.12, vCrawl: 1.0 } },   // FMTV M1140 6×6:机动与 PHL-11 同级
+          mob: { mass: 22000, power: 253538, eta: 0.80, mu: 0.50, muLat: 0.35, crr: 0.12, vCrawl: 1.0 } },   // FMTV M1140 6×6:机动与 RED_MLRS 同级
   artyPerTeam: 4,
-  // 防空载具(AA):红方=PGZ-95 自行高炮(2×双联25mm机炮+4×飞弩-6)/蓝方=AN/TWQ-1 复仇者(8×FIM-92 毒刺)。
-  // 机炮性能=直升机机炮(直-10 航炮口径:伤40/穿35/k4.5e-5/装填0.25s/初速920);
-  // 导弹规格走 HELI_MSL_SPEC 路由(红=ty90/蓝=aim92),装填 40s=AIM-92 同口径;发射点=发射架导弹弹头建模中心。
-  aa: { struct: 300, pen: 35, penKd: 4.5e-5, dmg: 40, reload: 0.125, shellSpeed: 920,   // PGZ-95 双联25mm×2 = 直升机机炮同性能(任务25:射速×2,0.25s→0.125s/点射)
+  // 防空载具(AA):红方=RED-AA 自行防空车(2×双联25mm机炮+4×导弹)/蓝方=BLUE-AA(8×导弹)。
+  // 机炮性能=直升机机炮(RED-HELI 航炮口径:伤40/穿35/k4.5e-5/装填0.25s/初速920);
+  // 导弹规格走 HELI_MSL_SPEC 路由(红=ty90/蓝=aim92),装填 40s=防空导弹 同口径;发射点=发射架导弹弹头建模中心。
+  aa: { struct: 300, pen: 35, penKd: 4.5e-5, dmg: 40, reload: 0.125, shellSpeed: 920,   // RED-AA 双联25mm×2 = 直升机机炮同性能(任务25:射速×2,0.25s→0.125s/点射)
         speed: 12.0, turn: 0.55, turretRate: 1.047, accel: 2.0, decel: 4.5,             // 履带底盘 ~43km/h;炮塔伺服 60°/s(与直升机机炮塔同)
         mob: { mass: 22500, power: 320000, eta: 0.80, mu: 0.62, muLat: 0.40, crr: 0.10, vCrawl: 1.0 },   // 履带自行高炮 ~22.5t(估)
         hullArmor: { front: 20, side: 14, rear: 12, top: 10, bottom: 8, weak: 8 },
         turretArmor: { front: 18, side: 12, rear: 10, top: 8, weak: 8 } },
-  aaE: { struct: 300, pen: 35, penKd: 4.5e-5, dmg: 40, reload: 0.25, shellSpeed: 920,   // 复仇者无机炮(机炮字段仅占位,武器分支永不消费)
+  aaE: { struct: 300, pen: 35, penKd: 4.5e-5, dmg: 40, reload: 0.25, shellSpeed: 920,   // BLUE-AA无机炮(机炮字段仅占位,武器分支永不消费)
         speed: 17.0, turn: 0.75, turretRate: 1.047, accel: 2.4, decel: 5.0,              // M1097A2 悍马 4×4 ~61km/h(游戏平衡口径,实车 89km/h)
         mob: { mass: 3900, power: 134000, eta: 0.80, mu: 0.55, muLat: 0.38, crr: 0.11, vCrawl: 1.0 },    // 战斗全重 3.90t/底特律V8 6.2L 135hp(公开数据)
         hullArmor: { front: 12, side: 8, rear: 6, top: 6, bottom: 5, weak: 5 },
         turretArmor: { front: 10, side: 8, rear: 6, top: 6, weak: 6 } },
   aaPerTeam: 3,
-  // 红方89式(用户标尺):全车装甲 30mm(未计倾角等效);单弹种(AP)——
-  // AP:1700m/s,@2000m 穿 500mm → P0=594(k=8.6e-5);装填 6s。
+  // 红方RED-TD(用户标尺):全车装甲 30mm(未计倾角等效);单弹种(AP)——
+  // AP:1700m/s;初始穿深=当前 594mm ×1.4≈832mm(k=8.6e-5);装填 6s。
   //   最大交火距离 400→700m(760m 视距内望远接敌)。炮塔转速 0.314rad/s(18°/s),无水平角限位。
-  td: { struct: 300, pen: 594, penKd: 8.6e-5, dmg: 150, reload: 6.0, speed: 15.3, turn: 0.68, turretRate: 0.314,
+  td: { struct: 300, pen: 832, penKd: 8.6e-5, dmg: 150, reload: 6.0, speed: 15.3, turn: 0.68, turretRate: 0.314,
         accel: 1.8, decel: 4.2, shellSpeed: 1700,   // 55km/h=15.3m/s;炮塔 18°/s=0.314rad/s
-        mob: { mass: 31000, power: 387764, eta: 0.80, mu: 0.68, muLat: 0.42, crr: 0.09, vCrawl: 1.0 },   // 89式:31t/520hp(估);轻车 Crr 低
-        hullArmor:   { front: 30, side: 30, rear: 30, top: 30, bottom: 30, weak: 30 },        // 89式:全车 30mm(用户标尺,未计倾角等效)
+        mob: { mass: 31000, power: 387764, eta: 0.80, mu: 0.68, muLat: 0.42, crr: 0.09, vCrawl: 1.0 },   // 红方歼击车:31t/520hp(估);轻车 Crr 低
+        hullArmor:   { front: 30, side: 30, rear: 30, top: 30, bottom: 30, weak: 30 },        // RED-TD:全车 30mm(用户标尺,未计倾角等效)
         turretArmor: { front: 30, side: 30, rear: 30, top: 30, weak: 30 } },
-  // 蓝方 M1A1 Abrams:独立主战坦克机动/装填/360°炮塔/复合装甲配置。
+  // 蓝方 BLUE-MBT-2:独立主战坦克机动/装填/360°炮塔/复合装甲配置。
   // 数值按本游戏装甲尺度压缩,保留红方 89 式正面交战时可对抗性;并非把现实等效值原样塞入导致单边无敌。
   m1: { struct: 300, pen: 514, penKd: 7.2e-5, dmg: 130, reload: 7.0, speed: 19.4, turn: 0.52, turretRate: 0.698,
         accel: 2.4, decel: 5.5, shellSpeed: 1500,   // 70km/h=19.4m/s;炮塔 40°/s=0.698rad/s
-        mob: { mass: 61000, power: 1118550, eta: 0.80, mu: 0.70, muLat: 0.44, crr: 0.095, vCrawl: 1.0 },   // M1A1:61t/1500hp;功率重量比碾压,爬坡快
-        // M1A1(用户标尺):首上240(用户改值,原复合等效375;浅带面)/首下物理400(glacis 槽,75° 几何折算)/侧80~150取115/后底20~30取25
+        mob: { mass: 61000, power: 1118550, eta: 0.80, mu: 0.70, muLat: 0.44, crr: 0.095, vCrawl: 1.0 },   // BLUE_MBT_2:61t/1500hp;功率重量比碾压,爬坡快
+        // BLUE-MBT-2(用户标尺):首上240(用户改值,原复合等效375;浅带面)/首下物理400(glacis 槽,75° 几何折算)/侧80~150取115/后底20~30取25
         hullArmor:   { front: 240, glacis: 400, side: 115, rear: 25, top: 35, bottom: 25, weak: 60 },
-        turretArmor: { front: 465, side: 76, rear: 65, top: 40, weak: 60 } },                            // 炮塔正面等效450~480取465/侧等效76/顶30~50取40
-  tdPerTeam: 10,                                      // 编制槽默认数(红方=89式×10;蓝方 M1A1 走 m1PerTeamE=28;VEHICLE_KINDS.def 消费,遭遇战菜单可调)
-  /* 红方99式主战坦克(用户标尺):
-     主炮 125mm:@1000m 击穿 1000mm(等效)→ P0=1000/e^(−k·1000),k=8.6e-5(长杆弹与89式同衰减档)→ P0=1089.8≈1090;
-       初速 1750/装填 7s;散布=89式×1.2(MODEL_SPREAD.t99,ai.js);dmg=120mm 弹药档 150(89 式同档);
+        turretArmor: { front: 850, side: 76, rear: 65, top: 40, weak: 60 } },                            // BLUE-MBT-2 炮塔前脸装甲提高至850/侧等效76/顶30~50取40
+  tdPerTeam: 10,                                      // 编制槽默认数(红方=RED-TD×10;蓝方 BLUE-MBT-2 走 m1PerTeamE=28;VEHICLE_KINDS.def 消费,遭遇战菜单可调)
+  /* 红方RED-MBT-2重型主战坦克(用户标尺):
+     主炮 125mm:@1000m 击穿 1000mm(等效)→ P0=1000/e^(−k·1000),k=8.6e-5(长杆弹与RED-TD同衰减档)→ P0=1089.8≈1090;
+       初速 1750/装填 7s;散布=RED-TD×1.2(MODEL_SPREAD.t99,ai.js);dmg=120mm 弹药档 150(RED-TD同档);
      装甲(等效→物理经三角函数入账,运行期 等效=物理/cos入射 还原):
        车体首上等效 793(板倾 23.8°,水平射线入射 66.2°)→ 物理=793·sin23.8°=320;
        车体首下等效 400(鼻板后倾 25.35°)→ 物理=400·cos25.35°=362;
        车体侧面前半 300/发动机段 150(垂直板物理=等效;armorOf 命中点 z 分区,界 -0.85)/后部 rear 50;
-       炮塔正面等效 700=水平正面入射标定值(双尖纺锤壳多朝向前楔,armorOf 't99turret' 逐面折物理=700·|法线z|);
+       炮塔正面物理厚度 700(双尖纺锤壳多朝向前楔,统一由真实世界法线按 d/cos(入射角)折算);
        炮塔侧面前半 200/后半 100(armorOf 命中点 z 分区,界 -0.45;炮塔=唯一真面壳)/后部 50;顶/底/weak 沿用 59 式口径;
      机动:75km/h=20.8m/s;炮塔 30°/s=0.524rad/s。 */
   t99: { struct: 300, pen: 1090, penKd: 8.6e-5, dmg: 150, reload: 7.0, speed: 20.8, turn: 0.55, turretRate: 0.524,
         accel: 2.8, decel: 5.5, shellSpeed: 1750,
-        mob: { mass: 53000, power: 1118550, eta: 0.80, mu: 0.70, muLat: 0.44, crr: 0.09, vCrawl: 1.0 },   // 99式:53t/1500hp;27.8hp/t 全场最强
+        mob: { mass: 53000, power: 1118550, eta: 0.80, mu: 0.70, muLat: 0.44, crr: 0.09, vCrawl: 1.0 },   // 红方重型坦克:53t/1500hp;27.8hp/t 全场最强
         hullArmor:   { front: 320, glacis: 362, side: 150, sideF: 300, sideR: 150, rear: 50, top: 20, bottom: 25, weak: 45 },
         turretArmor: { front: 700, side: 100, sideF: 200, sideR: 100, rear: 50, top: 30, weak: 45 } },
-  /* AH-64d:按参考图外形比例建模(串列座舱/颚炮/肩置发动机/四叶旋翼+桅顶雷达/短翼双挂点(外火箭巢/内二联AIM-92型导弹)/后三点起落架)。
+  /* BLUE-HELI:按真实机型外形比例建模(串列座舱/颚炮/肩置发动机/四叶旋翼+桅顶雷达/短翼双挂点(外火箭巢/内侧二联装防空导弹)/后三点起落架)。
      轻装甲/航炮框架:M230 30mm 链炮射速每秒4发(0.25s)、穿深 35mm、炮塔转速 60°/s(1.0472rad/s),装甲同属纸甲档。 */
   ah64: { struct: 230, pen: 35, penKd: 5.0e-5, dmg: 50, reload: 0.125, speed: 69.44, turn: 0.86, turretRate: 1.0472,   // 任务25:机炮射速×2(0.25s→0.125s)
           accel: 3.4, decel: 6.0, shellSpeed: 1000,
           hullArmor: { front: 30, side: 20, rear: 16, top: 13, bottom: 12, weak: 11 },
           turretArmor: { front: 24, side: 17, rear: 13, top: 11, weak: 11 } },
   ah64PerTeam: 4,
-  /* 直-10(WZ-10):按三视图比例建模。识别特征包括光电球塔、串列阶梯座舱、肩置双发上斜排气管、
-     五叶主旋翼、无桅顶雷达、短翼四联装TY-90导弹、高置深截面尾梁、右侧剪刀尾桨和三点式起落架。
+  /* RED-HELI:按真实机型比例建模。识别特征包括光电球塔、串列阶梯座舱、肩置双发上斜排气管、
+     五叶主旋翼、无桅顶雷达、短翼四联装空空导弹、高置深截面尾梁、右侧剪刀尾桨和三点式起落架。
      23mm 链式航炮:射速每秒4发(0.25s)、穿深 35mm、炮塔转速 60°/s(1.0472rad/s);轻装甲纸甲档(复合材料机体)。 */
   wz10: { struct: 240, pen: 35, penKd: 4.5e-5, dmg: 40, reload: 0.125, speed: 69.44, turn: 0.90, turretRate: 1.0472,   // 任务25:机炮射速×2(0.25s→0.125s)
           accel: 3.6, decel: 6.2, shellSpeed: 920,
           hullArmor: { front: 30, side: 20, rear: 15, top: 12, bottom: 11, weak: 10 },
           turretArmor: { front: 22, side: 16, rear: 12, top: 10, weak: 10 } },
   wz10PerTeam: 4,
-  t99PerTeam: 27, t99PerTeamE: 0, tank59PerTeam: 9,   // 默认编制:红方 59式 9辆/99式 27辆,蓝方无 99(菜单可改)
-  m1PerTeamE: 28,                                     // 蓝方 td 槽(M1A1)专属默认数(红方 89 式仍用 tdPerTeam;28=原10+新调18)
+  t99PerTeam: 27, t99PerTeamE: 0, tank59PerTeam: 9,   // 默认编制:红方 RED-MBT-1 9辆/RED-MBT-2 27辆,蓝方无 RED-MBT-2(菜单可改)
+  m1PerTeamE: 28,                                     // 蓝方 td 槽(BLUE_MBT_2)专属默认数(红方 RED-TD 仍用 tdPerTeam;28=原10+新调18)
   // 大本营重新部署(消耗战):初始载具不占兵力;此后每辆被摧毁的载具按兵种延时在大本营 redeploy,
   // 每次 redeploy(无论兵种)消耗 1 点兵力,先把 50 点兵力耗光的一方战败
   hqPerTeam: 3,
   startPool: 50,
   bounds: 980,                                     // 可活动范围=地图边界内缩 20m(默认 2km 图初值;applyMapConfig 开局按所选边长重算)
-  teamSize: 18, allySpawnZ: 800, enemySpawnZ: -800   // teamSize=蓝方 M60A1 默认数(红方 59 式走 tank59PerTeam;出生线=坡起点内 50m,默认 2km 图初值;applyMapConfig 开局重算)
+  teamSize: 18, redSpawnZ: 800, blueSpawnZ: -800   // teamSize=蓝方 BLUE-MBT-1 默认数(红方 RED-MBT-1 走 tank59PerTeam;出生线=坡起点内 50m,默认 2km 图初值;applyMapConfig 开局重算)
 };
 
 /* ===== 坡度物理全局开关(2026-09-09 越野大改) ===== */
@@ -1134,44 +1133,44 @@ function mobDerived(mob) {   // 派生极限(惰性,每 mob 对象算一次):起
 /* 载具型号注册表(单一登记源):遭遇战编制菜单/开局生成/命名/重部署/AI 建档统一遍历本表——
    新增型号只需在此登记一个条目,重部署/编制菜单/UI/AI 全链路零改动自动生效:
    { kind, def:CONF 默认数量键, names:双阵营名, 可选 sides 阵营白名单,
-     respawnDelay:秒数或{ally,enemy}(重部署延时,缺省 6),
-     spawnName:{ally,enemy}(重部署出厂名,缺省回退 names),
+      respawnDelay:秒数或{red,blue}(重部署延时,缺省 6),
+      spawnName:{red,blue}(重部署出厂名,缺省回退 names),
      aiAnchor:true=重部署后锚定原地不前压(曲射平台),
-     modelKey:'键'或{ally,enemy}(AI 建档/MODEL_SPREAD 散布档键,缺省=kind 即自动独立建档),
-     frontalArea:数值或{ally,enemy}(正面投影面积 m²,缺省 5),
-     nv/th:布尔或{ally,enemy}(夜视仪/热成像,缺省=false) }
+      modelKey:'键'或{red,blue}(AI 建档/MODEL_SPREAD 散布档键,缺省=kind 即自动独立建档),
+      frontalArea:数值或{red,blue}(正面投影面积 m²,缺省 5),
+      nv/th:布尔或{red,blue}(夜视仪/热成像,缺省=false) }
    启动时 validateVehicleRegistry(flow.js startGame 调用)校验完整性,缺失项告警并走安全兜底。 */
 var VEHICLE_KINDS = [
-  { kind: 'tank', def: 'teamSize', defs: { ally: 'tank59PerTeam' }, names: { ally: '59式', enemy: 'M60A1' },
-    respawnDelay: 6, spawnName: { ally: '59式', enemy: 'M60A1' },
-    modelKey: { ally: 't59', enemy: 'm60' }, frontalArea: { ally: 4.997, enemy: 6.691 },
-    nv: { ally: false, enemy: true }, th: false },
-  { kind: '99',   def: 't99PerTeam', defs: { enemy: 't99PerTeamE' }, names: { ally: '99式', enemy: '99式' }, sides: { ally: true },
-    respawnDelay: 6, spawnName: { ally: '99式', enemy: '99式' },
+  { kind: 'tank', def: 'teamSize', defs: { red: 'tank59PerTeam' }, names: { red: 'RED-MBT-1', blue: 'BLUE-MBT-1' },
+    respawnDelay: 6, spawnName: { red: 'RED-MBT-1', blue: 'BLUE-MBT-1' },
+    modelKey: { red: 't59', blue: 'm60' }, frontalArea: { red: 4.997, blue: 6.691 },
+    nv: { red: true, blue: true }, th: false },
+  { kind: '99',   def: 't99PerTeam', defs: { blue: 't99PerTeamE' }, names: { red: 'RED-MBT-2', blue: 'RED-MBT-2' }, sides: { red: true },
+    respawnDelay: 6, spawnName: { red: 'RED-MBT-2', blue: 'RED-MBT-2' },
     modelKey: 't99', frontalArea: 5.297, nv: true, th: true },
-  { kind: 'td',   def: 'tdPerTeam', defs: { enemy: 'm1PerTeamE' }, names: { ally: 'PTZ-89', enemy: 'M1A1' },
-    respawnDelay: { ally: 3, enemy: 6 }, spawnName: { ally: 'PTZ-89', enemy: 'M1A1' },
-    modelKey: { ally: 'td89', enemy: 'm1a1' }, frontalArea: { ally: 5.862, enemy: 5.174 },
-    nv: true, th: { ally: false, enemy: true } },
-  { kind: 'ah64', def: 'ah64PerTeam', names: { ally: 'AH-64d', enemy: 'AH-64d' }, sides: { enemy: true },
-    respawnDelay: 12, spawnName: { ally: 'AH-64d', enemy: 'AH-64d' },
+  { kind: 'td',   def: 'tdPerTeam', defs: { blue: 'm1PerTeamE' }, names: { red: 'RED-TD', blue: 'BLUE-MBT-2' },
+    respawnDelay: { red: 3, blue: 6 }, spawnName: { red: 'RED-TD', blue: 'BLUE-MBT-2' },
+    modelKey: { red: 'td89', blue: 'm1a1' }, frontalArea: { red: 5.862, blue: 5.174 },
+    nv: true, th: { red: false, blue: true } },
+  { kind: 'ah64', def: 'ah64PerTeam', names: { red: 'BLUE-HELI', blue: 'BLUE-HELI' }, sides: { blue: true },
+    respawnDelay: 12, spawnName: { red: 'BLUE-HELI', blue: 'BLUE-HELI' },
     modelKey: 'ah64', frontalArea: 3.40, nv: true, th: true },
-  { kind: 'wz10', def: 'wz10PerTeam', names: { ally: '直-10', enemy: '直-10' }, sides: { ally: true },
-    respawnDelay: 12, spawnName: { ally: '直-10', enemy: '直-10' },
+  { kind: 'wz10', def: 'wz10PerTeam', names: { red: 'RED-HELI', blue: 'RED-HELI' }, sides: { red: true },
+    respawnDelay: 12, spawnName: { red: 'RED-HELI', blue: 'RED-HELI' },
     modelKey: 'wz10', frontalArea: 3.20, nv: true, th: true },
-  { kind: 'arty', def: 'artyPerTeam', names: { ally: 'PHL-11', enemy: 'M142' },
-    respawnDelay: 24, spawnName: { ally: 'PHL-11', enemy: 'M142' }, aiAnchor: true,
-    modelKey: 'arty', frontalArea: { ally: 5.90, enemy: 6.20 }, nv: true, th: false },
-  { kind: 'aa', def: 'aaPerTeam', names: { ally: 'PGZ-95', enemy: '复仇者' },
-    respawnDelay: 12, spawnName: { ally: 'PGZ-95 自行高炮', enemy: 'AN/TWQ-1 复仇者' }, aiAnchor: true,
-    modelKey: 'aa', frontalArea: { ally: 5.20, enemy: 4.10 }, nv: true, th: false }
+  { kind: 'arty', def: 'artyPerTeam', names: { red: 'RED-MLRS', blue: 'BLUE-MLRS' },
+    respawnDelay: 24, spawnName: { red: 'RED-MLRS', blue: 'BLUE-MLRS' }, aiAnchor: true,
+    modelKey: 'arty', frontalArea: { red: 5.90, blue: 6.20 }, nv: true, th: false },
+  { kind: 'aa', def: 'aaPerTeam', names: { red: 'RED-AA', blue: 'BLUE-AA' },
+    respawnDelay: 12, spawnName: { red: 'RED-AA', blue: 'BLUE-AA' }, aiAnchor: true,
+    modelKey: 'aa', frontalArea: { red: 5.20, blue: 4.10 }, nv: true, th: false }
 ];
 function vehicleKindEntry(kind) {                // 注册表条目查询(未知型号返回 null)
   for (var vki = 0; vki < VEHICLE_KINDS.length; vki++)
     if (VEHICLE_KINDS[vki].kind === kind) return VEHICLE_KINDS[vki];
   return null;
 }
-function vehicleFlagOf(vk, key, team) {          // 条目标记解析(布尔或{ally,enemy};未登记=false)
+function vehicleFlagOf(vk, key, team) {          // 条目标记解析(布尔或{red,blue};未登记=false)
   var v = vk ? vk[key] : null;
   if (v == null) return false;
   return typeof v === 'boolean' ? v : !!v[team];
@@ -1180,13 +1179,13 @@ function vehicleModelKey(team, kind) {           // 型号档案键(AI 建档/�
   var vk = vehicleKindEntry(kind);
   var mk = vk && vk.modelKey;
   if (!mk) return kind;
-  return typeof mk === 'string' ? mk : (mk[team] || mk.ally || kind);
+  return typeof mk === 'string' ? mk : (mk[team] || mk.red || kind);
 }
 function vehicleFrontalArea(team, kind) {        // 正面投影面积(m²;未登记兜底 5=旧无目标哨位同值)
   var vk = vehicleKindEntry(kind);
   var fa = vk && vk.frontalArea;
   if (fa == null) return 5;
-  return typeof fa === 'number' ? fa : (fa[team] != null ? fa[team] : (fa.ally != null ? fa.ally : 5));
+  return typeof fa === 'number' ? fa : (fa[team] != null ? fa[team] : (fa.red != null ? fa.red : 5));
 }
 function respawnDelayOf(kind, team) {            // 重部署延时秒数(条目未登记兜底 6=旧 CONF.respawnDelay 兜底同值)
   var vk = vehicleKindEntry(kind);
@@ -1195,22 +1194,22 @@ function respawnDelayOf(kind, team) {            // 重部署延时秒数(条目
   return d > 0 ? d : 6;
 }
 function validateVehicleRegistry() {             // 启动自检:遍历注册表校验关联系统完整性(缺失告警+已兜底,不中断游戏)
-  var warns = [], teams = ['ally', 'enemy'];
+  var warns = [], teams = ['red', 'blue'];
   for (var vi = 0; vi < VEHICLE_KINDS.length; vi++) {
     var vk = VEHICLE_KINDS[vi];
     for (var ti = 0; ti < 2; ti++) {
       var tm = teams[ti];
       if (vk.sides && !vk.sides[tm]) continue;
-      if (!vk.names || !(vk.names[tm] || vk.names.ally)) warns.push(vk.kind + '/' + tm + ': 缺 names 显示名');
-      if (!(vk.spawnName && (vk.spawnName[tm] || vk.spawnName.ally))) warns.push(vk.kind + '/' + tm + ': 缺 spawnName 重部署出厂名(回退型号名)');
-      if (!(respawnDelayOf(vk.kind, tm) > 0)) warns.push(vk.kind + '/' + tm + ': respawnDelay 非法(回退 6s)');
-      if (!(vehicleFrontalArea(tm, vk.kind) > 0)) warns.push(vk.kind + '/' + tm + ': frontalArea 非法(回退 5m²)');
-      if (vk.nv == null) warns.push(vk.kind + '/' + tm + ': 缺 nv 夜视标记(按无夜视处理)');
-      if (vk.th == null) warns.push(vk.kind + '/' + tm + ': 缺 th 热像标记(按无热像处理)');
-      // 散布档不在此校验:spreadOf 内置 tank 档兜底(ai.js),59/M60 共享 tank 档即官方设计,缺键非错误
+      if (!vk.names || !(vk.names[tm] || vk.names.red)) warns.push(vk.kind + '/' + tm + ': missing display name');
+      if (!(vk.spawnName && (vk.spawnName[tm] || vk.spawnName.red))) warns.push(vk.kind + '/' + tm + ': missing spawnName (falls back to type name)');
+      if (!(respawnDelayOf(vk.kind, tm) > 0)) warns.push(vk.kind + '/' + tm + ': illegal respawnDelay (falls back to 6s)');
+      if (!(vehicleFrontalArea(tm, vk.kind) > 0)) warns.push(vk.kind + '/' + tm + ': illegal frontalArea (falls back to 5m2)');
+      if (vk.nv == null) warns.push(vk.kind + '/' + tm + ': missing nv flag (treated as none)');
+      if (vk.th == null) warns.push(vk.kind + '/' + tm + ': missing thermal flag (treated as none)');
+      // 散布档不在此校验:spreadOf 内置 tank 档兜底(ai.js),RED-MBT-1/BLUE-MBT-1 共享 tank 档即官方设计,缺键非错误
     }
   }
-  for (var wi = 0; wi < warns.length; wi++) console.warn('[载具注册表] ' + warns[wi]);
+  for (var wi = 0; wi < warns.length; wi++) console.warn('[VEH REG] ' + warns[wi]);
   return warns.length;
 }
 function vehicleKindAllowed(team, kind) {        // 型号阵营白名单(无 sides=双方可用;编制菜单/预览/兵种行/出生守卫共用)
@@ -1225,15 +1224,15 @@ function vehicleHasTH(kind, team) { return vehicleFlagOf(vehicleKindEntry(kind),
 function nightAimEffOf(kind, team) { return vehicleHasTH(kind, team) ? 1.2 : (vehicleHasNV(kind, team) ? 0.8 : 0.5); }
 function vehicleDisplayName(t) {                 // 型号显示名(击杀信息等 UI 消费;kind+阵营 → VEHICLE_KINDS.names)
   for (var vni = 0; vni < VEHICLE_KINDS.length; vni++)
-    if (VEHICLE_KINDS[vni].kind === t.kind) return VEHICLE_KINDS[vni].names[t.team] || VEHICLE_KINDS[vni].names.ally;
-  return '战车';
+    if (VEHICLE_KINDS[vni].kind === t.kind) return VEHICLE_KINDS[vni].names[t.team] || VEHICLE_KINDS[vni].names.red;
+  return 'VEHICLE';
 }
 /* 载具正面投影面积(m²)= 车体+炮塔视觉几何并集包围盒(宽×高),建模几何实测——
    已收编注册表 frontalArea 字段,此处由条目启动重建原查表(消费方:ai.js 交火底线 _floorTab/combatFloorOf;
    新增型号随注册表条目自动入表,本对象无需再手工维护) */
 var VEHICLE_FRONTAL_AREAS = {};
 (function () {
-  var faTeams = ['ally', 'enemy'];
+  var faTeams = ['red', 'blue'];
   for (var fvi = 0; fvi < VEHICLE_KINDS.length; fvi++) {
     var fvk = VEHICLE_KINDS[fvi];
     for (var fti = 0; fti < 2; fti++) {
@@ -1244,7 +1243,7 @@ var VEHICLE_FRONTAL_AREAS = {};
   }
 })();   // 重建结果={t59:4.997,m60:6.691,t99:5.297,td89:5.862,m1a1:5.174,arty:7.837}(t99=估算口径:t59×1.06)
 /* 遭遇战编制(红/蓝独立配置;默认=当前方案:50 兵力 / 在场 54:
-   红方 9+27+10+4+4(59/99/89式/直-10/火箭炮),蓝方 18+28+4+4(M60/M1A1/AH-64/火箭炮)):
+   红方(RED-MBT-1/RED-MBT-2/RED-TD/RED-HELI/RED-MLRS),蓝方(BLUE-MBT-1/BLUE-MBT-2/BLUE-HELI/BLUE-MLRS)):
    pool=参战兵力;cap=最大在场载具数(AI 重部署门槛);roster[kind]=各型号数量(开局生成,含玩家占位) */
 function defaultRoster(team) {                     // 默认编制(仅分配本阵营允许的载具型号,非本阵营载具严格为0)
   var r = {};
@@ -1265,9 +1264,65 @@ function defaultCap(team) {
   return n;
 }
 var BATTLE_SETUP = {
-  ally:   { pool: CONF.startPool, cap: defaultCap('ally'), roster: defaultRoster('ally') },
-  enemy:  { pool: CONF.startPool, cap: defaultCap('enemy'), roster: defaultRoster('enemy') }
+  red:   { pool: CONF.startPool, cap: defaultCap('red'), roster: defaultRoster('red') },
+  blue:  { pool: CONF.startPool, cap: defaultCap('blue'), roster: defaultRoster('blue') }
 };
+
+/* ===== 游戏模式 =====
+   团队死斗沿用原有红/蓝两队会战；个人死斗使用内部 red/blue 外观标签，
+   但所有载具均视为互相敌对。模式选择只持久化玩家的默认模式，不联网。 */
+var GAME_MODE_TEAM = 'tdm';
+var GAME_MODE_FFA = 'ffa';
+var GAME_MODE_STORAGE_KEY = 'armoredCorps.gameMode.v1';
+var FFA_DEFAULT_MAP_SIZE = 3500;
+var currentGameMode = GAME_MODE_TEAM;
+// Team deathmatch control areas are enabled by default and can be changed in the custom battle panel.
+var tdmControlZonesEnabled = true;
+var FFA_DEFAULT_POWERUP_MULTIPLIER = 2;
+var FFA_SETUP = { vehicleCount: 100, playerReserves: 3, heliEnabled: false, powerupMultiplier: FFA_DEFAULT_POWERUP_MULTIPLIER };
+/* TO BATTLE remains a separate preset: its historical two-pickups-per-survivor
+   density and roster defaults must not be overwritten by the saved custom menu. */
+var FFA_QUICK_DEFAULTS = { vehicleCount: 100, playerReserves: 3, heliEnabled: false, powerupMultiplier: FFA_DEFAULT_POWERUP_MULTIPLIER };
+var ffaQuickStart = false;  // TO BATTLE 快速入口的直升机禁用开关；自定义 DEPLOY 按 FFA_SETUP.heliEnabled
+(function () {
+  try {
+    var saved = window.localStorage.getItem(GAME_MODE_STORAGE_KEY);
+    if (saved === GAME_MODE_FFA || saved === GAME_MODE_TEAM) currentGameMode = saved;
+  } catch (e) {}
+})();
+function isFfaMode() { return currentGameMode === GAME_MODE_FFA; }
+function setGameMode(mode, persist) {
+  currentGameMode = mode === GAME_MODE_FFA ? GAME_MODE_FFA : GAME_MODE_TEAM;
+  // 模式切换时载入该模式的默认地图尺寸；自定义面板随后仍可继续修改它。
+  if (typeof syncModeMapDefault === 'function') syncModeMapDefault(currentGameMode);
+  if (persist !== false) {
+    try { window.localStorage.setItem(GAME_MODE_STORAGE_KEY, currentGameMode); } catch (e) {}
+  }
+  // The quick TO BATTLE menu and the custom battle row share currentGameMode.
+  // Refresh both immediately whenever the single source of truth changes.
+  if (typeof refreshGameModeUI === 'function') refreshGameModeUI();
+  return currentGameMode;
+}
+function areHostile(a, b) {
+  if (!a || !b || a === b) return false;
+  return isFfaMode() ? true : a.team !== b.team;
+}
+function areFriendly(a, b) {
+  if (!a || !b || a === b) return false;
+  return !isFfaMode() && a.team === b.team;
+}
+/* 目标扫描统一入口：个人死斗直接枚举全场活车，不依赖红/蓝外观标签。
+   团队死斗继续使用原有敌方 roster，避免改变团队模式的扫描性能与语义。 */
+function hostileRosterOf(t) {
+  if (isFfaMode()) return (typeof aliveList !== 'undefined' && aliveList) ? aliveList : [];
+  var other = t && t.team === 'red' ? 'blue' : 'red';
+  return (typeof aiTeamRoster !== 'undefined' && aiTeamRoster[other]) ? aiTeamRoster[other] : [];
+}
+function friendlyRosterOf(t) {
+  if (isFfaMode()) return [];
+  var team = t && t.team ? t.team : 'red';
+  return (typeof aiTeamRoster !== 'undefined' && aiTeamRoster[team]) ? aiTeamRoster[team] : [];
+}
 
 /* ===== 触屏端(安卓/移动)默认编制覆盖 =====
    ★2026-09-13:默认战场规模提到每阵营 40 台:直升机 2 / 火箭炮 2 / 防空车 1 台固定,
@@ -1275,20 +1330,12 @@ var BATTLE_SETUP = {
    例:红方其余 tank/99/td 三型分 35 台 = 12+12+11;蓝方其余 tank/td 两型分 35 台 = 18+17。
    桌面端(精确指针)完全不受影响,仍用上面的 CONF 默认编制。
    注意:本段必须放在 VEHICLE_KINDS / vehicleKindAllowed / BATTLE_SETUP 之后。 */
-var IS_TOUCH_SETUP = (window.matchMedia && matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in window;
-/* ★P1-④(性能优化报告 2026-09-13):触屏编制规模与模型质量档联动分级——
-   模拟成本与在场数近似线性,弱档机器配小战场、强档机器保大战场:
-     low=20 / mid=28 / high=40(40 即 2026-09-13 提到的高规模,完整保留给显式高档)。
-   P0 已把触屏设备默认 MODQ 档回调为 mid,故触屏默认战场=每方 28 台;
-   用户显式 ?modq=high / 设置页选高档 → 恢复 40 台(显式选择完全尊重,不被默认覆盖)。
-   桌面端不走本覆盖块(精确指针,CONF 默认编制逐位不变)。编制菜单仍可在开局前手动改。 */
-var TOUCH_SETUP_CAP_BY_PROF = { low: 20, mid: 28, high: 40 };
-var TOUCH_SETUP_CAP = (typeof MODQ_PROFILE !== 'undefined' && TOUCH_SETUP_CAP_BY_PROF[MODQ_PROFILE] != null)
-  ? TOUCH_SETUP_CAP_BY_PROF[MODQ_PROFILE] : 40;            // 触屏端每阵营最大在场载具数(★2026-09-13 由 20 提到 40;P1 起按画质档分级)
+var IS_TOUCH_SETUP = false; // 纯桌面端适配: 禁用移动端编制削减，维持全规模桌面战场编制
+var TOUCH_SETUP_CAP = 40;                                  // 触屏端每阵营最大在场载具数(★2026-09-13 由 20 提到 40)
 var TOUCH_SETUP_FIXED = { wz10: 2, ah64: 2, arty: 2, aa: 1 };   // 固定编成:直升机 2 / 火箭炮 2 / 防空车 1(型号不存在于该阵营时自动忽略;wz10 仅红方,ah64 仅蓝方,故每方直升机恰 2 台)
 if (IS_TOUCH_SETUP) {
   (function () {
-    var teams = ['ally', 'enemy'];
+    var teams = ['red', 'blue'];
     for (var ti = 0; ti < teams.length; ti++) {
       var tm = teams[ti], S = BATTLE_SETUP[tm];
       // 1) 收集本阵营允许的型号(与编制菜单同一判定源)
@@ -1320,20 +1367,20 @@ if (IS_TOUCH_SETUP) {
 }
 
 /* “td”保留为编制/菜单槽键以兼容存档与重部署队列,但作战平台按阵营分流:
-   红方td=89式360°旋转重炮炮塔;蓝方td=M1A1旋转炮塔。isTD89Vehicle只负责89式远狙/重炮特性。 */
-function isM1Vehicle(t) { return !!t && t.kind === 'td' && t.team === 'enemy'; }
-function isTD89Vehicle(t) { return !!t && t.kind === 'td' && t.team === 'ally'; }
+   红方td=RED-TD 360°旋转重炮炮塔;蓝方td=BLUE-MBT-2 旋转炮塔。isTD89Vehicle只负责RED-TD远狙/重炮特性。 */
+function isM1Vehicle(t) { return !!t && t.kind === 'td' && t.team === 'blue'; }
+function isTD89Vehicle(t) { return !!t && t.kind === 'td' && t.team === 'red'; }
 function isHeliVehicle(t) { return !!t && (t.kind === 'ah64' || t.kind === 'wz10'); }
-function isAAVehicle(t) { return !!t && t.kind === 'aa'; }   // 防空载具:红=PGZ-95(雷达+机炮+导弹)/蓝=复仇者(纯导弹,无雷达)
+function isAAVehicle(t) { return !!t && t.kind === 'aa'; }   // 防空载具:红=RED-AA(雷达+机炮+导弹)/蓝=BLUE-AA(纯导弹,无雷达)
 
 /* ===== 载具三大类标签系统(通用,便于扩展)=====
-   三类:'ground'=地面载具(坦克 59/M60/99/M1A1 + 坦克歼击车 89式)、'arty'=炮兵(火箭炮)、'air'=空中载具(直升机)。
+   三类:'ground'=地面载具(坦克 RED-MBT-1/BLUE-MBT-1/RED-MBT-2/BLUE-MBT-2 + 坦克歼击车 RED-TD)、'arty'=炮兵(火箭炮)、'air'=空中载具(直升机)。
    新增载具时,只需在 VEH_CLASS 里给其 kind 打上对应标签,计分/规则自动继承——无需再逐处 if kind===... 判定。
    指挥官 AI 伤害计分口径:仅 'ground' 计入(坦克+坦歼);'arty'(火箭炮)与 'air'(直升机)造成的伤害一律不计分。 */
 var VEH_CLASS = {                                  // kind → 大类标签
-  tank: 'ground', '99': 'ground', td: 'ground',   // 59式/M60A1 · 99式 · 89式(PTZ-89)/M1A1 —— 全部地面载具
+  tank: 'ground', '99': 'ground', td: 'ground',   // RED-MBT-1/BLUE-MBT-1 · RED-MBT-2 · RED-TD/BLUE-MBT-2 —— 全部地面载具
   arty: 'arty',                                    // 火箭炮 —— 炮兵
-  ah64: 'air', wz10: 'air'                         // AH-64d / 直-10 —— 空中载具
+  ah64: 'air', wz10: 'air'                         // BLUE-HELI / RED-HELI —— 空中载具
 };
 function vehicleClass(t) {                         // 取载具大类(未登记 kind 默认按地面载具兜底)
   var k = (t && typeof t === 'object') ? t.kind : t;
@@ -1364,7 +1411,7 @@ var HELI_PARAMS = {
     maxRoll: 0.30,            // 最大横滚角 rad
     maxSpeedH: 69.44,         // 目标最大平飞速度 m/s(250 km/h)
     turnRate: 1.35,           // 最大偏航角速度 rad/s
-    torqueYawK: 0.30, rotorDir: -1,   // 反扭矩 (AH-64 逆时针旋翼)
+    torqueYawK: 0.30, rotorDir: -1,   // 反扭矩 (逆时针旋翼)
     tailAuthK: 0.45           // 尾桨偏航操纵权限
   },
   wz10: {
@@ -1386,7 +1433,7 @@ var HELI_PARAMS = {
     maxRoll: 0.30,
     maxSpeedH: 69.44,         // 250 km/h
     turnRate: 1.45,
-    torqueYawK: 0.32, rotorDir: 1,    // 直-10 顺时针旋翼
+    torqueYawK: 0.32, rotorDir: 1,    // 顺时针旋翼
     tailAuthK: 1.30
   }
 };
@@ -1445,21 +1492,21 @@ var HELI_COLL_VGATE = 3.0;    // 空中错身高度门 m(超过此高度差不�
 /* 最远作战距离=交火底线(本文件 maxCombatDist/combatFloorOf,按散布×目标正面面积解算)——
    AI 所有射程判断统一走交火底线(无静态常数档) */
 
-/* 火箭炮阵营规格路由:红方(ally)=PHL-11 / 蓝方(enemy)=M142。
+/* 火箭炮阵营规格路由:红方(red)=RED-MLRS / 蓝方(blue)=BLUE-MLRS。
    参数可传载具对象或 team 字符串;未知/缺省回落红方规格。全项目读火箭炮规格一律走本函数。 */
 function artyConfOf(t) {
-  var team = (t && (t.team || (typeof t === 'string' ? t : null))) || 'ally';
-  return (team === 'enemy' && typeof CONF !== 'undefined' && CONF.artyE) ? CONF.artyE : CONF.arty;
+  var team = (t && (t.team || (typeof t === 'string' ? t : null))) || 'red';
+  return (team === 'blue' && typeof CONF !== 'undefined' && CONF.artyE) ? CONF.artyE : CONF.arty;
 }
 /* ===== 模块部位名称统一表 =====
-   同类载具使用完全相同的部位文本:主战坦克类(59式/M60A1/M1A1)与歼击车类(89式)
-   本质相同,全部走 tank 表(89式与坦克类统一);火箭炮:影响转动的模块=发射架下面的
+   同类载具使用完全相同的部位文本:主战坦克类(RED-MBT-1/BLUE-MBT-1/BLUE-MBT-2)与歼击车类(RED-TD)
+   本质相同,全部走 tank 表(RED-TD与坦克类统一);火箭炮:影响转动的模块=发射架下面的
    转盘(turret);发射架/发射舱=弹药架(ammo,火箭弹放在那里,损毁走殉爆链);定向管=gun。 */
 var MOD_LABELS = {
-  tank: { trackL: '右履带', trackR: '左履带', engine: '发动机', ammo: '弹药架', fuel: '油箱', hull: '车体', turret: '炮塔', gun: '炮管' },
-  arty: { trackL: '右轮组', trackR: '左轮组', engine: '发动机', ammo: '弹药架', fuel: '油箱', hull: '车体', turret: '转盘', gun: '定向管' },
-  heli: { trackL: '螺旋桨', trackR: '螺旋桨', engine: '发动机', ammo: '供弹仓', fuel: '油箱', hull: '机身', turret: '机炮塔', gun: '航炮', tailRotor: '尾桨' },
-  aa: { trackL: '右侧行走装置', trackR: '左侧行走装置', engine: '发动机', ammo: '导弹发射架', fuel: '油箱', hull: '车体', turret: '炮塔', gun: '防空武器' }
+  tank: { trackL: 'R TRACK', trackR: 'L TRACK', engine: 'ENGINE', ammo: 'AMMO RACK', fuel: 'FUEL', hull: 'HULL', turret: 'TURRET', gun: 'GUN' },
+  arty: { trackL: 'R WHEELS', trackR: 'L WHEELS', engine: 'ENGINE', ammo: 'AMMO RACK', fuel: 'FUEL', hull: 'HULL', turret: 'TURNTABLE', gun: 'LAUNCH TUBES' },
+  heli: { trackL: 'ROTOR', trackR: 'ROTOR', engine: 'ENGINE', ammo: 'FEED BIN', fuel: 'FUEL', hull: 'AIRFRAME', turret: 'GUN TURRET', gun: 'CANNON', tailRotor: 'TAIL ROTOR' },
+  aa: { trackL: 'R DRIVE', trackR: 'L DRIVE', engine: 'ENGINE', ammo: 'MSL LAUNCHER', fuel: 'FUEL', hull: 'HULL', turret: 'TURRET', gun: 'AA GUN' }
 };
 function modLabel(kind, team, key) {
   var cat = kind === 'arty' ? 'arty' : (kind === 'aa' ? 'aa' : (isHeliVehicle({ kind: kind }) ? 'heli' : 'tank'));
@@ -1471,12 +1518,13 @@ var scene, camera, renderer, clock, sunLight, hemiLight = null, sunDisc = null, 
 var gameState = 'menu';
 var freePlay = false;   // 胜利后"继续游戏"豁免标志——继续游玩期间不再判胜负(敌方已满足判负条件,不豁免会每帧重弹结算)
 var gameT = 0, startT = 0;
+var AI_START_DELAY = 1.5;                 // 每局开局 AI 反应延迟(团队/个人死斗均适用)
 var UNIT_ALIVE = 1, UNIT_DYING = 2;
 var tanks = [], shells = [], wreckList = [];
 var airborneMissiles = [];                    // 在空导弹子列表(发射登记, removeShell 收割)——免 6 处全 shells 扫描/步
-var airborneGuidedRockets = [];               // 在空【制导】火箭子列表(仅 guidance 弹登记, Hydra-70 无制导不入)——供火力分配计数,口径同 airborneMissiles
+var airborneGuidedRockets = [];               // 在空【制导】火箭子列表(仅 guidance 弹登记, 无制导火箭不入)——供火力分配计数,口径同 airborneMissiles
 var aliveList = [];            // 活车紧凑表(生成追加/阵亡摘除,顺序与 tanks 一致)——供全表扫描类热点免扫永久残骸
-var wreckCount = 0;            // 残骸累计计数(本场击毁总数,只增不减;在场数读 wreckList.length——★P2-⑨ 起残骸有生命周期,超顶/超龄由战斗段回收)
+var wreckCount = 0;            // 残骸累计计数(killTank 时 +1,残骸永久不移除;替代每帧全表扫描计数)
 var wreckGrid = new Map();     // 残骸空间网格(20m 格,与 collGrid 同构;事件驱动;avoidSteer/resolveCollisions 共用)
 function wreckGridInsert(t) {  // 残骸入格,仅在死亡或跨格时登记。
   if (t._wreckGridRegistered) return;
@@ -1614,10 +1662,10 @@ var obstacles = [];
    两者正交:载具型号经 hqTypeOfKind() 定兵种 → 定 z,玩家/AI 再选翼位 → 定 x。
    注意:wing 是"该方自己面向战场时"的左右,故敌方 x 与我方镜像(见 spawnTeams)。 */
 var HQ_WINGS = ['left', 'center', 'right'];
-var HQ_WING_LABEL = ['左翼基地', '中央基地', '右翼基地'];
+var HQ_WING_LABEL = ['LEFT BASE', 'CENTER BASE', 'RIGHT BASE'];
 var HQ_WING_CENTER = 1;                                     // 中央翼索引(默认选中 / 解析兜底)
 var HQ_WING_SPREAD = 220;                                   // 翼位横向偏移基准(m @2km 图,随地图边长等比缩放)
-var hqList = { ally: [], enemy: [] };                       // [{type,wing,x,z,yaw,...}]
+var hqList = { red: [], blue: [] };                       // [{type,wing,x,z,yaw,...}]
 
 /* 按「兵种 + 翼位」解析大本营。兵种由载具型号推出,翼位由调用方给定(玩家选 / AI 随机)。
    逐级兜底:精确匹配 → 同兵种任意翼 → 首座,保证任何时候都能返回一个可部署点。 */
@@ -1630,8 +1678,9 @@ function hqFind(team, kind, wing) {
   return hqs[0];
 }
 function hqRandWing() { return Math.min(HQ_WINGS.length - 1, (Math.random() * HQ_WINGS.length) | 0); }
-var teamPool = { ally: 50, enemy: 50 };                   // 剩余兵力(redeploy 点数)
-var respawnQueue = [];                                      // [{team,kind,due}]
+var teamPool = { red: 50, blue: 50 };                   // 团队死斗剩余兵力(redeploy 点数)
+var respawnQueue = [];                                      // 团队死斗 AI 增援队列
+var ffaState = { reserves: 0, playerEliminated: false, finalRank: 0, activeAtStart: 0 };
 var player = null;
 var kills = 0, damageDealt = 0, playerRespawns = 0;
 var respawnT = 0;                  // 阵亡接管友车倒计时
@@ -1662,7 +1711,7 @@ function gunGate(t, g) { if (DBG_ON) { var G = dbgStats[t.team].gunGates || (dbg
 var dbgPlayerBursts = [];                        // 玩家火箭弹爆点流水(__TANK_DEBUG)
 var dbgArtyBursts = [];                          // 全部火箭弹爆点流水(含 owner 引用,AI 齐射弹量审计用)
 var dbgStats = {
-  ally: mkDbgRow(), enemy: mkDbgRow(), kills: {}   // kills: 击毁原因统计
+  red: mkDbgRow(), blue: mkDbgRow(), kills: {}   // kills: 击毁原因统计
 };
 // 依据命中面法线与车体朝向判断命中部位(调试统计用)
 function dbgFace(t, nWorld) {
@@ -1670,4 +1719,3 @@ function dbgFace(t, nWorld) {
   var d = nWorld.x * Math.sin(t.yaw) + nWorld.z * Math.cos(t.yaw);   // 前向 = (sin_yaw, 0, cos_yaw)
   return d > 0.5 ? 'front' : (d < -0.5 ? 'rear' : 'side');
 }
-/* (repair:杂散重复片段已删除) */

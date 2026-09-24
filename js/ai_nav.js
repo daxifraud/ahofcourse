@@ -17,7 +17,7 @@ function navGroupOf(t) {   // 寻路分组:轮式与履带分开剪枝;直升机
 function navGroupLim(group) {
   if (!_navGroupLim && typeof CONF !== 'undefined') {
     var g = { track: { tanMax: 9, tanSide: 9 }, wheel: { tanMax: 9, tanSide: 9 } };
-    var tr = [CONF.ally && CONF.ally.mob, CONF.enemy && CONF.enemy.mob, CONF.td && CONF.td.mob,
+    var tr = [CONF.red && CONF.red.mob, CONF.blue && CONF.blue.mob, CONF.td && CONF.td.mob,
               CONF.m1 && CONF.m1.mob, CONF.t99 && CONF.t99.mob];
     for (var i = 0; i < tr.length; i++) {
       var m = tr[i]; if (!m) continue;
@@ -245,8 +245,8 @@ function _asStart(t, gx, gz, reqId) {
   var mob = mobOf(t), v0 = t.speed0 || 10;
   _asActive = { t: t, reqId: reqId, goal: g, v0: v0, m: mob.mass, pEta: mob.power * mob.eta,
                 crr: (typeof crrGround === 'function') ? crrGround(group === 'wheel', 0, 0) : mob.crr,   // MR1：与物理同源分档（现阶段 MAP 全局档，逐边一致；位置化后改逐边查）
-                tanMax: lim.tanMax, tanSide: lim.tanSide, group: group, team: t.team || 'ally',
-                penBase: _navPenBase(t.team || 'ally', group), done: false, found: false, abort: false };
+                tanMax: lim.tanMax, tanSide: lim.tanSide, group: group, team: t.team || 'red',
+                penBase: _navPenBase(t.team || 'red', group), done: false, found: false, abort: false };
   _asHeapN = 0;
   _asG[s] = 0; _asGen[s] = _asId; _asFrom[s] = -1;
   _asPush(s, _asH(s, g, v0));
@@ -383,11 +383,11 @@ function _asFinish(A) {
    进度看门狗(快窗 3s@0.4m/s + 慢窗 8s@1.0m/s)→ 停滞格+前进下一格代价×8(TTL 25s,单层,按 team+group 分键)→
    失效+跳直航强制 A*(惩罚只在 A* 代价生效)。键=数值(penBase+cell)，零 GC。 */
 var _navPen = new Map(), _navPenN = 0, _navPenPurgeT = -10;
-function _navPenBase(team, group) { return ((((team === 'enemy') ? 1 : 0) * 2 + ((group === 'wheel') ? 1 : 0))) * 40000; }
+function _navPenBase(team, group) { return ((((team === 'blue') ? 1 : 0) * 2 + ((group === 'wheel') ? 1 : 0))) * 40000; }
 function _navOnStall(t, refX, refZ) {
   var group = navGroupOf(t);
   if (group === null) return;
-  var base = _navPenBase(t.team || 'ally', group), tp = t.group.position, exp = gameT + 25;
+  var base = _navPenBase(t.team || 'red', group), tp = t.group.position, exp = gameT + 25;
   var here = navCellOf(tp.x, tp.z);
   if (here >= 0) _navPen.set(base + here, exp);
   var dx = refX - tp.x, dz = refZ - tp.z, L = Math.sqrt(dx * dx + dz * dz);
@@ -399,7 +399,7 @@ function _navOnStall(t, refX, refZ) {
   t._navGoalX = undefined; t._nav = null; t._navDirect = 0; t._navNoDir = 1;
 }
 function _navPenalizeSeg(ax, az, bx, bz, team, group) {   // F3：复查失败腿→沿途格惩罚×8(TTL 25s，单层，上限 32 格)
-  var base = _navPenBase(team || 'ally', group), exp = gameT + 25, n = 0;
+  var base = _navPenBase(team || 'red', group), exp = gameT + 25, n = 0;
   var dx = bx - ax, dz = bz - az, len = Math.sqrt(dx * dx + dz * dz), steps = Math.ceil(len / NAV_CELL);
   if (steps < 1) steps = 1; else if (steps > 32) steps = 32;
   for (var k = 0; k <= steps; k++) {

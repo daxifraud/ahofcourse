@@ -48,6 +48,8 @@ function step(dt) {
 
   playerUpdate(dt);
   playerHudTick();                                       // 载具状态 3D 迷你 HUD:换车引用比较+姿态变更门(未变=零渲染;高亮走事件钩子)
+  if (typeof vehicleTechBurstLoadingHudTick === 'function') vehicleTechBurstLoadingHudTick();
+  if (typeof vehicleTechBattlefieldRepairHudTick === 'function') vehicleTechBattlefieldRepairHudTick();
 
   // 开镜状态(Shift 点按切换):平滑过渡 + 测距/弹着仿真节流
   var wantScope = scopeMode && player && player.alive;
@@ -73,22 +75,26 @@ function step(dt) {
   // 性能面板关闭时不读取高精度时钟,避免常驻诊断本身进入热路径。
   var _aiPerfStart = _perfOn ? performance.now() : 0;
   aiScheduler.reset();
+  var aiReady = gameT - startT >= AI_START_DELAY;
   aliveList.forEach(function (t) {
     if (t.alive && !t.isPlayer) {
       PERF_BASE.aiUnits++;
-      if (t.ai) {
-        t.ai.postT -= dt;
-        if (t.ai.postT <= 0 && aiScheduler.allowPosture()) {
-          postureUpdate(t, dt);
+      // 开局反应窗内 AI 不更新姿态、装填、躲避、移动或火控；1.5 秒后统一开始行动。
+      if (aiReady) {
+        if (t.ai) {
+          t.ai.postT -= dt;
+          if (t.ai.postT <= 0 && aiScheduler.allowPosture()) {
+            postureUpdate(t, dt);
+          }
         }
+        if (_perfOn) _doT = performance.now();
+        tickReload(t, dt);                                             // AI 装填同口径
+        if (_perfOn) _eT0 = performance.now();
+        maybeEvadeRocket(t, dt);                          // 火箭弹躲避(注意力机制:警觉者提前 3s 逃,专注者挨炸才惊觉)
+        if (_perfOn) __PERF.aiEvade += performance.now() - _eT0;            // aiCore 子段探针:火箭弹规避耗时
+        aiUpdate(t, dt);
+        if (_perfOn) __PERF.aiCore += performance.now() - _doT;               // AI 决策核心账(含 evade+think+move+aim 全段)
       }
-      if (_perfOn) _doT = performance.now();
-      tickReload(t, dt);                                             // AI 装填同口径
-      if (_perfOn) _eT0 = performance.now();
-      maybeEvadeRocket(t, dt);                          // 火箭弹躲避(注意力机制:警觉者提前 3s 逃,专注者挨炸才惊觉)
-      if (_perfOn) __PERF.aiEvade += performance.now() - _eT0;            // aiCore 子段探针:火箭弹规避耗时
-      aiUpdate(t, dt);
-      if (_perfOn) __PERF.aiCore += performance.now() - _doT;               // AI 决策核心账(含 evade+think+move+aim 全段)
     }
     if (t.alive && !t.isPlayer) {                      // 旋转写入:玩家由后续玩家段写入(避免重复)
       t.turret.rotation.y = t.turretYaw;
@@ -101,13 +107,18 @@ function step(dt) {
       if (DBG_ON) shirkTrack(t, dt);
     }
   });
+  /* Control-area capture, force-pool income, and player repair run once after
+     all player/AI movement for this simulation step, so entry/exit counts use
+     the same positions that the renderer and navigation consumed. */
+  if (typeof controlZonesTick === 'function') controlZonesTick(dt);
+  if (typeof controlZoneRepairHudTick === 'function') controlZoneRepairHudTick();
   if (_perfOn) PERF_BASE.aiMs += performance.now() - _aiPerfStart;
   __mark('ai');
   engineAudioUpdate(dt);                                // 发动机声浪:玩家/AI 同机理,无 AC 静默早退
 
   // 玩家炮塔:鼠标经累积器平滑跟随(方向键不控炮塔)
   if (player && player.alive) {
-    var isHeliP = isHeliVehicle(player);   // ★审查C1: 删除重复声明行(原版同 var 连写两次, 零行为差异)
+    var isHeliP = isHeliVehicle(player);
     var curHeliWp = isHeliP ? (player._heliWeapon || 3) : 1;
     var pitchMin, pitchMax;
     if (isHeliP) {
@@ -122,9 +133,9 @@ function step(dt) {
         pitchMax = 0.0;
       }
     } else if (typeof isAAVehicle === 'function' && isAAVehicle(player)) {
-      // 任务25:玩家防空载具发射架/机炮伺服包线——PGZ-95 -5°~+90°(用户设定,可对天顶);复仇者 -10°~+70°。
+      // 任务25:玩家防空载具发射架/机炮伺服包线——RED_AA -5°~+90°(用户设定,可对天顶);蓝方防空车 -10°~+70°。
       // (修复前 AA 落入通用地面车 -0.14~0.3 包线=机炮/发射架物理仰角被钳在 ~17° 的隐性 bug)
-      if (player.team === 'ally') { pitchMin = -5 * Math.PI / 180; pitchMax = 90 * Math.PI / 180; }
+      if (player.team === 'red') { pitchMin = -5 * Math.PI / 180; pitchMax = 90 * Math.PI / 180; }
       else { pitchMin = -0.1745; pitchMax = 1.2217; }
     } else {
       pitchMin = -0.14;
@@ -167,13 +178,13 @@ function step(dt) {
       var _pv0 = effectiveShellSpeed(player);     // 装定按实际出膛初速(炮管血量因子与 fireShell/AI tof 同口径)——名义初速在炮管受损时使实际下坠>装定=落点低于指示器
       if (isFinite(dAimC)) pitchComp = Math.min(0.5 * CONF.gravity * player._dSm / (_pv0 * _pv0), 0.012);
     }
-    lastPitchComp = pitchComp;                       // 转录给调试探针(测试断言:炮口就位残差应≈装定超越量)
     player.gunPivot.getWorldPosition(_v2);
     player.gunPivot.getWorldDirection(_vM);                            // 真实炮口指向(含车体姿态;同帧矩阵快照)
     var tankScoped = player.kind !== 'arty' && scopeT > 0.5;           // 坦克/歼击车炮镜:瞄具=FPS 视野
     // 汇瞄目标角(坦克/歼击车第三人称用):把炮口线压到着点 P 上;炮镜分支沿用 dir(camAim)(与视轴同轴等效,数值冻结)
     var dCap = (player.kind === 'arty' ? (isFinite(dAimC) ? dAimC : 4000) : player._dSm);   // 坦克/歼击车=链级平滑视距 dSm(伺服P/装定/准星同源),火箭炮照旧
-    _vAim.copy(camera.position).addScaledVector(_vComp, dCap);         // 着点 P(黄点的世界坐标)
+    _vAim.copy(camera.position).addScaledVector(_vComp, dCap);      // 手动瞄准着点 P(黄点的世界坐标)
+    lastPitchComp = pitchComp;
     var amx = _vAim.x - _v2.x, amy = _vAim.y - _v2.y, amz = _vAim.z - _v2.z,
         amLen = Math.sqrt(amx * amx + amy * amy + amz * amz) || 1,
         gywT = Math.atan2(amx, amz), gptT = Math.asin(clamp(amy / amLen, -1, 1));   // 世界系几何汇瞄角(探针对照)
@@ -181,12 +192,27 @@ function step(dt) {
     //    本地逻辑角不可直接当世界角用:坡上姿态会把炮口带偏数度(俯 -4.6° 坡面,逻辑 -2.67° 实射 -6.71°);
     //    精确逆解 wLoc=Ry(ty*)∘Rx(gp*)=R⁻¹·w:ty*/gp* 即炮塔/身管本地目标角——任何坡度炮口线穿过黄点 P。
     _qAim.copy(player.group.getWorldQuaternion(_qAim2)).invert();
-    _vAim.set(amx / amLen, amy / amLen, amz / amLen).applyQuaternion(_qAim);          // w 换入车体本地系
-    var tyS = Math.atan2(_vAim.x, _vAim.z), gptS = Math.asin(clamp(_vAim.y, -1, 1));   // 本地塔转/炮仰目标角
+    _vAim.set(amx / amLen, amy / amLen, amz / amLen).applyQuaternion(_qAim); // world aim direction in hull-local space
+    var tyS = Math.atan2(_vAim.x, _vAim.z);
+    var gptS = Math.asin(clamp(_vAim.y, -1, 1));
+    var tySc, gptSc;
     _vAim.set(Math.sin(camAimY) * Math.cos(camAimP), Math.sin(camAimP), Math.cos(camAimY) * Math.cos(camAimP)).applyQuaternion(_qAim);
-    var tySc = Math.atan2(_vAim.x, _vAim.z), gptSc = Math.asin(clamp(_vAim.y, -1, 1)); // 炮镜分支:dir(camAim) 同款逆解
+    tySc = Math.atan2(_vAim.x, _vAim.z);
+    gptSc = Math.asin(clamp(_vAim.y, -1, 1)); // 炮镜分支:dir(camAim) 同款逆解
     lastAimT.y = tyS; lastAimT.p = gptS; lastAimT.gy = gywT; lastAimT.gp = gptT; lastAimT.d = dAimC;   // 汇瞄探针转录(验收断言用)
-    if (artyScoped) {
+    var blueHeliAutoAim = (isHeliP && player.team === 'blue' && player.kind === 'ah64' &&
+      typeof vehicleTechBlueHeliAutoCannonAim === 'function')
+      ? vehicleTechBlueHeliAutoCannonAim(player) : null;
+    if (blueHeliAutoAim) {
+      /* The automatic cannon owns the player AH-64 gun servo while its target
+         is valid; rockets and missiles retain their normal selected-weapon aim. */
+      player.turretYawDelta = clamp(normAng(blueHeliAutoAim.yaw - player.turretYaw), -0.7, 0.7);
+      player.gunPitch = clamp(player.gunPitch + clamp(blueHeliAutoAim.pitch - player.gunPitch, -pServoRate * dt, pServoRate * dt), pitchMin, pitchMax);
+      if (blueHeliAutoAim.target && blueHeliAutoAim.target.group) {
+        var autoTargetPos = blueHeliAutoAim.target.group.position;
+        _v3.set(autoTargetPos.x, autoTargetPos.y + 1.2, autoTargetPos.z);
+      }
+    } else if (artyScoped) {
       // 俯视火控视野:无炮口线准星——光标即装定点,地面覆盖环即弹着区(world.js artyTop 标记系)
       _v3.set(_v2.x, _v2.y, _v2.z);
     } else if (tankScoped) {
@@ -198,7 +224,7 @@ function step(dt) {
       var muX = _vM.x, muY = _vM.y, muZ = _vM.z;                // 真实炮口方向(逻辑角缺车体姿态,坡上差数度=根源)
       var wvX = _v2.x - camera.position.x, wvY = _v2.y - camera.position.y, wvZ = _v2.z - camera.position.z;
       var bUV = muX * _vComp.x + muY * _vComp.y + muZ * _vComp.z,
-          eVW = _vComp.x * wvX + _vComp.y * wvY + _vComp.z * wvZ;   // 炮口线相对视轴的同向度/前置程(dUW/denX/sGeo 三件套 连根删)
+          eVW = _vComp.x * wvX + _vComp.y * wvY + _vComp.z * wvZ;   // Barrel-line alignment with the sight ray.
       /* ★挂点连续性(V 字抖动根治)——实测定性:sGeo=两线最近交会
          参数(分子/分母 denX=sin²θ 同趋零)在斜视交线下数学上无界必抖,任何闸门都只把病态带收窄、闸门边界本
          身就是跳变源(实测:现行码 38 次无 provoke 单帧跳 worst+994.6px,含 sGeo=8.xx 刚跨闸下限被采信
@@ -237,7 +263,10 @@ function step(dt) {
       if (rrCh < 1e-4) chOffY = -parkR;                                              // 正后方无方位:驻顶
       else { chOffX = _v3.x / rrCh * parkR; chOffY = -_v3.y / rrCh * parkR; }
     }
-    if (tankScoped) {
+    if (blueHeliAutoAim) {
+      /* Automatic AH-64 fire-control remains authoritative in both third-person
+         and gun-sight views; mouse look still controls the camera only. */
+    } else if (tankScoped) {
       if (!player._hullAim) camAimY += hullDy;                  // 车体转多少,瞄具视野跟着转多少(世界贴住不漂);车体瞄准模式跳过——camAimY 须保持鼠标世界方位,车体向它收敛
       // ★FPS 式炮镜:瞄具(camAim=镜心/十字丝)已由 mousemove 增量驱动、零延迟跟手,360° 自由转头;
       //   真实炮口只按载具实际炮塔速度追踪跟随瞄具(伺服残差=炮口滞后,#ch 落点准星可见地爬回镜心)
@@ -248,7 +277,7 @@ function step(dt) {
       //   十字准星=炮口真实指向,停追后与镜心重合(炮镜内),转动炮镜时可见追逐。
       // 第三人称保留辅助装定(黄点=着点,语义不变);炮镜路径无装定修正。
       player.gunPitch = clamp(player.gunPitch + clamp(gptSc + rpkP1 - player.gunPitch, -pServoRate * dt, pServoRate * dt), pitchMin, pitchMax + rpkP1);   // 俯仰=瞄具本地角+后坐上抬(无装定)
-    } else if (!artyScoped) {
+    } else if (!artyScoped && !blueHeliAutoAim) {
       // ★第三人称汇瞄伺服:炮口追「炮枢→着点 P」真实汇瞄角(而非抽象 dir(camAim))——
       //   停追后炮口线穿过黄点(任何视角);追踪过程 #ch 沿交会点可见地爬回屏心(伺服残差=炮口滞后)
       if (aimChaseOn && !artyFrozen) {                          // 按下方向键暂停追逐(手动微调),移动鼠标恢复
@@ -286,6 +315,12 @@ function step(dt) {
        旧代码只在非 artyScoped 分支写 rotation,造成镜头左右移动而发射架停在原位。 */
     player.turret.rotation.y = player.turretYaw;
     player.gunPivot.rotation.x = -player.gunPitch;                  // 三种视角/兵种统一写回
+    if (blueHeliAutoAim && typeof vehicleTechBlueHeliAutoCannonFire === 'function') {
+      /* fireShell reads the real muzzle world matrix, so commit the automatic
+         servo pose before the player-only automatic fire consumer runs. */
+      player.group.updateMatrixWorld(true);
+      vehicleTechBlueHeliAutoCannonFire(player, blueHeliAutoAim);
+    }
     player._scYaw = player.yaw;                                     // 帧末快照回填(段首 hullDy 的基准;本段内瞄准改 yaw 不入拖拽)
   }
 
@@ -305,7 +340,9 @@ function step(dt) {
     var matrixDirty = tm2.gDirty || tm2._mwX !== pp2.x || tm2._mwZ !== pp2.z ||
       tm2._mwYaw !== tm2.yaw || tm2._mwTurret !== tm2.turretYaw || tm2._mwGun !== tm2.gunPitch ||
       tm2._mwY !== pp2.y || tm2._mwRx !== tm2.group.rotation.x ||
-      tm2._mwRz !== tm2.group.rotation.z || tm2._mwRot !== tm2._heliRotorAngle;
+      tm2._mwRz !== tm2.group.rotation.z || tm2._mwRot !== tm2._heliRotorAngle ||
+      tm2._mwSuspPitch !== (tm2._suspLoad ? tm2._suspLoad.pitch : 0) ||
+      tm2._mwSuspRoll !== (tm2._suspLoad ? tm2._suspLoad.roll : 0);
     if (!matrixDirty) continue;
     alignTank(tm2, dt);
     tm2.group.updateMatrixWorld(true);                // 逻辑射线只看车组内部件
@@ -314,18 +351,23 @@ function step(dt) {
     tm2._mwY = tm2.group.position.y;
     tm2._mwRx = tm2.group.rotation.x; tm2._mwRz = tm2.group.rotation.z;
     tm2._mwRot = tm2._heliRotorAngle;
+    tm2._mwSuspPitch = tm2._suspLoad ? tm2._suspLoad.pitch : 0;
+    tm2._mwSuspRoll = tm2._suspLoad ? tm2._suspLoad.roll : 0;
     tm2.gDirty = false;
   }
   turretWatchdog(dt);                                    // 炮塔消失类异常实时留证(见函数注)
   __mark('coll');
   hitGridDynamicTick();            // 活车命中网格逐车换格增量(触发器:未换格零操作;替代旧 0.3s 全量重建)
   __mark('grid');
+  if (typeof ffaAirstrikeUpdate === 'function') ffaAirstrikeUpdate(dt); // FFA 缩圈完成后的每秒三发空袭调度
+  if (typeof powerupTick === 'function') powerupTick(dt);
   rocketThreatScan(dt);                           // 火箭弹来袭预报(0.22s 节流,落点外推共 AI 躲避消费)
   stepShells(dt);
   __mark('shells');
 
   if (gameT - craterFlushT > 0.3) { craterFlushT = gameT; flushCraters(); }   // 合批窗口 0.2→0.3s(弹坑/焦土为永久累积,更大批=更少上传事件;爆效遮蔽延迟无感)
   cloudsUpdate(dt);                                      // 云朵缓慢漂移
+  if (typeof updateBattlefieldAtmosphere === 'function') updateBattlefieldAtmosphere(dt);
   if (typeof treesRunOverScan === 'function') treesRunOverScan();   // 载具碾树(定步长内;空表零开销)
   if (typeof grassPlayerScan === 'function') grassPlayerScan();     // 玩家碾压/直升机低掠 → 花草抖动(仅 player)
   stepHeliFallingWrecks(dt);                             // 空中直升机残骸自然下落与触地燃爆(空队列零开销)
@@ -355,7 +397,7 @@ function step(dt) {
   }
 
   // 大本营军旗顶点飘扬(20Hz 节流:纯视觉顶点写+上传省 4/5)+ 待命环脉动(每帧,材质属性便宜)
-  ['ally', 'enemy'].forEach(function (tm) {
+  ['red', 'blue'].forEach(function (tm) {
     for (var hi = 0; hi < hqList[tm].length; hi++) {
       var hq = hqList[tm][hi];
       /* 旗面 4.8m 宽,远处只有几个像素 —— 800m 外停更顶点(停在最后姿态,静止不可辨)。
@@ -404,7 +446,7 @@ function step(dt) {
       tot++;
       var ck = Math.floor(t2.group.position.x / 80) + ',' + Math.floor(t2.group.position.z / 80);
       var cc = cellMap[ck] || (cellMap[ck] = { a: 0, e: 0, n: 0 });
-      cc.n++; if (tm === 'ally') cc.a++; else cc.e++;
+      cc.n++; if (tm === 'red') cc.a++; else cc.e++;
       if (t2.ai) {
         var m = tm + ':' + (t2.ai.mode || '?');
         dbg.modes[m] = (dbg.modes[m] || 0) + 1;
@@ -448,16 +490,16 @@ function step(dt) {
     aliveList.forEach(function (t3) {
       if (!t3.alive || !t3.ai) return;
       var tm3 = t3.team;
-      if (tm3 === 'ally') { nA++; poASum += t3.ai.posture || 0; if (t3.ai.alert) alA++; }
+      if (tm3 === 'red') { nA++; poASum += t3.ai.posture || 0; if (t3.ai.alert) alA++; }
       else { nE++; poESum += t3.ai.posture || 0; if (t3.ai.alert) alE++; }
       if (t3.ai.evadeT > 0) evN++;
-      if (t3._cmdG && t3._cmdG.role === 'flank') { if (tm3 === 'ally') flA++; else flE++; if (t3.ai.mode === 'flankrun') flRun++; }   // 迂回统计改读指挥官分组
+      if (t3._cmdG && t3._cmdG.role === 'flank') { if (tm3 === 'red') flA++; else flE++; if (t3.ai.mode === 'flankrun') flRun++; }   // 迂回统计改读指挥官分组
     });
-    dbg.attn = { ally: +(nA ? alA / nA : 0).toFixed(2), enemy: +(nE ? alE / nE : 0).toFixed(2) };   // 警觉占比(其余=专注埋头)
+    dbg.attn = { red: +(nA ? alA / nA : 0).toFixed(2), blue: +(nE ? alE / nE : 0).toFixed(2) };   // 警觉占比(其余=专注埋头)
     dbg.evacNow = evN; dbg.evasions = dbgStats.evasions || 0; dbg.threats = rocketThreats.length;
     dbg.evadeLog = evadeLog;
-    dbg.posture = { ally: +(nA ? poASum / nA : 0).toFixed(2), enemy: +(nE ? poESum / nE : 0).toFixed(2) };
-    dbg.flank = { ally: flA, enemy: flE, running: flRun };
+    dbg.posture = { red: +(nA ? poASum / nA : 0).toFixed(2), blue: +(nE ? poESum / nE : 0).toFixed(2) };
+    dbg.flank = { red: flA, blue: flE, running: flRun };
     var cA = [];
     for (var ck in commanders) { var cc2 = commanders[ck];
       for (var cg2 = 0; cg2 < cc2.groups.length; cg2++) { var gg = cc2.groups[cg2];
@@ -471,7 +513,7 @@ function step(dt) {
     dbg.abandon = abSnap;                                // 弃车观察表快照(事件驱动审计)
     dbg.wreckShots = dbgStats.wreckShots || 0;
     dbg.camera = camera;                                  // 真机视锥审计(harness 相机不入场景图拿不到)
-    dbg.pool = { ally: teamPool.ally, enemy: teamPool.enemy };
+    dbg.pool = { red: teamPool.red, blue: teamPool.blue };
     dbg.queue = respawnQueue.length;
     if (player) {
       dbg.pk = player.kind; dbg.pAlive = player.alive; dbg.pSalvo = player.salvoLeft;
@@ -496,9 +538,9 @@ function step(dt) {
         fireShell: fireShell,                                                                           // 后坐测试:直接击发
         setKind: function (k) { respawnSel.kind = k; },
         setWing: function (w) { respawnSel.wing = clamp(w | 0, 0, HQ_WINGS.length - 1); },   // 无头回归:指定左/中/右翼
-        setPool: function (n) { teamPool.ally = n; },
+        setPool: function (n) { teamPool.red = n; },
         setPoolSide: function (n) { teamPool[pSide()] = n; },           // 按玩家队装兵力(选边后用)
-        killPlayer: function () { if (player && player.alive) { player.struct = 0; killTank(player, '调试击杀'); } },   // 真链:阵亡→playerDied
+        killPlayer: function () { if (player && player.alive) { player.struct = 0; killTank(player, 'DEBUG KILL'); } },   // 真链:阵亡→playerDied
         redeploy: function () { redeployPlayer(); },
         player: function () { return player; },
         setTime: function (h) { applyTimeOfDay(h); },   // 连续时间:小时 0~24
@@ -515,8 +557,8 @@ function step(dt) {
             var ud = hits[i].object.userData;
             if (!ud || !ud.mod) continue;
             var rec = null;
-            var sh = { owner: { team: tk.team === 'ally' ? 'enemy' : 'ally' }, pen: pen || 124, dmg: 90,
-                       kdrag: kdrag == null ? CONF.ally.penKd : kdrag, flyD: flyD || 0,
+            var sh = { owner: { team: tk.team === 'red' ? 'blue' : 'red' }, pen: pen || 124, dmg: 90,
+                       kdrag: kdrag == null ? CONF.red.penKd : kdrag, flyD: flyD || 0,
                        vel: dir.clone().multiplyScalar(CONF.shellSpeedE), pos: hits[i].point.clone(),
                        _rec: function (r2) { rec = r2; } };
             var res = resolveHit(sh, tk, ud.key, hits[i], dir);
@@ -528,7 +570,7 @@ function step(dt) {
         },
         clearAI: function () { clearAllAI(); },        // 只留玩家 + 清空增援队列(实现见文件尾 clearAllAI;场景隔离:击毁车辆不于大本营重新部署)
         makeMidgame: function (nAlive, nWreck) { return buildMidgame(nAlive, nWreck); },   // 基准场景一键构造(实现见文件尾 buildMidgame)
-        kill: function (tk) { killTank(tk, '测试击杀'); },           // AI 行为回归:定点制造残骸
+        kill: function (tk) { killTank(tk, 'TEST KILL'); },           // AI 行为回归:定点制造残骸
         tanks: function () { return tanks; },                        // 火控回归:全场车辆列举(威胁/视野/射速审计)
         shells: function () { return shells; },                      // 弹道 SPY:在飞弹体列举(弹着点/死法探针用)
         threatScore: threatScore,                                    // 威胁评分公式单测挂钩
@@ -541,7 +583,7 @@ function step(dt) {
             if (shells[cs].mesh) scene.remove(shells[cs].mesh);
           }
           shells.length = 0; airborneMissiles.length = 0; rocketThreats.length = 0; rocketScanT = 0;
-          if (typeof _flares !== 'undefined') _flares.length = 0;   // 诱饵弹同清(与在飞弹表同口径)
+          if (typeof clearHeliDecoys === 'function') clearHeliDecoys();
           rocketThreatGrid.clear();                                 // 威胁桶随预报账同清
           rocketBodies.count = 0; rocketFlames.count = 0;            // 实例化弹体/尾焰同步清零(火箭无独立网格)
         }
@@ -560,8 +602,8 @@ function step(dt) {
     dbg.shellsRef = shells;                          // 弹道数组(火箭链路回归用)
     dbg.rocketProf = { spec: ROCKET_PROF, phase: rocketPhaseSpeed };   // 火箭速度剖面旋钮+函数(验收口)
     dbg.penSpec = {                                                     // 穿深存速衰减验收口(数值/公式/口径对照)
-      ally: CONF.ally.pen, enemy: CONF.enemy.pen, td: CONF.td.pen,
-      kdTank: CONF.ally.penKd, kdTd: CONF.td.penKd,
+      red: CONF.red.pen, blue: CONF.blue.pen, td: CONF.td.pen,
+      kdTank: CONF.red.penKd, kdTd: CONF.td.penKd,
       at: function (kd, R) { return Math.exp(-kd * R); }                // P(R)=P0·at(kd,R)(真实弹道物理)
     };
     dbg.rocketVfx = function () {                      // 火箭视觉体检口(实例化弹体/尾焰/容量/材质)
@@ -598,80 +640,13 @@ function step(dt) {
 }
 
 var _fpsAcc = 0, _fpsN = 0, _fpsT = 0, _lastFrameT = 0;   // 基于真实墙钟时间的帧率统计
-var SIM_DT = 0.02, SIM_MAX_STEPS = 5;   // ★定步长模拟:50Hz 恒定步长;单帧最多 5 步(100ms)——超限丢弃=短暂慢动作,防死亡螺旋且永不瞬移
-/* ★直升机专项 B1(报告 §六):步数上限 3→5——原 60ms 封顶对直升机太紧:极速 69.4m/s 时丢 1 步(20ms)
-   ≈ 丢 1.4m 位移 + 相机 lerp 与插值端点错拍 = 肉眼可见的"向后拽"(坦克 ~15m/s 丢同步只有 0.3m,无感);
-   手机中端机帧时在 60~100ms 间抖动的尖峰帧,抬到 5 步后不再丢时间。代价=尖峰帧偶尔多跑 1~2 步的 JS,可接受。 */
+var SIM_DT = 0.02, SIM_MAX_STEPS = 3;   // ★定步长模拟(Rigidbody 插值):50Hz 恒定步长;单帧最多 3 步(60ms)——超限丢弃=短暂慢动作,防死亡螺旋且永不瞬移
 var _simAcc = 0;                        // 定步长累积器(渲染帧间隔入账,模拟按 20ms 整步消费)
 var _spikeN = 0, _spikeWorst = 0;   // 诊断账:停顿帧次数/最差原始帧时(控制台读 window.__SPIKE;零开销,仅真停顿帧才写)
 var _perfAcc = 0.5;                      // 细分面板独立 0.5s 窗口(与 dcAudit 2s 解耦——面板读数恢复真实 0.5s 口径)
 var _stepMsEMA = 0, _frameMsEMA = 0;     // CPU 拆分计时——step(模拟)ms 与整帧 JS ms(EMA);JS 低而 fps 低=GPU 瓶颈
 var _dcaAcc = 2;                         // DC 归因审计节流(2s 一拍:scene.traverse 开销随残骸累积的节点数线性增长,诊断读数无需 2Hz)
 var cmdTickT = 0;                        // 指挥官 1Hz 节流
-/* P2-DRS-START ★P2-⑧ 全局自适应质量控制器(运行时 DRS,性能优化报告)——
-   信号=墙钟帧时 EMA(_wallMsEMA,由 animate 喂;不用 _frameMsEMA 的理由:报告 §一 自己写了
-   “JS ms≪帧时→GPU 瓶颈”,GPU 瓶颈帧的 JS 耗时很低,只看 JS EMA 会对第一嫌疑(填充率)失明)。
-   执行器=全局像素比系数 drsScale∈[0.6,1.0] 步进 0.1:
-   · 下钻:帧时 EMA>22ms 持续 1.5s → 降一档(报告阈值);
-   · 回升:帧时 EMA<14ms 持续 3s(慢升防抖振)→ 升一档,上限=画质档像素比(永不越过用户所选档);
-   · 触底仍>28ms 持续 3s → 二级旋钮收紧残骸烟密度(特效密度档,报告顺序“像素比→RT→特效”);
-   · 漫画合成 RT 按 drawingBufferSize 逐帧跟随(既有兼容点),像素比一动场景+合成两个全屏 pass 同缩;
-   · 与开镜 DRS 相乘叠加:effective = base × drsScale × (开镜档),统一经 drsApply 落笔,
-     applyScopePerf/resize 不再各自直写像素比(单一落笔点,杜绝互相覆盖);
-   · 标签页切走/大停顿(墙钟>120ms)不入 EMA 不计驻留,防误降;开局 4s 热身不决策(着色器编译尖峰);
-   · ?drs=0 关闭(桌面 A/B 对照);调试面板与 window.__DRS 可读。 */
-var DRS_ON = !/[?&]drs=0(?:&|$)/.test((typeof location !== 'undefined' && location.search) || '');
-var drsScale = 1.0, _drsHotT = 0, _drsCoolT = 0, _drsDeepT = 0, _drsFxDeep = false, _drsWarmT = -1, _drsSettleT = 0;
-var DRS_HOT = 22, DRS_COOL = 14, DRS_DEEP = 28, DRS_FLOOR = 0.6, DRS_STEP = 0.1;
-var DRS_HOT_DWELL = 1.5, DRS_COOL_DWELL = 5.0, DRS_DEEP_DWELL = 3.0, DRS_WARMUP = 4.0;
-var DRS_SETTLE = 3.0;                  // ★直升机专项 C1(报告 §六):档位变化后的稳定窗——窗口内冻结决策、驻留清零重计,
-                                       // 打断"降档→变轻→升档→变重"的分辨率泵动环(业界滞回设计:持续富余才升档);
-                                       // ★C2:升档驻留 3s→5s,回升更保守,减少切换次数(每次切换=setSize+漫画RT重建=移动端一次顿挫)
-function drsApply() {                    // 像素比单一落笔点(基准×全局DRS×开镜档)
-  if (typeof renderer === 'undefined' || !renderer) return;
-  var base = (typeof _basePixelRatio !== 'undefined' && _basePixelRatio > 0) ? _basePixelRatio : 1;
-  var scope = (typeof _scopeResHi !== 'undefined' && _scopeResHi && typeof _scopeResRatio !== 'undefined') ? _scopeResRatio : 1;
-  renderer.setPixelRatio(Math.max(0.35, base * drsScale * scope));
-  if (typeof innerWidth !== 'undefined') renderer.setSize(innerWidth, innerHeight, false);
-}
-function drsTick(wallMs, dtSec) {        // 每帧调用(墙钟帧时 + 渲染间隔);返回是否发生档位变化
-  if (!DRS_ON) return false;
-  if (typeof gameState !== 'undefined' && gameState !== 'playing' && gameState !== 'paused') {   // 菜单/结算:回满不降
-    if (drsScale !== 1.0) { drsScale = 1.0; _drsHotT = _drsCoolT = _drsDeepT = _drsSettleT = 0; if (_drsFxDeep) { _drsFxDeep = false; if (typeof WRSMOKE_AMT !== 'undefined') WRSMOKE_AMT = 1.0; } drsApply(); return true; }
-    _drsHotT = _drsCoolT = _drsDeepT = 0;
-    return false;
-  }
-  if (wallMs > 120) { _drsHotT = _drsCoolT = _drsDeepT = 0; return false; }   // 大停顿/切页:不计驻留(EMA 端由调用方钳制)
-  if (_drsWarmT < 0) _drsWarmT = 0;
-  _drsWarmT += dtSec;
-  if (_drsWarmT < DRS_WARMUP) return false;
-  var ema = (typeof _wallMsEMA === 'number') ? _wallMsEMA : wallMs;
-  var changed = false;
-  if (_drsSettleT > 0) {                          // ★C1 稳定窗:档位刚变过 → 冻结升降决策,驻留清零重计(打断泵动环)
-    _drsSettleT -= dtSec;
-    _drsHotT = 0; _drsCoolT = 0;
-  } else {
-    if (ema > DRS_HOT) { _drsHotT += dtSec; _drsCoolT = 0; }
-    else if (ema < DRS_COOL) { _drsCoolT += dtSec; _drsHotT = 0; _drsDeepT = 0; }
-    else { _drsHotT = 0; _drsCoolT = 0; _drsDeepT = 0; }
-    if (_drsHotT >= DRS_HOT_DWELL && drsScale > DRS_FLOOR + 1e-6) {
-      drsScale = Math.max(DRS_FLOOR, Math.round((drsScale - DRS_STEP) * 10) / 10);
-      _drsHotT = 0; _drsCoolT = 0; _drsSettleT = DRS_SETTLE; changed = true;
-    } else if (_drsCoolT >= DRS_COOL_DWELL && drsScale < 1.0 - 1e-6) {
-      drsScale = Math.min(1.0, Math.round((drsScale + DRS_STEP) * 10) / 10);
-      _drsCoolT = 0; _drsHotT = 0; _drsSettleT = DRS_SETTLE; changed = true;
-    }
-  }
-  /* 二级旋钮:像素比已触底仍持续重载 → 收紧残骸烟密度(特效密度档) */
-  if (drsScale <= DRS_FLOOR + 1e-6 && ema > DRS_DEEP) _drsDeepT += dtSec; else _drsDeepT = 0;
-  if (_drsDeepT >= DRS_DEEP_DWELL && !_drsFxDeep) { _drsFxDeep = true; if (typeof WRSMOKE_AMT !== 'undefined') WRSMOKE_AMT = 0.45; }
-  if (_drsFxDeep && ema < DRS_COOL && drsScale >= 1.0 - 1e-6) { _drsFxDeep = false; if (typeof WRSMOKE_AMT !== 'undefined') WRSMOKE_AMT = 1.0; }
-  if (typeof window !== 'undefined') window.__DRS = { scale: drsScale, ema: ema, hot: _drsHotT, cool: _drsCoolT, settle: _drsSettleT, fxDeep: _drsFxDeep };
-  if (changed) drsApply();
-  return changed;
-}
-/* P2-DRS-END */
-var _wallMsEMA = 0;                      // ★P2-⑧:墙钟帧时 EMA(喂 drsTick;GPU 瓶颈帧也计入,与 _frameMsEMA 的 JS 口径互补)
 function animate() {
   requestAnimationFrame(animate);
   if (typeof audioPauseSync === 'function') audioPauseSync();   // 暂停即静音看门狗
@@ -684,7 +659,7 @@ function animate() {
      帧间隔波动时互相追赶 = rubber-banding,钳 dt 只能治标。
      故模拟永远以 SIM_DT=20ms 恒定推进(与渲染帧率完全解耦),渲染把活车 group 写成
      lerp(上一步末, 本步末, alpha),alpha=累积器余量/步长——任意 fps 下车体屏幕运动匀速平滑;
-     偶发大停顿→累积器多走几步(封顶 5,见 §六-B1),超限时间丢弃=短暂慢动作,永不瞬移。
+     偶发大停顿→累积器多走几步(封顶 3),超限时间丢弃=短暂慢动作,永不瞬移。
      每步三段式:① group 恢复模拟态并记 prev=上一步末(渲染写过插值态,物理必须从真态积分)
                ② step(SIM_DT) 恒定步长推进(内部 AI/碰撞/贴地/粒子全部吃固定 dt=确定性)
                ③ 存本步末模拟态(_ipP/_ipQ,渲染插值的两端点) */
@@ -694,8 +669,21 @@ function animate() {
   var _steps = 0, _dropped = 0;
   if (gameState === 'playing') {
     while (_simAcc >= SIM_DT) {
+      if (_steps >= SIM_MAX_STEPS) {
+        _dropped += _simAcc;
+        _simAcc = 0;
+        for (si = 0; si < aliveList.length; si++) {
+          st = aliveList[si];
+          if (st && st._ipP) {
+            st._ipPv.copy(st._ipP);
+            st._ipQv.copy(st._ipQ);
+            if (st.mainRotorGroup && st._ipRA != null) st._ipRAv = st._ipRA;
+            if (st.tailRotorGroup && st._ipTA != null) st._ipTAv = st._ipTA;
+          }
+        }
+        break;
+      }
       _simAcc -= SIM_DT;
-      if (_steps >= SIM_MAX_STEPS) { _dropped += SIM_DT; continue; }   // 溢出丢弃:<16fps 渲染时模拟走慢(不追帧=不瞬移)
       var si, st;
       for (si = 0; si < aliveList.length; si++) {
         st = aliveList[si];
@@ -748,7 +736,10 @@ function animate() {
     if (dtRaw > _spikeWorst) _spikeWorst = dtRaw;
     window.__SPIKE = { n: _spikeN, worstMs: _spikeWorst * 1000 };
   }
-  if (gameState === 'playing') { cameraUpdate(renderDt); scopeHudUpdate(); }   // ★从 step 移出:相机按渲染帧节奏跟随插值后的玩家(否则 50Hz 相机 vs 100fps 车体错拍);#ch 投影依赖相机姿态,随相机同帧
+  if (gameState === 'playing') {
+    cameraUpdate(renderDt);
+    scopeHudUpdate();
+  }   // ★相机按渲染帧节奏跟随插值后的玩家
   sqArrowsTick();                                     // 指挥模式屏幕外小队箭头(未激活=单布尔早退;相机矩阵在函数内定稿)
   sqFlagTick();                                       // 占领旗面向相机(隐藏态单布尔早退;单对象一次 atan2)
   var _t1 = performance.now();
@@ -772,9 +763,6 @@ function animate() {
   perfMarkWindow(_wallDt, _t2 - _t0, _t1 - _t0, _t2 - _t1);
   _stepMsEMA += ((_t1 - _t0) - _stepMsEMA) * 0.08;
   _frameMsEMA += ((_t2 - _t0) - _frameMsEMA) * 0.08;
-  var _wallMsNow = _wallDt * 1000;
-  _wallMsEMA += (Math.min(_wallMsNow, 120) - _wallMsEMA) * 0.06;   // ★P2-⑧:墙钟帧时 EMA(>120ms 尖峰钳制=切页/卡顿不污染决策)
-  drsTick(_wallMsNow, _wallDt);
   _fpsAcc += _wallDt; _fpsN++;
   if (_fpsAcc >= 0.5) {
     _fpsT = Math.round(_fpsN / _fpsAcc);
@@ -784,7 +772,7 @@ function animate() {
     var ri = renderer.info.render;
     /* fps 行拆分:帧率显示关=不写(整行已隐);调试模式开=附加 dc/tri/JS/step 拆分,关=纯帧数 */
     if (el.fps && window._fpsShow) el.fps.textContent = window._dbgPerfOn
-      ? _fpsT + ' fps · ' + ri.calls + ' dc · ' + (ri.triangles > 999999 ? (ri.triangles / 1000000).toFixed(1) + 'M' : Math.round(ri.triangles / 1000) + 'k') + ' tri · JS' + _frameMsEMA.toFixed(1) + '/step' + _stepMsEMA.toFixed(1) + 'ms' + (drsScale < 1.0 ? ' · DRS×' + drsScale.toFixed(1) : '') + (_drsFxDeep ? '·烟↓' : '')   // di:JS 耗时拆分(帧时=1000/fps;JS≪帧时→GPU 瓶颈);DRS×<1=全局降采样生效中
+      ? _fpsT + ' fps · ' + ri.calls + ' dc · ' + (ri.triangles > 999999 ? (ri.triangles / 1000000).toFixed(1) + 'M' : Math.round(ri.triangles / 1000) + 'k') + ' tri · JS' + _frameMsEMA.toFixed(1) + '/step' + _stepMsEMA.toFixed(1) + 'ms'   // di:JS 耗时拆分(帧时=1000/fps;JS≪帧时→GPU 瓶颈)
       : _fpsT + ' fps';
     if (el.sigfps && window._fpsShow) el.sigfps.textContent = _fpsT;   // 信号组FPS段(联动帧率显示开关)
   }
@@ -800,7 +788,7 @@ function animate() {
 /* ============================================================
    初始化
    ============================================================ */
-console.log('[BOOT] 装甲部队');
+console.log('[BOOT] ARMORED CORPS');
 /* ############################################################
    以下至文件尾均为调试/自检设施(细分面板/DC 审计/基线构造/自动基线协议);
    全部由 __TANK_DEBUG / _dbgPerfOn / ?autotest= 门控,生产路径零开销。
@@ -819,16 +807,16 @@ function dcAudit() {
     total++;
     if (m.castShadow) casters++;
     var k;
-    if (typeof rocketBodies !== 'undefined' && (m === rocketBodies || m === rocketFlames)) k = '火箭实例';
-    else if (m.isInstancedMesh) k = '实例:' + (m.userData.instPart || '?');   // dl 起含 shell-P/shell-E 炮弹实例桶
-    else if (m.isMesh && typeof shellGeo !== 'undefined' && m.geometry === shellGeo) k = '在飞弹旧网格泄漏';   // dl 回归探针:应为 0
-    else if (m.userData.wreck) k = '残骸合并';
-    else if (m.userData._instSrc) k = '实例源泄漏';
-    else if (m.userData.lod) k = '载具LOD';
-    else if (m.userData.visual) k = '载具个体';
+    if (typeof rocketBodies !== 'undefined' && (m === rocketBodies || m === rocketFlames)) k = 'ROCKET INST';
+    else if (m.isInstancedMesh) k = 'INST:' + (m.userData.instPart || '?');
+    else if (m.isMesh && typeof shellGeo !== 'undefined' && m.geometry === shellGeo) k = 'SHELL MESH LEAK';
+    else if (m.userData.wreck) k = 'WRECK MERGED';
+    else if (m.userData._instSrc) k = 'INST SRC LEAK';
+    else if (m.userData.lod) k = 'VEH LOD';
+    else if (m.userData.visual) k = 'VEH SINGLE';
     else if (m.isPoints) k = 'points:' + (m.name || '?');
     else if (m.isSprite) k = 'sprite';
-    else k = '杂:' + (m.name || (m.material && m.material.name) || '?');
+    else k = 'MISC:' + (m.name || (m.material && m.material.name) || '?');
     buckets[k] = (buckets[k] || 0) + 1;
   });
   return { buckets: buckets, total: total, casters: casters };
@@ -838,9 +826,9 @@ function dcAuditShow() {
     var dc = dcAudit(), arr = [], bk;
     for (bk in dc.buckets) arr.push([bk, dc.buckets[bk]]);
     arr.sort(function (a, b) { return b[1] - a[1]; });
-    var s = 'dc归因:' + dc.total + '可见/' + dc.casters + '投影 ' +
+    var s = 'DC:' + dc.total + ' VIS/' + dc.casters + ' SHADOW ' +
       arr.slice(0, 7).map(function (e) { return e[0] + '=' + e[1]; }).join(' ');
-    if (arr.length > 7) s += ' +' + (arr.length - 7) + '类';
+    if (arr.length > 7) s += ' +' + (arr.length - 7) + ' TYPES';
     if (!_dcaEl) {
       _dcaEl = document.createElement('div');
       _dcaEl.style.cssText = 'position:absolute;top:38px;right:22px;color:#9dffa8;font-family:VT323,\'Courier New\',monospace;font-size:14px;letter-spacing:1px;text-align:right;background:rgba(6,12,5,.92);padding:3px 10px;border:1px solid #3d4a2e;box-shadow:0 0 10px rgba(157,255,168,.12), 2px 2px 0 #040704;text-shadow:0 0 6px rgba(140,255,158,.35);z-index:60;pointer-events:none;white-space:pre';
@@ -881,8 +869,8 @@ function dcAuditShow() {
     if (_dOn && !_fOn) _fOn = true;                      // 持久化态自洽:调试开则帧率必开
     function apply() {
       window._dbgPerfOn = _dOn; window._fpsShow = _fOn;
-      if (bD) { bD.textContent = '调试模式:' + (_dOn ? '开' : '关'); bD.classList.toggle('sel', _dOn); }
-      if (bF) { bF.textContent = '帧率显示:' + (_fOn ? '开' : '关'); bF.classList.toggle('sel', _fOn); }
+      if (bD) { bD.textContent = 'Debug: ' + (_dOn ? 'On' : 'Off'); bD.classList.toggle('sel', _dOn); }
+      if (bF) { bF.textContent = 'FPS: ' + (_fOn ? 'On' : 'Off'); bF.classList.toggle('sel', _fOn); }
       panel.style.display = _dOn ? 'block' : 'none';
       if (_dcaEl) _dcaEl.style.display = _dOn ? '' : 'none';   // DC 归因行随调试模式显隐(关闭时收走残留文本)
       var fpsEl = document.getElementById('fps');
@@ -908,7 +896,7 @@ function dcAuditShow() {
     var btns = row.querySelectorAll('button[data-gfx]');
     if (!btns.length) return;
     var LS = 'prefGfxProfile';
-    var NAMES = { high: '高', mid: '中', low: '低' };
+    var NAMES = { high: 'HIGH', mid: 'MED', low: 'LOW' };
     function stored() {
       try { var s = localStorage.getItem(LS); return (s === 'high' || s === 'mid' || s === 'low') ? s : ''; }
       catch (e) { return ''; }
@@ -923,8 +911,8 @@ function dcAuditShow() {
         if (btns[i].classList && btns[i].classList.toggle)
           btns[i].classList.toggle('sel', btns[i].getAttribute('data-gfx') === cur);
       if (val) val.textContent = eff
-        ? ('当前:' + (NAMES[cur] || cur) + '（被 ?gfx= 覆盖）')
-        : (st ? ('当前:' + (NAMES[cur] || cur)) : ('当前:' + (NAMES[cur] || cur) + '（设备默认）'));
+        ? ('CUR: ' + (NAMES[cur] || cur) + ' (OVERRIDDEN BY URL PARAM)')
+        : (st ? ('CUR: ' + (NAMES[cur] || cur)) : ('CUR: ' + (NAMES[cur] || cur) + ' (DEFAULT)'));
     }
     for (var i = 0; i < btns.length; i++) (function (b) {
       b.addEventListener('click', function () {
@@ -932,7 +920,7 @@ function dcAuditShow() {
         if (v !== 'high' && v !== 'mid' && v !== 'low') return;
         try { localStorage.setItem(LS, v); } catch (e) { /* 无存储环境:本次会话内仍按原档 */ }
         apply();
-        if (val) val.textContent = '已选:' + NAMES[v] + '（重启游戏生效）';
+        if (val) val.textContent = 'SEL: ' + NAMES[v] + ' (RESTART TO APPLY)';
       });
     })(btns[i]);
     apply();
@@ -950,7 +938,7 @@ function dcAuditShow() {
     var btns = row.querySelectorAll('button[data-fxq]');
     if (!btns.length) return;
     var LS = 'prefFxQuality';
-    var NAMES = { high: '高', mid: '中', low: '低' };
+    var NAMES = { high: 'HIGH', mid: 'MED', low: 'LOW' };
     function stored() {
       try { var s = localStorage.getItem(LS); return (s === 'high' || s === 'mid' || s === 'low') ? s : ''; }
       catch (e) { return ''; }
@@ -963,8 +951,8 @@ function dcAuditShow() {
         if (btns[i].classList && btns[i].classList.toggle)
           btns[i].classList.toggle('sel', btns[i].getAttribute('data-fxq') === cur);
       if (val) val.textContent = eff
-        ? ('当前:' + (NAMES[cur] || cur) + '（被 ?fxq= 覆盖）')
-        : (st ? ('当前:' + (NAMES[cur] || cur)) : ('当前:' + (NAMES[cur] || cur) + '（设备默认）'));
+        ? ('CUR: ' + (NAMES[cur] || cur) + ' (OVERRIDDEN BY ?fxq=)')
+        : (st ? ('CUR: ' + (NAMES[cur] || cur)) : ('CUR: ' + (NAMES[cur] || cur) + ' (DEFAULT)'));
     }
     for (var i = 0; i < btns.length; i++) (function (b) {
       b.addEventListener('click', function () {
@@ -972,7 +960,7 @@ function dcAuditShow() {
         if (v !== 'high' && v !== 'mid' && v !== 'low') return;
         try { localStorage.setItem(LS, v); } catch (e) { /* 无存储环境:本次会话内仍按原档 */ }
         apply();
-        if (val) val.textContent = '已选:' + NAMES[v] + '（重启游戏生效）';
+        if (val) val.textContent = 'SEL: ' + NAMES[v] + ' (RESTART TO APPLY)';
       });
     })(btns[i]);
     apply();
@@ -990,7 +978,7 @@ function dcAuditShow() {
     var btns = row.querySelectorAll('button[data-modq]');
     if (!btns.length) return;
     var LS = 'prefModQuality';
-    var NAMES = { high: '高', mid: '中', low: '低' };
+    var NAMES = { high: 'HIGH', mid: 'MED', low: 'LOW' };
     function stored() {
       try { var s = localStorage.getItem(LS); return (s === 'high' || s === 'mid' || s === 'low') ? s : ''; }
       catch (e) { return ''; }
@@ -1003,8 +991,8 @@ function dcAuditShow() {
         if (btns[i].classList && btns[i].classList.toggle)
           btns[i].classList.toggle('sel', btns[i].getAttribute('data-modq') === cur);
       if (val) val.textContent = eff
-        ? ('当前:' + (NAMES[cur] || cur) + '（被 ?modq= 覆盖）')
-        : (st ? ('当前:' + (NAMES[cur] || cur)) : ('当前:' + (NAMES[cur] || cur) + '（设备默认）'));
+        ? ('CUR: ' + (NAMES[cur] || cur) + ' (OVERRIDDEN BY ?modq=)')
+        : (st ? ('CUR: ' + (NAMES[cur] || cur)) : ('CUR: ' + (NAMES[cur] || cur) + ' (DEFAULT)'));
     }
     for (var i = 0; i < btns.length; i++) (function (b) {
       b.addEventListener('click', function () {
@@ -1012,7 +1000,7 @@ function dcAuditShow() {
         if (v !== 'high' && v !== 'mid' && v !== 'low') return;
         try { localStorage.setItem(LS, v); } catch (e) { /* 无存储环境:本次会话内仍按原档 */ }
         apply();
-        if (val) val.textContent = '已选:' + NAMES[v] + '（重启游戏生效）';
+        if (val) val.textContent = 'SEL: ' + NAMES[v] + ' (RESTART TO APPLY)';
       });
     })(btns[i]);
     apply();
@@ -1032,11 +1020,11 @@ function perfPanelUpdate() {
     tot += d;
   }
   lines.sort(function (a, b) { return b[1] - a[1]; });
-  panel.textContent = 'step细分ms/0.5s: ' + (lines.length
+  panel.textContent = 'STEP ms/0.5s: ' + (lines.length
     ? lines.map(function (e) { return e[0] + ':' + e[1].toFixed(1); }).join(' ')
-    : '—') + '\n合计:' + tot.toFixed(1);
+    : '—') + '\nTOTAL:' + tot.toFixed(1);
 }
-/* 一次性清理已移除功能的遗留 localStorage 键:战车工坊导出模型缓存(只写不读) / 触屏摇杆模式(设置项已删) */
+/* Migrate obsolete settings keys once. */
 try { localStorage.removeItem('ws_custom_model'); localStorage.removeItem('prefJoyMode'); } catch (e) { /* 无存储环境安静跳过 */ }
 grabEls();
 if (typeof window._setBootProgress === 'function') window._setBootProgress(90, 'CALIBRATING BALLISTICS & AUDIO DSP...');
@@ -1051,7 +1039,7 @@ initEmberFx();
 /* ★任务27③:特效池启动预热 + 着色器预编译(加载期一次性成本,根治「一播放爆炸特效就卡一下」):
    ① comic/fx 全部惰性池(蘑菇云/火球/枪口焰/扬尘/命中火花/硝烟/弹道线/残骸火星…)预先构建;
    ② renderer.compile 预链接全场景材质着色器——池网格恒 visible=false 而 compile 只遍历可见物,
-     故临时置可见、编译后复原(纯遍历,不渲染不动画)。预热失败绝不阻断启动(退化为旧惰性行为)。 */
+     故临时置可见、编译后复原(纯遍历,不渲染不动画)。预热失败绝不阻断启动(falls back to lazy initialization)。 */
 if (typeof window._setBootProgress === 'function') window._setBootProgress(95, 'PREWARMING FX SHADERS...');
 /* ★★ 预热的调用时机(修正一个长期失效的接线)——
    index.html MODULES 序是 … main.js(621) → comic_common.js(622) → comic.js(623)。
@@ -1089,19 +1077,23 @@ function gamePrewarm() {
   } catch (ePrewarm) { /* 预热失败不阻断启动 */ }
 }
 window.gamePrewarm = gamePrewarm;
+/* Load only the saved custom snapshot here; TO BATTLE can still use its own
+   current mode/random defaults until the custom menu is opened. */
+if (typeof loadCustomBattleSettings === 'function') loadCustomBattleSettings(false);
 initInput();
 bindStartSideUI();
 bindStartKindUI();
-bindStartMatUI();
+bindStartControlZonesUI();
 bindStartMapUI();
 bindStartSetupUI();                   // 遭遇战编制配置(红/蓝独立,型号输入遍历 VEHICLE_KINDS 自动生成)
+if (typeof bindGameModeUI === 'function') bindGameModeUI();
 bindStartHourUI();
 bindVolumeUI();                       // 游戏设置:音量滑块(偏好落地见 audio.js)
 bindBgmUI();                          // 游戏设置:背景音乐滑块
 playMenuBgm();                        // 启动主菜单背景音乐(3秒间隔循环)
 bindRespawnUI();
 bindPossessUI();
-refreshVehicleChoiceLabels();                    // 初始红方显示89式;切到蓝方即时改为M1A1
+refreshVehicleChoiceLabels();                    // 初始红方显示红方歼击车;切到蓝方即时改为BLUE_MBT_2
 
 animate();
 
@@ -1125,7 +1117,8 @@ function clearAllAI() {
   }
   respawnQueue.length = 0;
   aliveList.length = 0;                      // 活车紧凑表随场景隔离重建
-  teamCounts.ally = 0; teamCounts.enemy = 0;  // 在场计数随重建归零(下方重推时重新累加)
+  teamCounts.red = 0; teamCounts.blue = 0;  // 全部活车计数随重建归零
+  teamRegularCounts.red = 0; teamRegularCounts.blue = 0; // 最大在场编制计数同步归零
   wreckList.length = 0;if(typeof wreckSmokeClear==='function')wreckSmokeClear();                      // 残骸表随场景隔离重建
   wckClear();                                // 残骸合批区网格随场景移除
   clearTargets();                            // 增量模式下移除车辆后需手动重建 targetsList
@@ -1136,7 +1129,10 @@ function clearAllAI() {
   for (ri = 0; ri < tanks.length; ri++) {
     for (rj = 0; rj < tanks[ri].modMeshes.length; rj++)
       addTarget(tanks[ri].modMeshes[rj]);
-    if (tanks[ri].alive) { aliveList.push(tanks[ri]); teamCounts[tanks[ri].team]++; }   // 重推活车 + 计数重累加
+    if (tanks[ri].alive) {
+      aliveList.push(tanks[ri]); teamCounts[tanks[ri].team]++;
+      if (!tanks[ri]._strategicSupport) teamRegularCounts[tanks[ri].team]++;
+    }   // 重推活车 + 全部/编制计数重累加
   }
   rebuildTargets();
 }
@@ -1146,19 +1142,19 @@ function buildMidgame(nAlive, nWreck) {
   var MIX = ['tank', 'tank', 'tank', 'tank', 'tank', 'tank', 'tank', 'tank', 'td', 'td', 'arty'];
   var rnd = mulberry32(0x51DE221), i, t, liveN = 0, wreckN = 0;
   for (i = 0; i < nAlive; i++) {
-    t = createTank({ kind: MIX[(i >> 1) % MIX.length], team: i % 2 ? 'ally' : 'enemy',
+    t = createTank({ kind: MIX[(i >> 1) % MIX.length], team: i % 2 ? 'red' : 'blue',
                      x: rnd() * 800 - 400, z: rnd() * 600 - 300, yaw: rnd() * 6.2832 });
     if (t) liveN++;
   }
   for (i = 0; i < nWreck; i++) {
-    t = createTank({ kind: MIX[i % MIX.length], team: i % 2 ? 'ally' : 'enemy',
+    t = createTank({ kind: MIX[i % MIX.length], team: i % 2 ? 'red' : 'blue',
                      x: rnd() * 500 - 250, z: rnd() * 300 - 150, yaw: rnd() * 6.2832 });
-    if (t) { killTank(t, '基线构造'); wreckN++; }
+    if (t) { killTank(t, 'BASELINE BUILD'); wreckN++; }
   }
   rebuildTargets();                          // 批量直建绕过 spawnTank 逐辆重注册,末尾一次全量入格
   respawnQueue.length = 0;                   // 构造残骸不入增援循环(冻结种群,兵力 200/200 不动)
   PERF_BASE.reset();
-  return { alive: liveN, wreck: wreckN, pool: { ally: teamPool.ally, enemy: teamPool.enemy } };
+  return { alive: liveN, wreck: wreckN, pool: { red: teamPool.red, blue: teamPool.blue } };
 }
 /* ============================================================
    自动基线协议 —— index.html?autotest=midgame[&alive=160&wreck=250]
@@ -1181,7 +1177,7 @@ function buildMidgame(nAlive, nWreck) {
   out.style.cssText = 'position:fixed;left:4px;bottom:4px;z-index:99;max-width:60vw;max-height:30vh;overflow:auto;' +
     'font:10px monospace;white-space:pre-wrap;background:rgba(0,0,0,.7);color:#8dfc9a;pointer-events:none';
   document.body.appendChild(out);
-  function phase(s) { document.title = 'BASE_' + s; out.textContent = '[阶段] ' + s; }
+  function phase(s) { document.title = 'BASE_' + s; out.textContent = '[PHASE] ' + s; }
   function fail(e) { document.title = 'BASE_FAIL'; out.textContent = 'FAIL: ' + (e && (e.stack || e.message || e)); }
   try {
     phase('BOOT');
@@ -1210,7 +1206,7 @@ function buildMidgame(nAlive, nWreck) {
                 if (B.perf.length >= 7) { clearInterval(tick); finish(); return; }
                 var L = window.__PERF_BASE && window.__PERF_BASE.last;
                 if (L) B.perf.push(JSON.parse(JSON.stringify(L)));
-                var f = document.getElementById('sigfps') || document.getElementById('fps');   // 独立FPS框已删,基准改吃信号组FPS段
+                var f = document.getElementById('sigfps') || document.getElementById('fps');   // Read FPS from the signal-group field.
                 B.fps.push(f ? f.textContent : '');
               } catch (e3) { clearInterval(tick); fail(e3); }
             }, 2100);
@@ -1226,11 +1222,11 @@ function buildMidgame(nAlive, nWreck) {
           try {
             var H = window.__DBG_HOOKS, D = window.__DBG;
             var cases = [                             // [kind, team, ox,oy,oz, dx,dy,dz, pen, flyD](v2:y0.9 落 hull 壳带,v1 y1.5 掠过首上斜面 3/5 空探针)
-              ['tank', 'ally', 0, 0.9, 8, 0, 0, -1, 446, 0],
-              ['tank', 'ally', 7, 0.9, 0, -1, 0, 0, 446, 500],
-              ['tank', 'ally', 0, 7, 0, 0, -1, 0, 446, 1000],
-              ['td', 'enemy', 0, 0.9, 8, 0, 0, -1, 514, 0],
-              ['arty', 'ally', 0, 1.5, 8, 0, 0, -1, 100, 0]
+              ['tank', 'red', 0, 0.9, 8, 0, 0, -1, 446, 0],
+              ['tank', 'red', 7, 0.9, 0, -1, 0, 0, 446, 500],
+              ['tank', 'red', 0, 7, 0, 0, -1, 0, 446, 1000],
+              ['td', 'blue', 0, 0.9, 8, 0, 0, -1, 514, 0],
+              ['arty', 'red', 0, 1.5, 8, 0, 0, -1, 100, 0]
             ];
             B.armor = cases.map(function (cs) {
               var t = H.spawnTank(cs[0], cs[1], 0, 0);
@@ -1247,7 +1243,7 @@ function buildMidgame(nAlive, nWreck) {
             B.meta.durS = +((B.meta.tEnd - B.meta.t0) / 1000).toFixed(1);
             out.textContent = JSON.stringify(B);
             document.title = 'BASE_DONE';
-            console.log('[BASE] 基线采集完成');
+            console.log('[BASE] CAPTURE DONE');
           } catch (e6) { fail(e6); }
         }, 300);
       } catch (e7) { fail(e7); }
@@ -1257,7 +1253,7 @@ function buildMidgame(nAlive, nWreck) {
 /* ============================================================
    ★★★ TEMPORARY FLIGHT RECORDER (?helirec=1) — 2026-09-13 直升机顿挫调查专用,
    结论一出即删(删后全仓 grep helirec 必须零命中,含本文注释)。
-   用法:index.html?gfx=low&helirec=1 → 自动开局(玩家直-10)→清场→满转速→爬升→W前飞15s
+   用法:index.html?gfx=low&helirec=1 → 自动开局(玩家红方武装直升机)→清场→满转速→爬升→W前飞15s
    → JSON 写入 #helirec-out,标题置 HELI_DONE。
    每 50ms 记录:[gameT, renderXYZ, simXYZ(_ipP), prevXYZ(_ipPv), alt, camXYZ, steps, droppedMs, spikes]
    ============================================================ */
@@ -1268,10 +1264,10 @@ function buildMidgame(nAlive, nWreck) {
   out.style.cssText = 'position:fixed;left:4px;top:4px;z-index:99;max-width:90vw;max-height:90vh;overflow:auto;' +
     'font:10px monospace;white-space:pre-wrap;background:rgba(0,0,0,.8);color:#8dfc9a;';
   document.body.appendChild(out);
-  function phase(s) { document.title = 'HELI_' + s; out.textContent = '[阶段] ' + s; try { console.log('[HELIREC] ' + s); } catch (e9) {} }
+  function phase(s) { document.title = 'HELI_' + s; out.textContent = '[PHASE] ' + s; try { console.log('[HELIREC] ' + s); } catch (e9) {} }
   try {
     phase('BOOT');
-    startKind = 'wz10'; startSide = 'ally';   // 玩家开局即直-10(红方专属,与 sides 一致)
+    startKind = 'wz10'; startSide = 'red';   // 玩家开局即红方武装直升机(红方专属,与 sides 一致)
     startGame();
     window._dbgPerfOn = true;                  // 开启 __SIM 步数/alpha 探针
     window.__TANK_DEBUG = false;

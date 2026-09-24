@@ -7,7 +7,10 @@
 'use strict';
 var hiddenMat = new THREE.MeshBasicMaterial();
 
-var wreckMat  = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 1, metalness: 0.1, emissive: 0x101010, emissiveIntensity: 0.28 });
+/* Wrecks are real world occluders for FFA markers, not HUD layers.  Keep their
+   depth state explicit because the merged and unmerged wreck paths share this mat. */
+var wreckMat  = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 1, metalness: 0.1, emissive: 0x101010, emissiveIntensity: 0.28,
+  depthTest: true, depthWrite: true });
 
 function hitBox(parent, w, h, l, x, y, z, rx, ry, rz) {   // rx/ry/rz=可选斜面装甲倾角(部分命中盒已传倾角:EXTRA_HITS 薄弱板/转向件)
   var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, l), hiddenMat);
@@ -49,7 +52,7 @@ var _skipVis = false;
    超限 → program 链接失败 → 该材质全部 draw 被丢弃 = 车体整体消失)。编码:
       aVTag.x = 模式: 0 静态 / 1..7 摆臂(仅绕铰点摆动,不自转) / 11..17 负重轮转子(摆动+绕轮心自转,站位=x-11)
                 / 18 端轮/诱导轮/主动轮转子(仅自转,无悬挂行程) / -1 底行·跨段履带板 / -2 顶行履带板
-                / 10 滚动履带环带(vTreadRing) / 20 沿环路滚动的分段履带件
+                / 10 rolling tread ring / 20 segmented track pieces along the loop
       aVTag.yzw = 参数: 摆臂 (摆向fdir, 铰点z, 铰点y);转子 (摆向fdir×轮半径R, 铰点z, 铰点y);
                   端轮转子 (轮半径R, 轮心z, 轮心y);履带板 (基站位, 本站位权重, 下一站位权重);
                   顶行 (t,0,0);滚动件 (s0,0,0)
@@ -61,7 +64,7 @@ var _suspTagA = null;
     烘焙前判定故不受风化漂移影响;新增载具只要沿用 cBODY/cACC 承载装甲色即自动生效,换漆色零改动。
     灯/镜/履带/工具/徽标等非装甲件恒为 0。 */
 var _CAMO_BODY_REF = null, _CAMO_ACC_REF = null;
-var _CAMO_TEAM = 'ally';   // 当前建模载具阵营(仅 visPartPush 打标消费;1=红方数码/2=蓝方NATO)
+var _CAMO_TEAM = 'red';   // 当前建模载具阵营(仅 visPartPush 打标消费;1=红方数码/2=蓝方NATO)
 var _suspRow = 0;                                                                          // 当前建模车型在环路图集中的行号(0..4)
 var SUSP_ROW = { t59: 0, t99: 1, td89: 2, m1: 3, m60: 4, pgz95: 5 };                                 // 图集行号(与 SUSP_ATLAS_KEYS 同序)
 var SUSP_ATLAS_KEYS = ['t59', 't99', 'td89', 'm1', 'm60', 'pgz95'];
@@ -87,7 +90,6 @@ function wheelBoltRing(bP, sk, faceX, wy, wz, ringR, boltC) {
       sk * (faceX + 0.008), wy + Math.cos(ba) * ringR, wz + Math.sin(ba) * ringR, 0, 0, Math.PI / 2);
   }
 }
-function _suspTopTag(tt) { _suspTagA = [-2, tt, 0, 0]; }                                    // 顶行参数 t(静态建模旧路径)
 /* 模式 20 = 沿环路滚动的履带件(板/铰链销/定位齿)。只需烧入该件的建模弧长 s0:
    件的建模位姿恰好 = 环路在 s0 处的位姿,故 shader 可用同一张查找纹理反解出件的本地坐标系。
    悬挂权重不在建模期固化 —— 板会滚到别的分段去,权重必须按「当前弧长 s'」在 shader 里实时重算。 */
@@ -98,7 +100,7 @@ function visPartPush(arr, col, geo, x, y, z, rx, ry, rz, side) {
   if (_skipVis) { if (geo && geo.dispose) geo.dispose(); return; }   // 短路:定制几何调用点兜底即弃
   if (!geo.attributes.uv) uvSetFlat(geo);                        // 画集平坦区兜底(tread 盒已先设好 UV,不覆盖)
   var _tag = null;
-  if (side) _tag = [10, 0, 0, 0];                                // 滚动履带环带(vTreadRing;左右由 position.x 符号判)
+  if (side) _tag = [10, 0, 0, 0];                                // Rolling tread ring; side is selected from position.x.
   else if (_suspTagA) _tag = _suspTagA;                          // 悬挂/滚动标签:整件常量烧入(缺省 = 无属性 = 静态)
   if (_tag) {
     var _sn = geo.attributes.position.count, _sa = new Float32Array(_sn * 4);
@@ -110,7 +112,7 @@ function visPartPush(arr, col, geo, x, y, z, rx, ry, rz, side) {
   }
   if (_tag && geo.userData) geo.userData._wxDyn = _tag[0];   // 风化: 动态件模式号(10/20=履带环件→烘焙禁锈但保留脱漆, 见 weatherBakePart R 门)
   /* 迷彩身份:引用比对(装甲件恒传同一 cBODY/cACC 数组对象,拷贝/字面量一律判 0,防误标);1=红方数码/2=蓝方NATO */
-  var _camoF = ((col === _CAMO_BODY_REF || col === _CAMO_ACC_REF) ? (_CAMO_TEAM === 'enemy' ? 2.0 : 1.0) : 0.0);
+  var _camoF = ((col === _CAMO_BODY_REF || col === _CAMO_ACC_REF) ? (_CAMO_TEAM === 'blue' ? 2.0 : 1.0) : 0.0);
   var _cn = geo.attributes.position.count, _cf = new Float32Array(_cn);
   for (var _ci = 0; _ci < _cn; _ci++) _cf[_ci] = _camoF;
   geo.setAttribute('aCamo', new THREE.BufferAttribute(_cf, 1));
@@ -144,22 +146,14 @@ function vCyl(arr, r1, r2, h, seg, col, x, y, z, rx, ry, rz) {
   visPartPush(arr, col, g, x, y, z, rx, ry, rz);
 }
 
-/* 负重轮三件套装配(辋/毂/轴盖)——59/M60/M1A1/89 四型号共用(去重自四处克隆);
+/* 负重轮三件套装配(辋/毂/轴盖)——基础坦克/高阶坦克A1/89 四型号共用(去重自四处克隆);
    无独立悬挂件;辋厚=履带半宽,外面与带外壁对齐(留 0.005 防与带侧墙共面闪缝):
    o: { n 轮数, wz 轮心z数组, wy 轮心高, rimR 辋半径,
         trkX/trkW 履带中心x/全宽(辋厚=trkW/2 面心=trkX+trkW/4-0.005,外面=带外壁-0.005),
         hubR/hubSeg/hubX 金属轮毂, capR/capSeg/capX 中心轮轴端盖 }
    C: 颜色闭包注入(createTank 局部 cRUBB/cSTEEL/cDARK,helper 为顶层函数取不到) */
-function roadWheelSet(bP, sk, o, C) {
-  for (var w = 0; w < o.n; w++) {
-    var wz = o.wz[w], wy = o.wy;
-    vCyl(bP, o.rimR, o.rimR, o.trkW / 2, 14, C.rub, sk * (o.trkX + o.trkW / 4 - 0.005), wy, wz, 0, 0, Math.PI / 2);   // 辋(半宽,外面对齐带外壁)
-    vCyl(bP, o.hubR, o.hubR, 0.17, o.hubSeg, C.steel, sk * o.hubX, wy, wz, 0, 0, Math.PI / 2);     // 金属轮毂(凸出带外壁读毂帽)
-    vCyl(bP, o.capR, o.capR, 0.12, o.capSeg, C.dark, sk * o.capX, wy, wz, 0, 0, Math.PI / 2);      // 中心轮轴端盖
-  }
-}
 
-/* 挡泥板六件铰链装配(铰销/铰耳×2/主板/裙板/压筋×2/下缘卷边)——59/M60 共用(去重自两处克隆);
+/* 挡泥板六件铰链装配(铰销/铰耳×2/主板/裙板/压筋×2/下缘卷边)——基础主战坦克 共用(去重自两处克隆);
    o: { pinF/pinR 前后铰销z, yBase 基准高(59=1.145;M60 翼子板抬高 0.15→1.295,六件 y 全随动) }
    C: 颜色闭包注入(createTank 局部 cSTEEL/cDARK/cACC) */
 function fenderSix(bP, fsgn, fsk, o, C) {
@@ -325,14 +319,8 @@ function finishGeo(pos, nrm, uvs) {
   return g;
 }
 
-function vTreadRing(arr, col, halfW, T, x, y, z, poly, fillet, side) {
-  if (_skipVis) return;
-  var g = trackRingGeo(halfW, T, poly, fillet);
-  g.userData = { _wpTread: [halfW, T, poly, fillet, x, y, z] };   // 残骸低模重建参数(粗采样重放同变换)
-  visPartPush(arr, col, g, x, y, z, 0, 0, 0, side);   // side 非 0 → 烧 aVTag.x=10(滚动履带环带);左右由 position.x 符号判,hull shader 按 aInstA.xy/uTrackOffL/R 差速偏移纹路
-}
 
-/* 分段式履带板流水线(对标59式 9895-9920:节距0.185铺板+节缝铰链销+内侧定位齿;环路走 genTrackLoop 中心线):
+/* 分段式履带板流水线(对标红方主战坦克 9895-9920:节距0.185铺板+节缝铰链销+内侧定位齿;环路走 genTrackLoop 中心线):
    o: { trkX 履带中心x, plateW 板宽, poly, fillet, loopFn(物理环路点列函数,优先生效) } C: { dark, steel } —— 99/89/M1 共用(59系自建 loop59,走位逻辑同源) */
 function segTrackPlates(bP, o, C) {
   for (var tr = -1; tr <= 1; tr += 2) {
@@ -369,7 +357,7 @@ function segTrackPlates(bP, o, C) {
   }
 }
 
-/* 两片式负重轮组(对标59式 9940-9945:内外橡胶半盘+盘间轴+外轮盘+轴盖;轮轴水平连车侧,替59式摆臂):
+/* 两片式负重轮组(对标红方主战坦克 9940-9945:内外橡胶半盘+盘间轴+外轮盘+轴盖;轮轴水平连车侧,替红方主战坦克摆臂):
    o: { n, wz[], wy, rimR, trkX, hullX(车侧x,轴内端贴壁) } C: { rub, steel, dark } —— 99/89/M1 共用 */
 function twinWheelSet(bP, sk, o, C) {
   /* [2026-09-09 扭杆悬挂] 轮轴改为「摆臂式」:上铰座贴车壁 + 摆臂斜连轮心(对标 59 式 hullParts59)。
@@ -404,14 +392,9 @@ function twinWheelSet(bP, sk, o, C) {
   _suspTagClear();
 }
 
-/* 两片式端轮(对标59式 9949-9958:内外半盘+轮轴+盘间轴+齿圈;轮心位置沿用各车现值):
+/* 两片式端轮(对标红方主战坦克 9949-9958:内外半盘+轮轴+盘间轴+齿圈;轮心位置沿用各车现值):
    o: { R, y, z, trkX, hullX, ringX(齿圈心x,缺省trkX+0.22) } —— 99/89/M1 共用 */
-/* [2026-09-09 端轮结构统一] 全车型端轮改为 59 式同构:内外橡胶半盘 + 轮轴 + 盘间转轴 + 毂,共 5 件。
-   与旧版差异:①去掉"齿圈 R−0.11"(半径随轮径漂移,89 式 0.20 轮径下只剩 0.09,细如铅笔)
-              ②去掉上一版误加的 0.11 轴盖(59 式端轮本无此件)
-              ③毂改用 59 式【比例】而非绝对值:59 诱导 0.17/0.28=61%、主动 0.17/0.26=65%,
-                取 0.63×R。若照搬绝对值 0.17,89 式(R0.20)毂占 85% 轮盘、几乎盖满,明显失真。
-   ★轮心/半径/位置一律不动(o.R/o.y/o.z 原样),只改结构件构成。 */
+/* All end wheels share the proportional 59-style construction; wheel centers and radii remain unchanged. */
 var END_HUB_K = 0.63;                      // 毂/轮径比(59 式两端轮均值:诱导 61% / 主动 65%)
 function twinEndWheel(bP, sk, o, C) {
   var tx = o.trkX, hubX = (o.ringX != null ? o.ringX : tx + 0.22);
@@ -428,18 +411,18 @@ function twinEndWheel(bP, sk, o, C) {
 }
 
 /* ===== 火箭炮 6×6 卡车轮(轮转子自转)=====
-   单轮构成(分阵营规格 ARTY_WHEEL_SPEC):红 PHL-11 轮胎 r0.535/w0.30(轮心 x±1.10);蓝 M142 轮胎 r0.59/w0.32(轮心 x±1.04);钢圈/轮毂随比例。
+   单轮构成(分阵营规格 ARTY_WHEEL_SPEC):红 RED_MLRS 轮胎 r0.535/w0.30(轮心 x±1.10);蓝 BLUE_MLRS 轮胎 r0.59/w0.32(轮心 x±1.04);钢圈/轮毂随比例。
    复用端轮转子 tag(模式 18:只自转,无悬挂行程;卡车无外露轮轴,整轮进 tag)。
    自转角 θ=滚动米数/R,走既有 suspRoll 通道(差速+断轮冻结自动继承;滚动米数由 _trackDifferential 按轮周长取模累计)。
    角向特征(光滑圆柱自转不可见,必须配):外端面螺栓圈×6(落钢圈面上)+胎面花纹块×12(绕周均布,凸出胎面 0.01,前后视角亦可读滚动)。
    sk=侧符(±1);C={ rub 胎色, steel 圈/毂色, dark 螺栓色 }(颜色闭包注入,与 twinWheelSet 同范式)。 */
 var ARTY_WHEEL_SPEC = {                        // 分阵营车轮规格(与建模/轮组命中壳/滚动取模同源)
-  ally:  { R: 0.535, wx: 1.10, tw: 0.30, rimR: 0.31, hubR: 0.165 },   // PHL-11: 万山 WS2400 大直径单胎(外胎面=±1.25)
-  enemy: { R: 0.590, wx: 1.04, tw: 0.32, rimR: 0.34, hubR: 0.182 }    // M142: FMTV M1140 泄气保用胎(外胎面=±1.20)
+  red:  { R: 0.535, wx: 1.10, tw: 0.30, rimR: 0.31, hubR: 0.165 },   // RED_MLRS: 万山 WS2400 大直径单胎(外胎面=±1.25)
+  blue: { R: 0.590, wx: 1.04, tw: 0.32, rimR: 0.34, hubR: 0.182 }    // BLUE_MLRS: FMTV M1140 泄气保用胎(外胎面=±1.20)
 };
-var ARTY_WHEEL_CIRC_OF = { ally: 2 * Math.PI * 0.535, enemy: 2 * Math.PI * 0.590 };   // 轮周长(滚动米数取模周期;整周取模=零视觉跳变)
+var ARTY_WHEEL_CIRC_OF = { red: 2 * Math.PI * 0.535, blue: 2 * Math.PI * 0.590 };   // 轮周长(滚动米数取模周期;整周取模=零视觉跳变)
 function artyWheel(bP, sk, wz, C, o) {
-  var S = o || ARTY_WHEEL_SPEC.ally, R = S.R, wx = S.wx, wy = R, tw = S.tw;   // 轮心 y=R(接地);缺省规格=红方(向后兼容)
+  var S = o || ARTY_WHEEL_SPEC.red, R = S.R, wx = S.wx, wy = R, tw = S.tw;   // 轮心 y=R(接地);缺省规格=红方(向后兼容)
   _suspEndWheelTag(wz, wy, R);   // 卡车轮转子 tag(只自转)
   vCyl(bP, R, R, tw, 12, C.rub, sk * wx, wy, wz, 0, 0, Math.PI / 2);                    // 轮胎
   vCyl(bP, S.rimR, S.rimR, tw + 0.01, 10, C.steel, sk * wx, wy, wz, 0, 0, Math.PI / 2); // 钢圈(侧缘出露 5mm)

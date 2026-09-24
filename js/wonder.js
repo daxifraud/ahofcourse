@@ -224,9 +224,9 @@ function wonderAt(x, z) {              // 双线性上采样(~0.1µs/点);wLat �
 
 /* —— §4 HQ 布局(纯函数,地形/落位同源)+ HQ 夷平(烘焙后遍)—— */
 function hqParamsFromGlobals() {       // 参数采集单点:applyMapConfig 与 spawnTeams 兜底共用
-  var ss = (typeof startSide !== 'undefined') ? startSide : 'ally';
+  var ss = (typeof startSide !== 'undefined') ? startSide : 'red';
   var sbd = (typeof startBaseDist !== 'undefined') ? startBaseDist : { tank: 500, arty: 1500, heli: 3000 };
-  var flip = ((typeof window !== 'undefined' && window.__TEAM_FLIP) ? -1 : 1) * (ss === 'enemy' ? -1 : 1);
+  var flip = ((typeof window !== 'undefined' && window.__TEAM_FLIP) ? -1 : 1) * (ss === 'blue' ? -1 : 1);
   return { halfL: MAP.halfL, halfW: MAP.halfW, boundsX: CONF.boundsX, boundsZ: CONF.boundsZ,
     kW: (MAP.wid || MAP.side) / 2000, startBaseDist: sbd, flip: flip };
 }
@@ -246,8 +246,8 @@ function hqLayoutCompute(P) {          // 与原 spawnTeams 落位数学一致(+
   [['tank', bT], ['arty', bA], ['heli', bH]].forEach(function (b) {
     for (var w = 0; w < 3; w++) {
       var wx = [-maxSpread, 0, maxSpread][w] * P.flip;
-      list.push({ team: 'ally', type: b[0], wing: w, x: wx, z: b[1] * P.flip, yaw: aYaw, h: 0 });
-      list.push({ team: 'enemy', type: b[0], wing: w, x: -wx, z: -b[1] * P.flip, yaw: eYaw, h: 0 });
+      list.push({ team: 'red', type: b[0], wing: w, x: wx, z: b[1] * P.flip, yaw: aYaw, h: 0 });
+      list.push({ team: 'blue', type: b[0], wing: w, x: -wx, z: -b[1] * P.flip, yaw: eYaw, h: 0 });
     }
   });
   return { list: list, baseZ: baseZ };
@@ -278,15 +278,15 @@ function hqFlattenApply() {           // 18 圆盘:r≤50 绝对平,50~70 smooth
 /* —— §5 连通性验证(复用寻路 A*,非洪水填充)+ 确定性重布 —— */
 function wonderValidate() {          // 5×5 出生线点对 A*,≥15/25 可达;nav 未建/无奇观时恒 true
   if (!MAP.wonders || !MAP.wonders.length || !_navH || typeof _asStart !== 'function') return true;
-  var sx = CONF.boundsX - 60, szA = CONF.allySpawnZ, szE = CONF.enemySpawnZ;
+  var sx = CONF.boundsX - 60, szA = CONF.redSpawnZ, szE = CONF.blueSpawnZ;
   if (!(sx > 0)) return true;
-  var mob = (typeof CONF !== 'undefined' && CONF.ally && CONF.ally.mob) || null;
-  var spd = (typeof CONF !== 'undefined' && CONF.ally && CONF.ally.speed) || 10;
+  var mob = (typeof CONF !== 'undefined' && CONF.red && CONF.red.mob) || null;
+  var spd = (typeof CONF !== 'undefined' && CONF.red && CONF.red.speed) || 10;
   if (!mob) return true;
   var pass = 0, total = 0;
   for (var i = 0; i < 5; i++) for (var j = 0; j < 5; j++) {
     var x0 = -sx + (2 * sx * i) / 4, x1 = -sx + (2 * sx * j) / 4;
-    var t = { kind: 'tank', team: 'ally', mob: mob, group: { position: { x: x0, y: 0, z: szA } },
+    var t = { kind: 'tank', team: 'red', mob: mob, group: { position: { x: x0, y: 0, z: szA } },
       yaw: 0, speed: 5, speed0: spd, radius: 4, alive: true, ai: {}, _navReqId: 1, _nav: null };
     total++;
     if (!_asStart(t, x1, szE, 1)) continue;
