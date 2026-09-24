@@ -379,9 +379,21 @@ function step(dt) {
   if (emberMat) emberMat.uniforms.uT.value = gameT;                  // 余烬:每帧 CPU 仅写 1 个 uniform(加法混合免雾色同步)
   __mark('part');
 
-  // 阵亡接管倒计时
-  // 阵亡复活倒计时 → 弹出大本营/兵种选择界面(战斗不暂停)
-  if (respawnT > 0) {
+  // 阵亡后的重新部署倒计时期间持续复查玩家队兵力。
+  // 兵力在倒计时/复活面板期间归零时，立即切换到友军接管，避免面板按钮被禁用后无路可走。
+  var _playerCannotRedeploy = false;
+  if (typeof isFfaMode !== 'function' || !isFfaMode()) {
+    var _respawnSide = typeof pSide === 'function' ? pSide() : (typeof startSide === 'string' ? startSide : 'red');
+    var _respawnPool = typeof teamPool !== 'undefined' && teamPool ? Number(teamPool[_respawnSide]) : 0;
+    _playerCannotRedeploy = !isFinite(_respawnPool) || _respawnPool <= 0;
+  }
+  if (_playerCannotRedeploy && player && !player.alive) {
+    respawnT = 0;
+    if (typeof respawnUiOpen !== 'undefined' && respawnUiOpen && typeof hideRespawnUI === 'function') hideRespawnUI();
+    if (typeof possessUiOpen === 'undefined' || !possessUiOpen) {
+      if (typeof showPossessOv === 'function') showPossessOv();
+    }
+  } else if (respawnT > 0) {
     respawnT -= dt;
     if (respawnT <= 0) showRespawnUI();
   }
