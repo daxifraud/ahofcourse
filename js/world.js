@@ -6,6 +6,13 @@
    ============================================================ */
 'use strict';
 /* 阴影纹素对齐暂存(抗移动抖动) */
+/* ★P0-③(移动端恢复):开镜阴影视圈半径上限按画质档收缩(仅触屏设备;桌面 420/2400 逐位不变)——
+   中档(触屏默认)第三人称 ≤160m / 火箭炮俯视 ≤260m;低档 120/200。 */
+var _shCap3rd = 420, _shCapArtyTop = 2400;
+if (typeof GFX_TOUCH !== 'undefined' && GFX_TOUCH && typeof GFX_PROFILE !== 'undefined') {
+  if (GFX_PROFILE === 'low') { _shCap3rd = 120; _shCapArtyTop = 200; }
+  else if (GFX_PROFILE === 'mid') { _shCap3rd = 160; _shCapArtyTop = 260; }
+}
 var _sunLook = new THREE.Vector3(), _sunRight = new THREE.Vector3(), _sunUpAx = new THREE.Vector3(),
     _sunUpV = new THREE.Vector3(0, 1, 0), _sunCorr = new THREE.Vector3(), _shAim = new THREE.Vector3();
 /* ============================================================
@@ -89,19 +96,20 @@ function applyScopePerf(on, zoom) {
   // ① 动态分辨率缩放(按倍率分档:倍率越高画面细节越少,低分辨率越不可感知)
   var z = on ? (zoom || 1) : 0;
   var ratio = !on ? 1 : (z <= 1 ? 0.55 : (z <= 2 ? 0.5 : (z <= 3 ? 0.45 : 0.4)));
-  var targetPr = _basePixelRatio * ratio;
+  /* ★P2-⑧(移动端恢复):像素比落笔统一走 drsApply(=基准×全局DRS×开镜档);drsScale 恒 1 时与原直写等价 */
+  var _apply = (typeof drsApply === 'function') ? drsApply : function () {
+    renderer.setPixelRatio(Math.max(0.35, _basePixelRatio * _scopeResRatio));
+    renderer.setSize(innerWidth, innerHeight, false);
+  };
   if (on && !_scopeResHi) {
     _scopeResHi = true; _scopeResRatio = ratio;
-    renderer.setPixelRatio(Math.max(0.35, targetPr));
-    renderer.setSize(innerWidth, innerHeight, false);       // 保持 CSS 尺寸,仅缩渲染缓冲
+    _apply();                                              // 保持 CSS 尺寸,仅缩渲染缓冲
   } else if (on && Math.abs(ratio - _scopeResRatio) > 0.001) {   // 倍率档位变化时更新
     _scopeResRatio = ratio;
-    renderer.setPixelRatio(Math.max(0.35, targetPr));
-    renderer.setSize(innerWidth, innerHeight, false);
+    _apply();
   } else if (!on && _scopeResHi) {
     _scopeResHi = false; _scopeResRatio = 1;
-    renderer.setPixelRatio(_basePixelRatio);
-    renderer.setSize(innerWidth, innerHeight, false);
+    _apply();
   }
   /* 阴影常开,视锥由 cameraUpdate 动态接管 */
 }
@@ -272,7 +280,7 @@ function cameraUpdate(dt) {
     shCX = _shAim.x; shCY = _shAim.y; shCZ = _shAim.z;
     var shFov = camera.fov * Math.PI / 180;                  // 与相机实际 fov 同源(火箭炮俯视恒 52°,不走 scopeFov)
     var shAsp = camera.aspect || (innerWidth / innerHeight);
-    shR = clamp(shD * Math.tan(shFov * 0.5) * Math.sqrt(1 + shAsp * shAsp) + 25, 40, isArtyTop ? 2400 : 420);   // 全屏对角世界半径+25m 余量(上限随对角扩)
+    shR = clamp(shD * Math.tan(shFov * 0.5) * Math.sqrt(1 + shAsp * shAsp) + 25, 40, isArtyTop ? _shCapArtyTop : _shCap3rd);   // 全屏对角世界半径+25m 余量(上限随对角扩)
     shR = Math.ceil(shR / 10) * 10;                       // 10m 量化档:测距连续变化不逐帧重投影(纹素尺寸稳定不抖)
   }
   var shCam = sunLight.shadow.camera;

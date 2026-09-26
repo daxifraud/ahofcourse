@@ -1330,8 +1330,12 @@ function friendlyRosterOf(t) {
    例:红方其余 tank/99/td 三型分 35 台 = 12+12+11;蓝方其余 tank/td 两型分 35 台 = 18+17。
    桌面端(精确指针)完全不受影响,仍用上面的 CONF 默认编制。
    注意:本段必须放在 VEHICLE_KINDS / vehicleKindAllowed / BATTLE_SETUP 之后。 */
-var IS_TOUCH_SETUP = false; // 纯桌面端适配: 禁用移动端编制削减，维持全规模桌面战场编制
-var TOUCH_SETUP_CAP = 40;                                  // 触屏端每阵营最大在场载具数(★2026-09-13 由 20 提到 40)
+var IS_TOUCH_SETUP = (window.matchMedia && matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in window;   // ★移动端适配恢复
+/* ★P1-④(移动端恢复):触屏编制规模与模型质量档联动分级 low=20 / mid=28 / high=40;
+   触屏设备默认 MODQ=mid → 每方 28 台;显式选高档恢复 40。桌面端不走本覆盖块。 */
+var TOUCH_SETUP_CAP_BY_PROF = { low: 20, mid: 28, high: 40 };
+var TOUCH_SETUP_CAP = (typeof MODQ_PROFILE !== 'undefined' && TOUCH_SETUP_CAP_BY_PROF[MODQ_PROFILE] != null)
+  ? TOUCH_SETUP_CAP_BY_PROF[MODQ_PROFILE] : 40;            // 触屏端每阵营最大在场载具数
 var TOUCH_SETUP_FIXED = { wz10: 2, ah64: 2, arty: 2, aa: 1 };   // 固定编成:直升机 2 / 火箭炮 2 / 防空车 1(型号不存在于该阵营时自动忽略;wz10 仅红方,ah64 仅蓝方,故每方直升机恰 2 台)
 if (IS_TOUCH_SETUP) {
   (function () {

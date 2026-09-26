@@ -736,6 +736,13 @@ function startGame() {
     if (window.Achievements && typeof window.Achievements.beginMatch === 'function') window.Achievements.beginMatch(player);
   } catch (eAchStart) {}
   gameState = 'playing';
+  /* ★P2-⑧(移动端恢复) 开局 DRS 回满+重热身:新一局场景/着色器重建,上一局的降采样档位与驻留计时全部失效 */
+  if (typeof drsScale !== 'undefined') {
+    drsScale = 1.0; _drsHotT = _drsCoolT = _drsDeepT = 0; _drsWarmT = -1; _drsSettleT = 0;
+    if (_drsFxDeep && typeof WRSMOKE_AMT !== 'undefined') WRSMOKE_AMT = 1.0;
+    _drsFxDeep = false;
+    if (typeof drsApply === 'function') drsApply();
+  }
   if (window.CrazyGamesAdapter) window.CrazyGamesAdapter.gameplayStart();
   window._pointerPauseArmed = false;
   startT = gameT;
@@ -1471,7 +1478,7 @@ function updateLockHint() {
      合成 click 被一起吞掉,表现就是「安卓端点它毫无反应、桌面鼠标却一切正常」。
      注意:hwp 选项是 div,不会命中下面的 BUTTON/INPUT/A/SELECT 标签放行规则,
      所以必须在这里按 id 显式登记。新增同类 HUD 控件时记得一并加进来。 */
-  var TAP_UI_IDS = ['heliweaponbar', 'hwp-1', 'hwp-2', 'hwp-3', 'hwp-4'];
+  var TAP_UI_IDS = ['heliweaponbar', 'hwp-1', 'hwp-2', 'hwp-3', 'hwp-4', 'minimap-panel', 'minimap-cv'];   // ★移动端:小地图点按切换大小
   function uiTarget(t) {                         // 菜单/按钮/滑杆触摸不拦截(浏览器合成 click 接管);触控层自有键除外
     var n = t; while (n && n !== document.body) {
       if (TCTL_IDS.indexOf(n.id) >= 0) return false;   // 触控层自有键走触摸处理(button 标签不得被菜单放行规则吞掉)

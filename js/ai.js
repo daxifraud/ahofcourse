@@ -1956,7 +1956,13 @@ function calcHeliMissileHitRate(shooter, tgt, dist) {
    终末段: 垂直破近炸(净空足则俯冲否则急爬) + 水平 beam(横向速度 = ω_msl×R, 破坏比例导引 LOS 率);
    预防段: 贴地隐蔽 + 垂直于弹目视线周期变向; 经制导层平滑注入 vDes/altDes, 规避期间火控照常。 */
 function heliThreatEvade(t, prm, vMaxNow) {
-  if (t._evT != null && gameT - t._evT <= 0.10) return;
+  /* ★P1-⑤(移动端恢复,仅触屏):距玩家 1.5km 之外的直升机来袭规避扫描 10Hz→5Hz;近场/桌面逐位不变。 */
+  var _evThr = 0.10;
+  if (typeof GFX_TOUCH !== 'undefined' && GFX_TOUCH && player && player.alive && player.group && t.group) {
+    var _ehdx = t.group.position.x - player.group.position.x, _ehdz = t.group.position.z - player.group.position.z;
+    if (_ehdx * _ehdx + _ehdz * _ehdz > 2250000) _evThr = 0.20;
+  }
+  if (t._evT != null && gameT - t._evT <= _evThr) return;
   t._evT = gameT;
   var p = t.group.position;
   var evPx = p.x, evPz = p.z;
@@ -2886,7 +2892,17 @@ function aiUpdate(t, dt) {
 
   var _tThk2 = (window._dbgPerfOn && window.__PERF) ? performance.now() : 0;   // aiCore 子段探针:think 目的地重算
   if (didThink && A.thinkT <= 0) {
-    A.thinkT = (tgt && dist < 500) ? rand(0.3, 0.5) : rand(0.6, 0.9);   // 相关性分频(RTS relevance tiering)——无接触/远距半频 think,交战维持原频
+    /* ★P1-⑤(移动端恢复,仅触屏):距玩家 1.5km 之外、未接敌未挨揍的 AI 决策节拍降到 ~1Hz;
+       交战域(<500m)与警觉目标维持原频;桌面逐位不变。 */
+    var _farGate = false;
+    if (typeof GFX_TOUCH !== 'undefined' && GFX_TOUCH && player && player.alive && player.group) {
+      var _fgdx = tp.x - player.group.position.x, _fgdz = tp.z - player.group.position.z;
+      _farGate = _fgdx * _fgdx + _fgdz * _fgdz > 2250000 &&
+                 !(tgt && dist < 500) &&
+                 gameT - (t.lastHitT || -99) > 4 &&
+                 !(A.alertFoe && gameT - (A.alertFoeT || -99) < AI_ALERT_T);
+    }
+    A.thinkT = _farGate ? rand(0.95, 1.2) : ((tgt && dist < 500) ? rand(0.3, 0.5) : rand(0.6, 0.9));   // 相关性分频(RTS relevance tiering)
     A.destT -= 0.4;
     A.acc = aiBaseDispersion(t, dist);                // 与 fireShell 同源散布(分平台数值)
     // 反偷懒看门狗:行军段(敌>型号射程)有腿有车却持续 ≈0 速 → 强制重选目的地(豁免拥挤约束一次);

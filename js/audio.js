@@ -163,6 +163,8 @@ function addBgmAutoplayUnlocker() {
       window.removeEventListener('click', unlock, true);
       window.removeEventListener('pointerdown', unlock, true);
       window.removeEventListener('touchstart', unlock, true);
+      window.removeEventListener('touchend', unlock, true);
+      window.removeEventListener('pointerup', unlock, true);
       window.removeEventListener('keydown', unlock, true);
       window.removeEventListener('wheel', unlock, true);
       _bgmUnlockerAdded = false;
@@ -177,6 +179,10 @@ function addBgmAutoplayUnlocker() {
   window.addEventListener('click', unlock, true);
   window.addEventListener('pointerdown', unlock, true);
   window.addEventListener('touchstart', unlock, true);
+  /* ★移动端适配:iOS Safari 只把 touchend/pointerup/click 视为有效用户激活(touchstart 不算),
+     两者补挂,保证手机首次轻触即可解锁 BGM 与 AudioContext。 */
+  window.addEventListener('touchend', unlock, true);
+  window.addEventListener('pointerup', unlock, true);
   window.addEventListener('keydown', unlock, true);
   window.addEventListener('wheel', unlock, { capture: true, passive: true });
 }
@@ -1275,8 +1281,10 @@ function audioPauseSync() {
   var wantPause = (typeof gameState !== 'undefined') && gameState !== 'playing';
   if (wantPause && !_audioPaused) {
     _audioPaused = true;
-    var fns = [sfxRwrAlarmStop, sfxRwrToneStop, sfxHeliDamageVoiceStop, sfxHeliPullupStop, sfxEventVoiceStop, sfxRadarScanStop, sfxLwrToneStop, sfxReloadCueStop, sfxRpmWarnStop];
-    for (var i = 0; i < fns.length; i++) { if (typeof fns[i] === 'function') { try { fns[i](); } catch (e) {} } }
+    /* 修复:新版已删除 sfxRpmWarnStop,直接引用会抛 ReferenceError → 暂停时所有循环音都停不掉(触屏 MENU 键暂停同样中招)。
+       改为按名字从全局安全取用。 */
+    var fnNames = ['sfxRwrAlarmStop', 'sfxRwrToneStop', 'sfxHeliDamageVoiceStop', 'sfxHeliPullupStop', 'sfxEventVoiceStop', 'sfxRadarScanStop', 'sfxLwrToneStop', 'sfxReloadCueStop', 'sfxRpmWarnStop'];
+    for (var i = 0; i < fnNames.length; i++) { var fn = window[fnNames[i]]; if (typeof fn === 'function') { try { fn(); } catch (e) {} } }
     /* 不 AC.suspend:悬停不是用户手势,suspend 后无法 resume(暂停要点空白才出声)。循环音已停,发动机只在 playing 更新。 */
   } else if (!wantPause && _audioPaused) {
     _audioPaused = false;

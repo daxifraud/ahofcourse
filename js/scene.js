@@ -45,25 +45,40 @@
      (core_util.js MODQ_PRESETS)独立控制,此处字段原样保留作 sandbox 兜底与数值留档,
      运行时不再被读取(消费方见 player.js _phudBuild / uifx-enhance.js 机库 init)。
    ============================================================ */
-var GFX_TOUCH = false; // 纯桌面端适配: 默认最高画质配置
+var GFX_TOUCH = (window.matchMedia && matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in window;   // ★移动端适配恢复
 var GFX_PRESETS = {
   high: { maxPixelRatio: 2,   shadowMapSize: 1024, shadowSoft: true,  noStencil: false, hudAA: true,  hudPost: true,
           fxDistMax: 3.4, fxYieldMax: 2.0, fxGroundLight: true,  fxSatHi: 12, fxSatLo: 8, fxHardMax: 24,
-          fxWreckSmoke: 999, fxSmokeR: 0,   fxBigTex: 1024, fxTrailAdapt: false, fxBurstMerge: 0, fxBurstDedup: false, fxSfxMerge: false },
+          fxWreckSmoke: 999, fxSmokeR: 0,   fxBigTex: 1024, fxTrailAdapt: false, fxBurstMerge: 0, fxBurstDedup: false, fxSfxMerge: false, fxSpriteCap: 1.0 },
   mid:  { maxPixelRatio: 1.5, shadowMapSize: 512,  shadowSoft: false, noStencil: true,  hudAA: false, hudPost: false,
           fxDistMax: 1.8, fxYieldMax: 1.4, fxGroundLight: false, fxSatHi: 5,  fxSatLo: 3, fxHardMax: 10,
-          fxWreckSmoke: 48,  fxSmokeR: 420, fxBigTex: 512,  fxTrailAdapt: true,  fxBurstMerge: 3, fxBurstDedup: true,  fxSfxMerge: true },
+          fxWreckSmoke: 48,  fxSmokeR: 420, fxBigTex: 512,  fxTrailAdapt: true,  fxBurstMerge: 3, fxBurstDedup: true,  fxSfxMerge: true,  fxSpriteCap: 0.6 },
   low:  { maxPixelRatio: 1.0, shadowMapSize: 512,  shadowSoft: false, noStencil: true,  hudAA: false, hudPost: false,
           fxDistMax: 1.5, fxYieldMax: 1.2, fxGroundLight: false, fxSatHi: 3,  fxSatLo: 2, fxHardMax: 6,
-          fxWreckSmoke: 24,  fxSmokeR: 300, fxBigTex: 512,  fxTrailAdapt: true,  fxBurstMerge: 2, fxBurstDedup: true,  fxSfxMerge: true }
+          fxWreckSmoke: 24,  fxSmokeR: 300, fxBigTex: 512,  fxTrailAdapt: true,  fxBurstMerge: 2, fxBurstDedup: true,  fxSfxMerge: true,  fxSpriteCap: 0.4 }
 };
 var GFX_PROFILE = (function () {
   var m = /[?&]gfx=(high|mid|low)\b/.exec(window.location.search || '');
   if (m) return m[1];
   try { var s = localStorage.getItem('prefGfxProfile'); if (GFX_PRESETS[s]) return s; } catch (e) {}
-  return 'high';
+  return GFX_TOUCH ? 'mid' : 'high';   // ★移动端适配恢复:触屏设备默认中档,桌面默认高
 })();
 var GFX = GFX_PRESETS[GFX_PROFILE];
+/* ★移动端适配恢复(P0-①):触屏性能钳——仅当画质档为「设备默认」(未被 ?gfx= 或设置页显式选择)时生效:
+   像素比上限 1.5→1.25(省 ~44% 像素量);显式选档用户完全不受钳制。 */
+var GFX_TOUCH_CLAMP = false;
+if (GFX_TOUCH) {
+  GFX_TOUCH_CLAMP = (function () {
+    if (/[?&]gfx=(high|mid|low)\b/.test(window.location.search || '')) return false;
+    try { if (GFX_PRESETS[localStorage.getItem('prefGfxProfile')]) return false; } catch (e) {}
+    return true;
+  })();
+  if (GFX_TOUCH_CLAMP) {
+    var _gfxCopy = {}; for (var _gfxK in GFX) _gfxCopy[_gfxK] = GFX[_gfxK];
+    _gfxCopy.maxPixelRatio = Math.min(_gfxCopy.maxPixelRatio, 1.25);
+    GFX = _gfxCopy;
+  }
+}
 function gfxMaxPr() { return Math.min(window.devicePixelRatio || 1, GFX.maxPixelRatio); }
 /* ============================================================
    场景搭建
@@ -129,7 +144,8 @@ function initScene() {
     var pr = gfxMaxPr();
     if (Math.abs(pr - _basePixelRatio) > 0.001) {
       _basePixelRatio = pr;
-      renderer.setPixelRatio(_scopeResHi ? Math.max(0.35, pr * _scopeResRatio) : pr);
+      if (typeof drsApply === 'function') drsApply();      // ★P2-⑧(移动端恢复):统一落笔(基准×全局DRS×开镜档)
+      else renderer.setPixelRatio(_scopeResHi ? Math.max(0.35, pr * _scopeResRatio) : pr);
     }
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();

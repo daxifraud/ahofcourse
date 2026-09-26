@@ -117,6 +117,21 @@ function _mmBindPreferences() {
   if (sel) sel.addEventListener('change', function () { minimapSetPosition(sel.value); });
   var sizeSel = document.getElementById('minimap-sizeinput');
   if (sizeSel) sizeSel.addEventListener('change', function () { minimapSetSize(sizeSel.value); });
+  /* ★移动端适配:触屏没有 M 键 —— 点按小地图在 小→中→大 之间循环(不含「关」,
+     否则关掉后无处可点;关闭仍可在设置页选择)。flow.js TAP_UI_IDS 已放行本面板的合成 click。 */
+  var _mmTouch = false;
+  try { _mmTouch = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in window; } catch (eT) {}
+  var panel = document.getElementById('minimap-panel');
+  if (_mmTouch && panel) {
+    panel.addEventListener('click', function (e) {
+      if (typeof gameState !== 'undefined' && gameState !== 'playing') return;
+      e.preventDefault(); e.stopPropagation();
+      var cur = _minimapPrefs.size;
+      var next = cur === 'small' ? 'medium' : (cur === 'medium' ? 'large' : 'small');
+      if (typeof minimapSetSize === 'function') minimapSetSize(next);
+      else { _minimapPrefs.size = next; _minimapPrefs.lastVisibleSize = next; _mmApplySize(); _mmPrefSave(); }
+    });
+  }
 }
 
 function _mmNow() { return (typeof gameT === 'number' && isFinite(gameT)) ? gameT : 0; }

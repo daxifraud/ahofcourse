@@ -653,6 +653,80 @@ function step(dt) {
 
 var _fpsAcc = 0, _fpsN = 0, _fpsT = 0, _lastFrameT = 0;   // 基于真实墙钟时间的帧率统计
 var SIM_DT = 0.02, SIM_MAX_STEPS = 3;   // ★定步长模拟(Rigidbody 插值):50Hz 恒定步长;单帧最多 3 步(60ms)——超限丢弃=短暂慢动作,防死亡螺旋且永不瞬移
+/* ★移动端适配恢复(直升机专项 B1):触屏设备步数上限 3→5——手机中端机帧时在 60~100ms 间抖动,
+   3 步封顶会频繁丢时间(直升机高速时表现为“向后拽”);桌面保持 3。 */
+if (typeof GFX_TOUCH !== 'undefined' && GFX_TOUCH) SIM_MAX_STEPS = 5;
+/* P2-DRS-START ★P2-⑧ 全局自适应质量控制器(运行时 DRS,性能优化报告)——
+   信号=墙钟帧时 EMA(_wallMsEMA,由 animate 喂;不用 _frameMsEMA 的理由:报告 §一 自己写了
+   “JS ms≪帧时→GPU 瓶颈”,GPU 瓶颈帧的 JS 耗时很低,只看 JS EMA 会对第一嫌疑(填充率)失明)。
+   执行器=全局像素比系数 drsScale∈[0.6,1.0] 步进 0.1:
+   · 下钻:帧时 EMA>22ms 持续 1.5s → 降一档(报告阈值);
+   · 回升:帧时 EMA<14ms 持续 3s(慢升防抖振)→ 升一档,上限=画质档像素比(永不越过用户所选档);
+   · 触底仍>28ms 持续 3s → 二级旋钮收紧残骸烟密度(特效密度档,报告顺序“像素比→RT→特效”);
+   · 漫画合成 RT 按 drawingBufferSize 逐帧跟随(既有兼容点),像素比一动场景+合成两个全屏 pass 同缩;
+   · 与开镜 DRS 相乘叠加:effective = base × drsScale × (开镜档),统一经 drsApply 落笔,
+     applyScopePerf/resize 不再各自直写像素比(单一落笔点,杜绝互相覆盖);
+   · 标签页切走/大停顿(墙钟>120ms)不入 EMA 不计驻留,防误降;开局 4s 热身不决策(着色器编译尖峰);
+   · ?drs=0 关闭(桌面 A/B 对照);调试面板与 window.__DRS 可读。 */
+/* ★移动端适配恢复:DRS 默认仅在触屏设备开启(桌面保持新版口径,不做运行时降分辨率);
+   ?drs=1 强制开启(桌面 A/B),?drs=0 强制关闭。 */
+var DRS_ON = (function () {
+  var qs = (typeof location !== 'undefined' && location.search) || '';
+  if (/[?&]drs=0(?:&|$)/.test(qs)) return false;
+  if (/[?&]drs=1(?:&|$)/.test(qs)) return true;
+  return typeof GFX_TOUCH !== 'undefined' && !!GFX_TOUCH;
+})();
+var drsScale = 1.0, _drsHotT = 0, _drsCoolT = 0, _drsDeepT = 0, _drsFxDeep = false, _drsWarmT = -1, _drsSettleT = 0;
+var DRS_HOT = 22, DRS_COOL = 14, DRS_DEEP = 28, DRS_FLOOR = 0.6, DRS_STEP = 0.1;
+var DRS_HOT_DWELL = 1.5, DRS_COOL_DWELL = 5.0, DRS_DEEP_DWELL = 3.0, DRS_WARMUP = 4.0;
+var DRS_SETTLE = 3.0;                  // ★直升机专项 C1(报告 §六):档位变化后的稳定窗——窗口内冻结决策、驻留清零重计,
+                                       // 打断"降档→变轻→升档→变重"的分辨率泵动环(业界滞回设计:持续富余才升档);
+                                       // ★C2:升档驻留 3s→5s,回升更保守,减少切换次数(每次切换=setSize+漫画RT重建=移动端一次顿挫)
+function drsApply() {                    // 像素比单一落笔点(基准×全局DRS×开镜档)
+  if (typeof renderer === 'undefined' || !renderer) return;
+  var base = (typeof _basePixelRatio !== 'undefined' && _basePixelRatio > 0) ? _basePixelRatio : 1;
+  var scope = (typeof _scopeResHi !== 'undefined' && _scopeResHi && typeof _scopeResRatio !== 'undefined') ? _scopeResRatio : 1;
+  renderer.setPixelRatio(Math.max(0.35, base * drsScale * scope));
+  if (typeof innerWidth !== 'undefined') renderer.setSize(innerWidth, innerHeight, false);
+}
+function drsTick(wallMs, dtSec) {        // 每帧调用(墙钟帧时 + 渲染间隔);返回是否发生档位变化
+  if (!DRS_ON) return false;
+  if (typeof gameState !== 'undefined' && gameState !== 'playing' && gameState !== 'paused') {   // 菜单/结算:回满不降
+    if (drsScale !== 1.0) { drsScale = 1.0; _drsHotT = _drsCoolT = _drsDeepT = _drsSettleT = 0; if (_drsFxDeep) { _drsFxDeep = false; if (typeof WRSMOKE_AMT !== 'undefined') WRSMOKE_AMT = 1.0; } drsApply(); return true; }
+    _drsHotT = _drsCoolT = _drsDeepT = 0;
+    return false;
+  }
+  if (wallMs > 120) { _drsHotT = _drsCoolT = _drsDeepT = 0; return false; }   // 大停顿/切页:不计驻留(EMA 端由调用方钳制)
+  if (_drsWarmT < 0) _drsWarmT = 0;
+  _drsWarmT += dtSec;
+  if (_drsWarmT < DRS_WARMUP) return false;
+  var ema = (typeof _wallMsEMA === 'number') ? _wallMsEMA : wallMs;
+  var changed = false;
+  if (_drsSettleT > 0) {                          // ★C1 稳定窗:档位刚变过 → 冻结升降决策,驻留清零重计(打断泵动环)
+    _drsSettleT -= dtSec;
+    _drsHotT = 0; _drsCoolT = 0;
+  } else {
+    if (ema > DRS_HOT) { _drsHotT += dtSec; _drsCoolT = 0; }
+    else if (ema < DRS_COOL) { _drsCoolT += dtSec; _drsHotT = 0; _drsDeepT = 0; }
+    else { _drsHotT = 0; _drsCoolT = 0; _drsDeepT = 0; }
+    if (_drsHotT >= DRS_HOT_DWELL && drsScale > DRS_FLOOR + 1e-6) {
+      drsScale = Math.max(DRS_FLOOR, Math.round((drsScale - DRS_STEP) * 10) / 10);
+      _drsHotT = 0; _drsCoolT = 0; _drsSettleT = DRS_SETTLE; changed = true;
+    } else if (_drsCoolT >= DRS_COOL_DWELL && drsScale < 1.0 - 1e-6) {
+      drsScale = Math.min(1.0, Math.round((drsScale + DRS_STEP) * 10) / 10);
+      _drsCoolT = 0; _drsHotT = 0; _drsSettleT = DRS_SETTLE; changed = true;
+    }
+  }
+  /* 二级旋钮:像素比已触底仍持续重载 → 收紧残骸烟密度(特效密度档) */
+  if (drsScale <= DRS_FLOOR + 1e-6 && ema > DRS_DEEP) _drsDeepT += dtSec; else _drsDeepT = 0;
+  if (_drsDeepT >= DRS_DEEP_DWELL && !_drsFxDeep) { _drsFxDeep = true; if (typeof WRSMOKE_AMT !== 'undefined') WRSMOKE_AMT = 0.45; }
+  if (_drsFxDeep && ema < DRS_COOL && drsScale >= 1.0 - 1e-6) { _drsFxDeep = false; if (typeof WRSMOKE_AMT !== 'undefined') WRSMOKE_AMT = 1.0; }
+  if (typeof window !== 'undefined') window.__DRS = { scale: drsScale, ema: ema, hot: _drsHotT, cool: _drsCoolT, settle: _drsSettleT, fxDeep: _drsFxDeep };
+  if (changed) drsApply();
+  return changed;
+}
+/* P2-DRS-END */
+var _wallMsEMA = 0;                      // ★P2-⑧:墙钟帧时 EMA(喂 drsTick;GPU 瓶颈帧也计入,与 _frameMsEMA 的 JS 口径互补)
 var _simAcc = 0;                        // 定步长累积器(渲染帧间隔入账,模拟按 20ms 整步消费)
 var _spikeN = 0, _spikeWorst = 0;   // 诊断账:停顿帧次数/最差原始帧时(控制台读 window.__SPIKE;零开销,仅真停顿帧才写)
 var _perfAcc = 0.5;                      // 细分面板独立 0.5s 窗口(与 dcAudit 2s 解耦——面板读数恢复真实 0.5s 口径)
@@ -775,6 +849,9 @@ function animate() {
   perfMarkWindow(_wallDt, _t2 - _t0, _t1 - _t0, _t2 - _t1);
   _stepMsEMA += ((_t1 - _t0) - _stepMsEMA) * 0.08;
   _frameMsEMA += ((_t2 - _t0) - _frameMsEMA) * 0.08;
+  var _wallMsNow = _wallDt * 1000;
+  _wallMsEMA += (Math.min(_wallMsNow, 120) - _wallMsEMA) * 0.06;   // ★P2-⑧(移动端恢复):墙钟帧时 EMA(>120ms 尖峰钳制)
+  drsTick(_wallMsNow, _wallDt);
   _fpsAcc += _wallDt; _fpsN++;
   if (_fpsAcc >= 0.5) {
     _fpsT = Math.round(_fpsN / _fpsAcc);

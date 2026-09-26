@@ -27,7 +27,12 @@ var _comicRT = null, _comicRTW = 0, _comicRTH = 0;   // 仅一张主 RT(原生�
 /* 合成 RT 降采样系数(B 优化):场景 pass+合成 pass 像素量 ×scale²(0.8→0.64);
    线宽/光晕/笔痕在着色器内按 uScale 补偿,屏幕观感尺寸不变;LinearFilter 上采样的轻微软化=印刷感。
    与 DRS 相乘叠加;调回 1.0 即关闭。 */
-var COMIC_RT_SCALE = 1.0;                                // 恒 1.0:原生分辨率合成。降此值会通屏发虚,性能一律由 applyScopePerf 的 DRS 兜底
+/* ★P0-②(移动端适配恢复):桌面恒 1.0 原生分辨率合成(新版口径不变);
+   仅触屏设备按画质档驱动——高=1.0 / 中=0.75(像素量 ×0.56,触屏默认档)/ 低=0.66。
+   漫画描边/平涂容忍软化,线宽经 uScale 补偿。 */
+var COMIC_RT_SCALE = (typeof GFX_TOUCH !== 'undefined' && GFX_TOUCH && typeof GFX_PROFILE !== 'undefined')
+  ? (GFX_PROFILE === 'low' ? 0.66 : (GFX_PROFILE === 'mid' ? 0.75 : 1.0))
+  : 1.0;
 var _comicScene = null, _comicCam = null, _comicMat = null, _comicBrush = null;
 var _comicFailed = false;            // 初始化/渲染异常 → 永久回退直渲兜底(渲染层绝不影响游戏本体)
 /* Match outline mode: depth silhouette by default; ?ink=0 selects the brightness-depth fallback. */
@@ -1493,6 +1498,9 @@ function wreckSmokeRegister(t){
   var now=(typeof _csmClock!=='undefined')?_csmClock:0;
   _wreckSmokeList.push({t:t,born:now,seed:Math.random(),ph:Math.random(),sj:_sfxJit()});
 }
+function wreckSmokeUnregister(t){        // ★P2-⑨(移动端恢复):残骸生命周期回收时同步熄灭烟柱
+  for(var i=_wreckSmokeList.length-1;i>=0;i--)if(_wreckSmokeList[i].t===t)_wreckSmokeList.splice(i,1);
+}
 function wreckSmokeClear(){_wreckSmokeList.length=0;}
 function _wreckSmokeWrite(){
   if(WRSMOKE_AMT<=0||!_wreckSmokeList.length)return;
@@ -2587,9 +2595,9 @@ function _tacEnsure(){
   _tacUvA=new Float32Array(TAC_CAP*2);
   _tacGeo.setAttribute('iUV',new THREE.InstancedBufferAttribute(_tacUvA,2).setUsage(THREE.DynamicDrawUsage));
   var vs='attribute vec2 iUV;uniform vec2 uCell;varying vec2 vUv;\n'+'#include <common>\n#include <logdepthbuf_pars_vertex>\n'+
-    'void main(){vUv=(iUV+uv)*uCell;vec4 mv=modelViewMatrix*instanceMatrix*vec4(position,1.0);gl_Position=projectionMatrix*mv;#include <logdepthbuf_vertex>\n}';
+    'void main(){vUv=(iUV+uv)*uCell;vec4 mv=modelViewMatrix*instanceMatrix*vec4(position,1.0);gl_Position=projectionMatrix*mv;\n#include <logdepthbuf_vertex>\n}';   // 修复:#include 必须位于行首,否则 three.js 不展开→着色器编译失败(战术标识不渲染)
   var fs='uniform sampler2D map;varying vec2 vUv;\n#include <logdepthbuf_pars_fragment>\n'+
-    'void main(){#include <logdepthbuf_fragment>\nvec4 c=texture2D(map,vUv);if(c.a<0.5)discard;gl_FragColor=c;}';
+    'void main(){\n#include <logdepthbuf_fragment>\nvec4 c=texture2D(map,vUv);if(c.a<0.5)discard;gl_FragColor=c;}';
   var mat=new THREE.ShaderMaterial({uniforms:{map:{value:null},uCell:{value:new THREE.Vector2(1/13,1)}},
     vertexShader:vs,fragmentShader:fs,transparent:true,depthTest:true,depthWrite:false});   // FX1:标识遮挡(地形/残骸),烟不写深度故不挡
   _tacMesh=new THREE.InstancedMesh(_tacGeo,mat,TAC_CAP);

@@ -67,7 +67,9 @@ var FXQ_PROFILE = (function () {
     if (FXQ_PRESETS[s]) return s;
     if (localStorage.getItem('prefGfxProfile') === 'low') return 'mid';   // 迁移默认:画质救急档用户保持旧低档体验(=新中)
   } catch (e) {}
-  return 'high';   // 纯桌面端适配: 默认高质量特效与完整粒子表现
+  var touch = false;
+  try { touch = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in window; } catch (e3) {}
+  return touch ? 'low' : 'high';   // ★移动端适配恢复:安卓(触屏)默认爆炸低,桌面默认高
 })();
 var FXQ = FXQ_PRESETS[FXQ_PROFILE];
 
@@ -111,7 +113,11 @@ var MODQ_PROFILE = (function () {
     if (MODQ_PRESETS[s]) return s;
     if (localStorage.getItem('prefGfxProfile') === 'low') return 'low';   // 迁移默认:画质救急档用户不被默认抬档
   } catch (e) {}
-  return 'high';   // ★2026-09-13:安卓默认模型高,桌面默认高,两端收敛(触屏不再默认中)
+  /* ★移动端适配恢复(P0-①):触屏设备默认降回「中」——太阳阴影 1024²PCFSoft 是移动填充率头号消耗源;
+     用户显式选择(?modq= / 设置页)仍完全尊重。桌面默认高,逐位不变。 */
+  var _mqTouch = false;
+  try { _mqTouch = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in window; } catch (e2) {}
+  return _mqTouch ? 'mid' : 'high';
 })();
 var MODQ = MODQ_PRESETS[MODQ_PROFILE];
 /* 模型质量取值器(gfxFx 同构:惰性读取,无头/sandbox 无 MODQ 时回落默认值=高档原值)。 */

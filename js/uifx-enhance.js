@@ -1229,6 +1229,10 @@ document.addEventListener('click', function (e) {
 
 document.addEventListener('pointerdown', function () { gameAC(); }, { capture: true, passive: true });
 document.addEventListener('keydown', function () { gameAC(); }, true);
+/* ★移动端适配:iOS 仅 touchend/pointerup 才算用户激活 —— 战斗中触控层会 preventDefault 吞掉 click,
+   这里补挂两者,确保触屏端 AudioContext 能被唤醒。 */
+document.addEventListener('touchend', function () { gameAC(); }, { capture: true, passive: true });
+document.addEventListener('pointerup', function () { gameAC(); }, { capture: true, passive: true });
 
 /* ---------- ⑭ 终局战报系统 ---------- */
 function resetEndStats() { END.bail = END.lost = END.kill = END.capt = 0; }
@@ -4244,13 +4248,19 @@ function buildHangarRearLineArt(g) {
       }
     }
 
+    /* ★移动端适配:触摸后浏览器会再合成一组 mousedown/mouseup,导致装甲测定射线被触发两次;
+       400ms 内的鼠标事件视为幽灵事件丢弃。 */
+    var _hgTouchT = 0;
+    function _hgGhost() { return Date.now() - _hgTouchT < 400; }
     canvas.addEventListener('mousedown', function (e) {
+      if (_hgGhost()) return;
       if (e.button === 0) onDown(e.clientX, e.clientY);
     });
     window.addEventListener('mousemove', function (e) {
       if (isDragging) onMove(e.clientX, e.clientY);
     });
     window.addEventListener('mouseup', function (e) {
+      if (_hgGhost()) return;
       if (isDragging) onUp(e);
     });
 
@@ -4262,22 +4272,58 @@ function buildHangarRearLineArt(g) {
       lastUserInteractTime = Date.now();
     }, { passive: false });
 
+    /* ★移动端适配:单指拖动旋转 + 双指开合缩放(与滚轮同 clamp 4.5~13.75m);
+       双指期间不算点击,抬起后不触发装甲测定。 */
+    var _hgPinchD = 0;
+    function _hgTouchDist(e) {
+      var a = e.touches[0], b = e.touches[1];
+      var dx = a.clientX - b.clientX, dy = a.clientY - b.clientY;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
     canvas.addEventListener('touchstart', function (e) {
+      _hgTouchT = Date.now();
       if (e.touches.length === 1) {
         onDown(e.touches[0].clientX, e.touches[0].clientY);
+      } else if (e.touches.length === 2) {
+        _hgPinchD = _hgTouchDist(e);
+        dragMoved = true;                       // 双指=缩放手势,抬起不当点击
       }
     }, { passive: true });
 
     canvas.addEventListener('touchmove', function (e) {
+      _hgTouchT = Date.now();
+      if (e.touches.length === 2 && _hgPinchD > 0) {
+        var d2 = _hgTouchDist(e);
+        if (d2 > 0) {
+          dist *= _hgPinchD / d2;
+          if (dist < 4.5) dist = 4.5;
+          if (dist > 13.75) dist = 13.75;
+          _hgPinchD = d2;
+          lastUserInteractTime = Date.now();
+        }
+        if (e.cancelable) e.preventDefault();   // 阻止浏览器页面缩放
+        return;
+      }
       if (e.touches.length === 1 && isDragging) {
         onMove(e.touches[0].clientX, e.touches[0].clientY);
       }
-    }, { passive: true });
+    }, { passive: false });
 
     canvas.addEventListener('touchend', function (e) {
+      _hgTouchT = Date.now();
+      if (e.touches.length < 2) _hgPinchD = 0;
+      if (e.touches.length > 0) {               // 仍有手指:以剩余手指为新拖动起点,不触发点击
+        if (e.touches.length === 1) { onDown(e.touches[0].clientX, e.touches[0].clientY); dragMoved = true; }
+        return;
+      }
       if (isDragging) {
         onUp(e.changedTouches ? e.changedTouches[0] : null);
       }
+    });
+    canvas.addEventListener('touchcancel', function () {
+      _hgTouchT = Date.now();
+      _hgPinchD = 0;
+      isDragging = false;
     });
 
     // 绑定装甲测定情报卡关闭按钮

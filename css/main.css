@@ -1159,7 +1159,7 @@
   /* ===== 遭遇战参数排版: 桌面横排卡片流 ===== */
   #setuproot { display:flex; gap:16px; justify-content:center; flex-wrap:wrap; }
   .manual-pc { display:block; }
-  .manual-touch { display:none !important; }
+  .manual-touch { display:none; }   /* 粗指针(触屏)切换见文件末「移动端适配恢复」段 */
   /* 手册按钮图例:统一尺寸迷你实键复刻(46px 圆纸底墨边,一行一键) */
   .mrow { display:flex; align-items:center; gap:12px; margin:7px auto; max-width:360px; text-align:left; }
   .mbtn { flex:none; width:46px; height:46px; border-radius:50%; background:var(--hud-paper);
@@ -1700,6 +1700,30 @@
    底色本就是 rgba(6,12,5,.92)(92% 不透明),去掉模糊后视觉损失几乎看不出来。
    桌面端(index 精确指针)保持原样,不做任何改动。
    ============================================================ */
+@media (pointer: coarse) {
+  .hwp-item, #log div { backdrop-filter: none; }
+}
+
+/* ============================================================
+   移动端适配恢复(自旧版回迁,全部以 (pointer: coarse) 隔离,桌面零影响)
+   ============================================================ */
+@media (pointer: coarse) {
+  /* 顶栏战术信息/越界警告:触屏紧凑化保一行 */
+  #winfo, #ffa-winfo { font-size:13px; letter-spacing:1px; padding:3px 10px; }
+  #boundwarn { padding: 3px 9px; }
+  #boundwarn .bw-text { font-size: 13px; letter-spacing: 1px; }
+  /* 武器栏:防安卓长按派生滚动/缩放/上下文菜单与 300ms 点击延迟 */
+  #heliweaponbar, .hwp-item { touch-action: manipulation; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+  /* 遭遇战参数:触屏每项竖排单列 */
+  #startcards, #setuproot { flex-direction:column; align-items:center; flex-wrap:nowrap; }
+  /* 操作手册双端切换:粗指针只看触屏版 */
+  .manual-pc { display:none !important; }
+  .manual-touch { display:block; }
+  /* 小地图可点按切换大小(见 minimap.js 触屏钩子) */
+  #minimap-panel { touch-action: manipulation; cursor: pointer; pointer-events: auto; }
+  /* 机库 3D 预览:单指旋转/双指缩放全交给 JS,禁止浏览器平移/缩放页面 */
+  #hangar-canvas { touch-action: none; }
+}
 
 
 
@@ -1717,4 +1741,21 @@
   #heliweaponbar .hwp-key { font-size: 11px; line-height: 1.05; padding: 0 3px; }
   #heliweaponbar .hwp-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; letter-spacing: .2px; }
   #heliweaponbar .hwp-ammo { font-size: 11px; line-height: 1.05; padding: 1px 2px; letter-spacing: .2px; }
+}
+
+/* ============================================================
+   移动端适配(新版新增 HUD):横屏手机矮视口下缩小小地图/部件面板/据点与增益提示,
+   避免与左下摇杆、右下开火键区重叠。仅粗指针 + 矮视口生效。
+   ============================================================ */
+@media (pointer: coarse) and (max-height: 520px) {
+  #minimap-panel { transform: scale(.46); }
+  #minimap-panel.minimap-pos-tl { top: 70px; transform-origin: top left; }
+  #minimap-panel.minimap-pos-tr { top: 70px; transform-origin: top right; }
+  #minimap-panel.minimap-pos-bl { transform-origin: bottom left; }
+  #minimap-panel.minimap-size-medium { transform: scale(.56); }
+  #minimap-panel.minimap-size-large { transform: scale(.66); }
+  #mods { transform: scale(.6); transform-origin: bottom right; }
+  #powerup-hud, #control-zone-capture-hud, #strategic-support-hud, #strategic-support-timers,
+  #vehicle-tech-status-hud, #battle-repair-hud, #control-zone-repair-hud { zoom: .8; }
+  #strategic-support-alert { font-size: 15px; }
 }
