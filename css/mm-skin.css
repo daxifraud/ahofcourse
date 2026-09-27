@@ -1620,7 +1620,8 @@
   box-shadow:3px 3px 0 #020302, 0 0 12px rgba(255,80,64,.35);
 }
 
-@media (max-width:960px){
-  #mm-cover{display:none!important;}
-}
+/* 修复(移动端纯绿背景):旧版双栏主菜单遗留规则「窄屏隐藏右侧封面卡 #mm-cover」。
+   新版 #mm-cover 已变成承载 3D 机库画布 + 开始战斗/车辆抽屉/设置等全部主界面的全屏容器,
+   该规则会在宽度 ≤960px(几乎所有手机,含横屏)时把整个主界面隐藏,只剩 #startov 的网格底板。
+   已删除;窄屏排版由下方 @media (max-width:620px) 等规则负责。 */
 
