@@ -4467,6 +4467,8 @@ function buildHangarRearLineArt(g) {
      会全程占着显存(本项目 MainActivity 已因渲染进程 OOM 做过重建兜底,说明真发生过)。 ==== */
   var _hgLow = modQ('modAA', true) === false;
   var _hgShadowSize = modQ('modShadow', 2048);
+  var _hgTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0) || (window.matchMedia && matchMedia('(pointer:coarse)').matches);
+  if (_hgTouch) { _hgShadowSize = Math.min(_hgShadowSize, 1024); }
   var _hgShadowDropped = false;
   function hgShadowApply(size) {
     if (!dirLight || !dirLight.shadow) return;
@@ -4481,8 +4483,17 @@ function buildHangarRearLineArt(g) {
     canvas = document.getElementById('hangar-canvas');
     if (!canvas) return;
 
-    renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: !_hgLow, alpha: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, modQ('modPR', 2)));
+    canvas.addEventListener('webglcontextlost', function (e) {
+      e.preventDefault();
+      try { if (!sessionStorage.getItem('acHgLost')) { sessionStorage.setItem('acHgLost', '1'); location.reload(); return; } } catch (_) {}
+      if (window.__acDiag) window.__acDiag('车库WebGL上下文丢失(GPU内存不足)');
+    }, false);
+    var _hgOpt = { canvas: canvas, antialias: !_hgLow && !_hgTouch, alpha: true };
+    if (!_hgTouch) _hgOpt.powerPreference = 'high-performance';
+    try { renderer = new THREE.WebGLRenderer(_hgOpt); }
+    catch (err) { if (window.__acDiag) window.__acDiag('车库WebGL创建失败: ' + (err && err.message)); return; }
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, _hgTouch ? 1.5 : modQ('modPR', 2)));
+    setTimeout(function () { try { sessionStorage.removeItem('acHgLost'); } catch (_) {} }, 15000);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = modQ('modShadowSoft', true) ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
     if (typeof vehMaskSetMode === 'function') vehMaskSetMode(false);   // 车库直渲:载具材质 alpha 归 1
