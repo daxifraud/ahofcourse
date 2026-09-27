@@ -1225,7 +1225,7 @@ function nightAimEffOf(kind, team) { return vehicleHasTH(kind, team) ? 1.2 : (ve
 function vehicleDisplayName(t) {                 // 型号显示名(击杀信息等 UI 消费;kind+阵营 → VEHICLE_KINDS.names)
   for (var vni = 0; vni < VEHICLE_KINDS.length; vni++)
     if (VEHICLE_KINDS[vni].kind === t.kind) return VEHICLE_KINDS[vni].names[t.team] || VEHICLE_KINDS[vni].names.red;
-  return 'VEHICLE';
+  return '载具';
 }
 /* 载具正面投影面积(m²)= 车体+炮塔视觉几何并集包围盒(宽×高),建模几何实测——
    已收编注册表 frontalArea 字段,此处由条目启动重建原查表(消费方:ai.js 交火底线 _floorTab/combatFloorOf;

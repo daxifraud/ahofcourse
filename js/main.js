@@ -117,7 +117,7 @@ function step(dt) {
   engineAudioUpdate(dt);                                // 发动机声浪:玩家/AI 同机理,无 AC 静默早退
 
   // 玩家炮塔:鼠标经累积器平滑跟随(方向键不控炮塔)
-  if (player && player.alive) {
+  if (player && player.alive && player.isPlayer) {   // 观战/无玩家席:玩家席为 AI,炮塔由 AI 写入
     var isHeliP = isHeliVehicle(player);
     var curHeliWp = isHeliP ? (player._heliWeapon || 3) : 1;
     var pitchMin, pitchMax;
@@ -387,7 +387,8 @@ function step(dt) {
     var _respawnPool = typeof teamPool !== 'undefined' && teamPool ? Number(teamPool[_respawnSide]) : 0;
     _playerCannotRedeploy = !isFinite(_respawnPool) || _respawnPool <= 0;
   }
-  if (_playerCannotRedeploy && player && !player.alive) {
+  if (typeof SPECTATE_MATCH !== 'undefined' && SPECTATE_MATCH) { respawnT = 0; }
+  else if (_playerCannotRedeploy && player && !player.alive) {
     respawnT = 0;
     if (typeof respawnUiOpen !== 'undefined' && respawnUiOpen && typeof hideRespawnUI === 'function') hideRespawnUI();
     if (typeof possessUiOpen === 'undefined' || !possessUiOpen) {

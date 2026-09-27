@@ -599,24 +599,25 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason;var m=(r
       <div class="bios-corners"><span class="tl"></span><span class="tr"></span><span class="bl"></span><span class="br"></span></div>
       <div class="bios-haz"></div>
       <div class="mm-modal-head bios-head">
-        <div class="bios-title">TACTICAL PANEL</div>
+        <div class="bios-title">战术面板</div>
         <div class="bios-hud">
-          <div class="bios-batt"><span>PWR</span><div class="bios-batt-track"><i class="bios-batt-fill"></i></div><b class="bios-batt-pct">78%</b></div>
-          <div class="bios-sig"><span>LINK</span><div class="bios-siggrid"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="bios-sig-db">-12dB</span></div>
+          <div class="bios-batt"><span>电量</span><div class="bios-batt-track"><i class="bios-batt-fill"></i></div><b class="bios-batt-pct">78%</b></div>
+          <div class="bios-sig"><span>信号</span><div class="bios-siggrid"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="bios-sig-db">-12dB</span></div>
           <div class="bios-clock">00:00:00</div>
         </div>
 
       </div>
       <div class="mm-modal-body bios-body">
         <div class="bios-grid">
-          <div class="bios-row" id="mode-row"><div class="bios-key">Game mode</div><div class="rrow" id="moderow"></div></div>
-          <div class="bios-row" id="faction-row"><div class="bios-key">Faction</div><div class="rrow" id="siderow"></div></div>
-          <div class="bios-row" id="vehicle-row"><div class="bios-key">Vehicle</div><div class="rrow" id="skrow"></div></div>
-          <div class="bios-row"><div class="bios-key">Time</div><div class="rrow"><input id="hourinput" class="mapinp bios-num" type="range" min="0" max="24" step="0.5" value="8"><span id="hourval" class="bios-unit">08:00 (Day)</span></div></div>
-          <div class="bios-row"><div class="bios-key">Map size</div><div class="rrow bios-camp"><span class="bios-mini">L</span><input id="leninput" class="mapinp bios-num" type="number" step="100" value="6000"><span class="bios-mini">W</span><input id="widinput" class="mapinp bios-num" type="number" step="100" value="6000"><span class="bios-unit">m</span></div></div>
-          <div class="bios-row" id="base-row"><div class="bios-key">Staging base</div><div class="rrow bios-camp"><span class="bios-mini">Armor</span><input id="bdinput_tank" class="mapinp bios-num" type="number" step="100" value="1000"><span class="bios-mini">Arty</span><input id="bdinput_arty" class="mapinp bios-num" type="number" step="100" value="3000"><span class="bios-mini">Heli</span><input id="bdinput_heli" class="mapinp bios-num" type="number" step="100" value="6000"><span class="bios-unit">m</span></div></div>
-          <div class="bios-row"><div class="bios-key">Roughness</div><div class="rrow"><input id="roughinput" class="mapinp bios-num" type="range" min="-100" max="100" step="1" value="25"><span id="roughval" class="bios-unit">+25</span></div></div>
-          <div class="bios-row"><div class="bios-key">Control zones</div><div class="rrow" id="stylerow"></div></div>
+          <div class="bios-row" id="mode-row"><div class="bios-key">游戏模式</div><div class="rrow" id="moderow"></div></div>
+          <div class="bios-row" id="faction-row"><div class="bios-key">阵营</div><div class="rrow" id="siderow"></div></div>
+          <div class="bios-row" id="vehicle-row"><div class="bios-key">载具</div><div class="rrow" id="skrow"></div></div>
+          <div class="bios-row"><div class="bios-key">时间</div><div class="rrow"><input id="hourinput" class="mapinp bios-num" type="range" min="0" max="24" step="0.5" value="8"><span id="hourval" class="bios-unit">08:00 (Day)</span></div></div>
+          <div class="bios-row"><div class="bios-key">地图大小</div><div class="rrow bios-camp"><span class="bios-mini">长</span><input id="leninput" class="mapinp bios-num" type="number" step="100" value="6000"><span class="bios-mini">宽</span><input id="widinput" class="mapinp bios-num" type="number" step="100" value="6000"><span class="bios-unit">米</span></div></div>
+          <div class="bios-row" id="base-row"><div class="bios-key">集结基地</div><div class="rrow bios-camp"><span class="bios-mini">装甲</span><input id="bdinput_tank" class="mapinp bios-num" type="number" step="100" value="1000"><span class="bios-mini">火箭炮</span><input id="bdinput_arty" class="mapinp bios-num" type="number" step="100" value="3000"><span class="bios-mini">直升机</span><input id="bdinput_heli" class="mapinp bios-num" type="number" step="100" value="6000"><span class="bios-unit">米</span></div></div>
+          <div class="bios-row"><div class="bios-key">地形崎岖度</div><div class="rrow"><input id="roughinput" class="mapinp bios-num" type="range" min="-100" max="100" step="1" value="25"><span id="roughval" class="bios-unit">+25</span></div></div>
+          <div class="bios-row"><div class="bios-key">控制区</div><div class="rrow" id="stylerow"></div></div>
+          <div class="bios-row" id="spectate-row"><div class="bios-key">观战模式</div><div class="rrow" id="spectaterow"></div></div>
         </div>
         <div id="setuproot"></div>
       </div>
@@ -624,7 +625,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason;var m=(r
         <div id="startbtnrow" style="display:inline-block"></div>
         <button class="bigbtn alt mm-modal-back-btn" type="button" onclick="showMenuView('mainmenu')">HANGER</button>
       </div>
-        <div class="bios-status"><span>CH-04 <b class="ok">SYNC</b></span><span>RADAR <b class="ok">LIVE</b></span><span>NOISE <b class="warn">12%</b></span></div>
+        <div class="bios-status"><span>信道04 <b class="ok">同步</b></span><span>雷达 <b class="ok">在线</b></span><span>噪声 <b class="warn">12%</b></span></div>
       <div class="bios-haz"></div>
     </div>
 
@@ -636,8 +637,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason;var m=(r
       <div class="mm-modal-head bios-head">
         <div class="bios-title">GAME SETTINGS</div>
         <div class="bios-hud">
-          <div class="bios-batt"><span>PWR</span><div class="bios-batt-track"><i class="bios-batt-fill"></i></div><b class="bios-batt-pct">78%</b></div>
-          <div class="bios-sig"><span>LINK</span><div class="bios-siggrid"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="bios-sig-db">-12dB</span></div>
+          <div class="bios-batt"><span>电量</span><div class="bios-batt-track"><i class="bios-batt-fill"></i></div><b class="bios-batt-pct">78%</b></div>
+          <div class="bios-sig"><span>信号</span><div class="bios-siggrid"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="bios-sig-db">-12dB</span></div>
           <div class="bios-clock">00:00:00</div>
         </div>
 
@@ -755,7 +756,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason;var m=(r
       <div class="mm-modal-foot bios-foot">
         <button class="bigbtn alt mm-modal-back-btn" type="button" onclick="showMenuView('mainmenu')">HANGER</button>
       </div>
-        <div class="bios-status"><span>CH-04 <b class="ok">SYNC</b></span><span>RADAR <b class="ok">LIVE</b></span><span>NOISE <b class="warn">12%</b></span></div>
+        <div class="bios-status"><span>信道04 <b class="ok">同步</b></span><span>雷达 <b class="ok">在线</b></span><span>噪声 <b class="warn">12%</b></span></div>
       <div class="bios-haz"></div>
     </div>
     <div id="reset-all-confirm" class="reset-all-confirm hidden" role="dialog" aria-modal="true" aria-labelledby="reset-all-warning">
@@ -793,15 +794,15 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason;var m=(r
       <div class="bios-title">SYSTEM HALT</div>
       <div class="bios-sub">PAUSED // COMBAT PAUSED</div>
         <div class="bios-hud">
-          <div class="bios-batt"><span>PWR</span><div class="bios-batt-track"><i class="bios-batt-fill"></i></div><b class="bios-batt-pct">78%</b></div>
-          <div class="bios-sig"><span>LINK</span><div class="bios-siggrid"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="bios-sig-db">-12dB</span></div>
+          <div class="bios-batt"><span>电量</span><div class="bios-batt-track"><i class="bios-batt-fill"></i></div><b class="bios-batt-pct">78%</b></div>
+          <div class="bios-sig"><span>信号</span><div class="bios-siggrid"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="bios-sig-db">-12dB</span></div>
           <div class="bios-clock">00:00:00</div>
         </div>
         <div class="bios-netgrid"></div>
 
     </div>
     <div id="pausebtns"></div>
-            <div class="bios-status"><span>CH-04 <b class="ok">SYNC</b></span><span>RADAR <b class="ok">LIVE</b></span><span>NOISE <b class="warn">12%</b></span></div>
+            <div class="bios-status"><span>信道04 <b class="ok">同步</b></span><span>雷达 <b class="ok">在线</b></span><span>噪声 <b class="warn">12%</b></span></div>
     <div class="bios-haz"></div>
   </div>
 </div>
@@ -839,9 +840,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason;var m=(r
 <script src="js/minimap.js?v=20260923control4-mob3"></script>
 <script src="js/strategic-support.js?v=20260923zoneflow1-mob3"></script>
 <script src="js/powerups.js?v=20260921repair1-mob3"></script>
+<script src="js/spectator.js?v=spec2-mob3"></script>
 <script src="js/main.js?v=20260923suspension1-mob3"></script>
 <script src="js/comic_common.js?v=20260910fx4-mob3"></script>
-<script src="js/comic.js?v=20260923tdmfix1-mob3"></script>
+<script src="js/comic.js?v=20260927tac1-mob3"></script>
 <script src="js/battlefield-fx.js?v=20260910fx4-mob3"></script>
 <script src="js/uifx-enhance.js?v=20260923garage1-mob3"></script>
 <script src="js/zh-localization.js?v=mob3"></script>

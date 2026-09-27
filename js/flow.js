@@ -92,6 +92,10 @@ function battleCheck() {
   if (gameState !== 'playing' || freePlay) return;   // 继续游玩(freePlay)期间不判胜负
   if (isFfaMode()) {
     var liveFfa = ffaAliveCount();
+    if (typeof SPECTATE_MATCH !== 'undefined' && SPECTATE_MATCH) {   // 观战:仅剩最后一台即结算
+      if (liveFfa <= 1) gameOver(true, 'LAST SURVIVOR');
+      return;
+    }
     if (player && player.alive) {
       if (liveFfa <= 1) gameOver(true, 'LAST SURVIVOR');
     } else if (liveFfa === 0 || (ffaState.playerEliminated && liveFfa <= 1)) {
@@ -342,7 +346,7 @@ function ffaSpawnSpot(safeOnly) {
   return { x: 0, z: 0 };
 }
 function spawnFreeForAll() {
-  var noPlayer = (typeof window !== 'undefined' && window.__TANK_DEBUG && window.__DBG_NO_PLAYER);
+  var noPlayer = (typeof window !== 'undefined' && window.__TANK_DEBUG && window.__DBG_NO_PLAYER) || (typeof SPECTATE_MATCH !== 'undefined' && SPECTATE_MATCH);   // 观战模式=玩家席交 AI
   _poleSegs = [];
   if (_poleLine) { scene.remove(_poleLine); _poleLine.geometry.dispose(); _poleLine = null; }
   hqList.red.length = 0; hqList.blue.length = 0; MAP.hqFlat = null;
@@ -420,7 +424,7 @@ function spawnTeams() {
   if (typeof heliABGClear === 'function') heliABGClear();       // A射B导:换场清空僚机名单(旧载具即将销毁,不跨局残留)
   if (typeof tacGridBuild === 'function') tacGridBuild();
   if (typeof navGridBuild === 'function') navGridBuild();   // 寻路坡度网格:建场一次(~10ms),A* 消费       // 战术射界网格:建场一次评分(~20ms),指挥官决策期消费
-  var noPlayer = (typeof window !== 'undefined' && window.__TANK_DEBUG && window.__DBG_NO_PLAYER); // 无头纯净 AI 对局
+  var noPlayer = (typeof window !== 'undefined' && window.__TANK_DEBUG && window.__DBG_NO_PLAYER) || (typeof SPECTATE_MATCH !== 'undefined' && SPECTATE_MATCH);   // 观战模式=玩家席交 AI // 无头纯净 AI 对局
   var aYaw = flip > 0 ? Math.PI : 0, eYaw = flip > 0 ? 0 : Math.PI;
   // 三兵种纵深与 HQ 布局:吃 MAP.hqFlat 同源布局(applyMapConfig 前移计算,与地形夷平圆心逐位一致;
   //   含 heli 坡墙上限 halfL-210,旧 baseZOf 在大图上把 heli 送上坡墙)。wonder.js 缺失时退化为零纵深(仅旧无头桩)。

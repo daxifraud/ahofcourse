@@ -2615,23 +2615,23 @@ function tacHideMesh(){                              // 隐藏:mesh 关+敌我�
   if(typeof _iffArrowHide==='function')_iffArrowHide();
 }
 function tacToggle(){                                // T 键:战术标识独立开关(只开标识,不进指挥模式)
-  _tacOn=!_tacOn;
-  if(_tacOn)tacShow();else tacHideMesh();
-  if(typeof aimHint==='function')aimHint(_tacOn?'TAC MARKERS: ON':'TAC MARKERS: OFF');
+  _tacOn=!_tacOn;                                     // T 键=敌我标识开关;小队战术标识只随指挥模式
+  if(!_tacOn&&!(typeof sqCmd!=='undefined'&&sqCmd.active)&&typeof _iffArrowHide==='function')_iffArrowHide();
+  if(typeof aimHint==='function')aimHint(_tacOn?'敌我标识：开':'敌我标识：关');
 }
 function tacSyncToCmd(){                             // 与指挥模式同步:进模式则显示
   tacShow();
 }
-function tacForceOff(){                              // 退出指挥模式:仅 T 未开时隐藏(T 开着则继续显示)
-  if(_tacOn)return;
-  tacHideMesh();
+function tacForceOff(){                              // 退出指挥模式:战术标识一律隐藏;敌我箭头仍按 T 开关
+  if(_tacMesh){_tacMesh.visible=false;_tacMesh.count=0;}
+  if(!_tacOn&&typeof _iffArrowHide==='function')_iffArrowHide();
 }
 function tacBattleReset(){                           // 开局/换场:默认开启独立开关+显示(图集静态不清)
   _tacOn=true;
   tacShow();
 }
-function _tacTick(){                                 // 每帧(_comicFxTick 登记):门=_tacOn||指挥模式
-  var show=_tacOn||(typeof sqCmd!=='undefined'&&sqCmd.active);
+function _tacTick(){                                 // 每帧(_comicFxTick 登记):门=仅指挥模式(小队战术标识只在指挥模式下显示;T 键只管敌我标识)
+  var show=(typeof sqCmd!=='undefined'&&sqCmd.active);
   if(!show){
     if(_tacMesh&&_tacMesh.count)_tacMesh.count=0;
     return;
@@ -2651,9 +2651,11 @@ function _tacTick(){                                 // 每帧(_comicFxTick 登�
     if(!g2||g2._detached)continue;                  // 无组车无标;被指挥者走星系
     var p=t.group.position;
     var dx=camera.position.x-p.x,dz=camera.position.z-p.z;
-    var sc=2.1*TAC_S*scopeDistK(sn,dx*dx+dz*dz,55,1,4.2);
+    var dk=scopeDistK(sn,dx*dx+dz*dz,55,1,4.2);
+    var sc=2.1*TAC_S*dk;
     _tacQ.setFromAxisAngle(_tacY,Math.atan2(dx,dz)); // 绕竖轴面向玩家
-    _tacP.set(p.x,p.y+_tacBaseH(t),p.z);_tacS.set(sc,sc,1);
+    // 置于敌我箭头(中心=基准高,尺寸 1.45·dk)正上方:箭头半高 + 标识半高 + 间隙,随距离缩放同步
+    _tacP.set(p.x,p.y+_tacBaseH(t)+(0.725+1.05*TAC_S+0.12)*dk,p.z);_tacS.set(sc,sc,1);
     _tacM4.compose(_tacP,_tacQ,_tacS);_tacMesh.setMatrixAt(out,_tacM4);
     _tacUvA[out*2]=(g2._intent|0)+(t.team==='red'?0:4);_tacUvA[out*2+1]=0;out++;
   }

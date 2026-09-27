@@ -3584,10 +3584,10 @@ function sqCmdOrderSet(kind, x, z) {                // 指令入口(Q/E 键与�
     sqCmd.order = 'occupy';
     sqCmd.ox = clamp(x, -CONF.bounds + 10, CONF.bounds - 10);
     sqCmd.oz = clamp(z, -CONF.bounds + 10, CONF.bounds - 10);
-    if (typeof addLog === 'function') addLog('<b>SQUAD: SEIZE</b>', 'good');
+    if (typeof addLog === 'function') addLog('<b>小队：夺取</b>', 'good');
   } else {
     sqCmd.order = 'follow';
-    if (typeof addLog === 'function') addLog('<b>SQUAD: FOLLOW</b>', 'good');
+    if (typeof addLog === 'function') addLog('<b>小队：跟随</b>', 'good');
   }
   sqCmdFlagSync();
   if (typeof window !== 'undefined' && window._touchUISync) window._touchUISync();   // 触控指令键点亮态即时随动
@@ -3617,7 +3617,7 @@ function sqCmdPick() {                                   // 距玩家最近己�
 function sqCmdEnter() {
   if (isFfaMode() || sqCmd.active || !player || !player.alive || gameState !== 'playing') return;
   var g = sqCmdPick();
-  if (!g) { if (typeof addLog === 'function') addLog('NO SQUAD AVAILABLE', 'warn'); return; }
+  if (!g) { if (typeof addLog === 'function') addLog('无可用小队', 'warn'); return; }
   var ix = g._c.groups.indexOf(g);
   if (ix >= 0) g._c.groups.splice(ix, 1);               // 离开指挥部:决策/评分/重分组不再触及
   g.dOut.fill(0); g.dIn.fill(0);                        // 分数清零
@@ -3628,7 +3628,7 @@ function sqCmdEnter() {
   sqCmd.order = 'follow'; sqCmdFlagSync();            // 新指挥会话指令复位为跟随(无占领点)
   if (typeof tacSyncToCmd === 'function') tacSyncToCmd();   // 进入指挥模式→战术标识同步开
   if (typeof window !== 'undefined' && window._touchUISync) window._touchUISync();   // 触控指令键(占领/跟随)即时出现
-  if (typeof addLog === 'function') addLog('<b>SQUAD COMMAND</b>', 'good');
+  if (typeof addLog === 'function') addLog('<b>小队指挥</b>', 'good');
 }
 function sqCmdExit() {
   if (!sqCmd.active) return;
@@ -3640,7 +3640,7 @@ function sqCmdExit() {
   g._detached = false; g.protectGroup = null;
   for (i = 0; i < mem.length; i++) mem[i]._cmdG = null;   // 脱离接管组(组不在 c.groups,空组注销路径天然安全)
   for (i = 0; i < mem.length; i++) cmdAssign(mem[i]);     // 重新编入:最近不满员小组/新建(重新部署算法)
-  if (typeof addLog === 'function') addLog('<b>RETURNED TO UNIT</b>', 'good');
+  if (typeof addLog === 'function') addLog('<b>已返回本车</b>', 'good');
 }
 function sqCmdToggle() { if (sqCmd.active) sqCmdExit(); else sqCmdEnter(); }
 function sqCmdReset() {

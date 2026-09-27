@@ -47,7 +47,7 @@ var MENU_VIEWS = ['startsub', 'settingssub'];
     var s = pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
     for (var i=0;i<_biosC.length;i++) _biosC[i].innerHTML = s.slice(0,2)+'<span class="blink">:</span>'+s.slice(3,5)+'<span class="blink">:</span>'+s.slice(6);   // innerHTML 保留: blink span 每秒重建=现有闪烁语义逐位不变
     var v = -8 - Math.floor(Math.random()*9);
-    for (var j=0;j<_biosDb.length;j++) _biosDb[j].textContent = v+'dB';
+    for (var j=0;j<_biosDb.length;j++) _biosDb[j].textContent = v+'分贝';
     var p = 74 + Math.floor(Math.random()*13);
     for (var k=0;k<_biosPct.length;k++) _biosPct[k].textContent = p+'%';
   }
@@ -291,6 +291,7 @@ function buildMenuButtons() {
        path, so every direct default-game launch gets a fresh normal-distributed
        clock/roughness pair.  The custom DEPLOY path remains user-controlled. */
     if (typeof randomizeQuickBattleDefaults === 'function') randomizeQuickBattleDefaults();
+    if (typeof SPECTATE_MATCH !== 'undefined') SPECTATE_MATCH = false;   // 快速战斗永不观战
     startGame();
     attemptLock();
   }
@@ -353,6 +354,7 @@ function buildMenuButtons() {
   el.startbtn = createMenuButton(el.startbtnrow || el.startsub, 'DEPLOY', function () {
     ffaQuickStart = false;
     if (typeof saveCustomBattleSettings === 'function') saveCustomBattleSettings();
+    if (typeof SPECTATE_MATCH !== 'undefined') SPECTATE_MATCH = !!spectateEnabled;   // 自定义战斗:按“观战模式”选项
     startGame();
     attemptLock();
   }, { id: 'startbtn' });

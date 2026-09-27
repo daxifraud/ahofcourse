@@ -697,12 +697,12 @@ function countTeamWithinCap(team) {
 
 /* 死法四类(击杀播报口径):殉爆/燃爆/结构毁坏/弃车——killTank cause 字串归并 */
 function deathWord(cause) {
-  if (!cause) return 'STRUCT KILL';
-  if (cause.indexOf('DETONATION') >= 0) return 'AMMO DETONATION';
-  if (cause.indexOf('AIRSTRIKE') >= 0) return 'AIRSTRIKE';
-  if (cause.indexOf('FIRE') >= 0 || cause.indexOf('BURN') >= 0 || cause.indexOf('CRASH') >= 0) return 'FIRE KILL';
-  if (cause.indexOf('ABANDON') >= 0 || cause.indexOf('BAIL') >= 0) return 'ABANDONED';
-  return 'STRUCT KILL';
+  if (!cause) return ' 结构击毁';
+  if (cause.indexOf('DETONATION') >= 0) return ' 弹药殉爆';
+  if (cause.indexOf('AIRSTRIKE') >= 0) return ' 遭空袭摧毁';
+  if (cause.indexOf('FIRE') >= 0 || cause.indexOf('BURN') >= 0 || cause.indexOf('CRASH') >= 0) return ' 起火焚毁';
+  if (cause.indexOf('ABANDON') >= 0 || cause.indexOf('BAIL') >= 0) return ' 已弃车';
+  return ' 结构击毁';
 }
 
 /* ===== 空中直升机残骸下落系统(低频/事件驱动,触地自动变回普通地面残骸) ----
@@ -890,8 +890,8 @@ function killTank(t, cause) {
       if (dbgStats[_attDbgKey]) dbgStats[_attDbgKey].killCredit++;
     }
   }
-  if (t === player) {
-    if (killMsgOn && cause === 'ABANDONED') addLog('<b>ABANDONED</b>', 'fire');   // 玩家主动弃车:击杀播报固定四字
+  if (t === player && !(typeof SPECTATE_MATCH !== 'undefined' && SPECTATE_MATCH)) {
+    if (killMsgOn && cause === 'ABANDONED') addLog('<b>已弃车</b>', 'fire');   // 玩家主动弃车:击杀播报固定四字
     playerDied(cause);
     return;
   }
@@ -1139,7 +1139,7 @@ function possessByKind(kind) {
   snapCamera();
   hidePossessOv();
   attemptLock();                             // 接管成功自动收回光标(点击手势内必成)
-  if (killMsgOn) addLog('<b>TOOK OVER ' + (pSide() === 'red' ? 'RED' : 'BLUE') + '</b>', 'good');   // 状态播报仅走击杀信息行,按玩家阵营显色名
+  if (killMsgOn) addLog('<b>接管' + (pSide() === 'red' ? '红方' : '蓝方') + '</b>', 'good');   // 状态播报仅走击杀信息行,按玩家阵营显色名
   hudTick = 0;
 }
 
@@ -1200,7 +1200,7 @@ function redeployFreeForAll() {
   rebuildTargets();
   scopeMode = false; scopeT = 0; ownVisualsVisible = true;
   snapCamera(); hideRespawnUI(); attemptLock();
-  if (killMsgOn) addLog('<b>REDEPLOYED</b>', 'good');
+  if (killMsgOn) addLog('<b>重新部署</b>', 'good');
   hudTick = 0;
 }
 function redeployPlayer() {
@@ -1243,7 +1243,7 @@ function redeployPlayer() {
   snapCamera();
   hideRespawnUI();
   attemptLock();                                 // 重新部署后立刻收回鼠标
-  if (killMsgOn) addLog('<b>REDEPLOYED</b>', 'good');   // 状态播报仅走击杀信息行,固定四字
+  if (killMsgOn) addLog('<b>重新部署</b>', 'good');   // 状态播报仅走击杀信息行,固定四字
   hudTick = 0;
 }
 /* ============================================================
@@ -1282,11 +1282,11 @@ var nightCombatOn = false;                             // 夜战全局量(applyT
 function hourLabel(h) {                                  // "8.5" → "08:30 (白昼)"(菜单时间显示)
   var hh = Math.floor(h), mm = Math.round((h - hh) * 60);
   var timeStr = (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
-  var tag = ' (Day)';
-  if (h >= 5 && h < 7) tag = ' (Dawn)';
-  else if (h >= 7 && h < 17) tag = ' (Day)';
-  else if (h >= 17 && h < 19.5) tag = ' (Dusk)';
-  else tag = ' (Night)';
+  var tag = ' (白天)';
+  if (h >= 5 && h < 7) tag = ' (黎明)';
+  else if (h >= 7 && h < 17) tag = ' (白天)';
+  else if (h >= 17 && h < 19.5) tag = ' (黄昏)';
+  else tag = ' (夜晚)';
   return timeStr + tag;
 }
 var _sunV = new THREE.Vector3();
@@ -1924,6 +1924,7 @@ function saveCustomBattleSettings() {
     side: startSide === 'red' ? 'red' : 'blue',
     kind: startKind,
     material: startMat === 'soil' ? 'soil' : 'grass',
+    spectate: !!(typeof spectateEnabled !== 'undefined' && spectateEnabled),
     roughness: _customBattleNumber(startRough, 25, -100, 100, true),
     hour: _customBattleNumber(startHour, 8, 0, 24, false),
     matchTime: _customBattleNumber(startMatchTime, 15, 1, 60, true),
@@ -1958,7 +1959,7 @@ function saveCustomBattleSettings() {
 }
 function refreshCustomBattleControls() {
   if (typeof el === 'undefined' || !el) return;
-  if (el.timeinput) { el.timeinput.value = startMatchTime; if (el.timeval) el.timeval.textContent = startMatchTime + ' min'; }
+  if (el.timeinput) { el.timeinput.value = startMatchTime; if (el.timeval) el.timeval.textContent = startMatchTime + ' 分钟'; }
   if (el.roughinput) { el.roughinput.value = startRough; if (el.roughval) el.roughval.textContent = startRough > 0 ? '+' + startRough : String(startRough); }
   if (el.hourinput) { el.hourinput.value = startHour; if (el.hourval) el.hourval.textContent = hourLabel(startHour); }
   if (typeof applyTimeOfDay === 'function') applyTimeOfDay(startHour);
@@ -1971,6 +1972,7 @@ function refreshCustomBattleControls() {
   if (el.siderow) markSel(el.siderow, 'data-side', startSide);
   if (el.skrow) markSel(el.skrow, 'data-k', startKind);
   refreshStartControlZonesUI();
+  if (typeof refreshSpectateUI === 'function') refreshSpectateUI();
 }
 function refreshCustomBattlePanel() {
   /* This is the single post-restore sync point for the custom battle panel.
@@ -2005,6 +2007,7 @@ function loadCustomBattleSettings(applyMode) {
   if (data.side === 'red' || data.side === 'blue') startSide = data.side;
   if (_customBattleVehicleKindValid(data.kind)) startKind = data.kind;
   if (data.material === 'grass' || data.material === 'soil') startMat = data.material;
+  if (_customBattleOwn(data, 'spectate') && typeof spectateEnabled !== 'undefined') spectateEnabled = !!data.spectate;
   startRough = _customBattleNumber(data.roughness, startRough, -100, 100, true);
   startHour = Math.round(_customBattleNumber(data.hour, startHour, 0, 24, false) * 2) / 2;
   startMatchTime = _customBattleNumber(data.matchTime, startMatchTime, 1, 60, true);
@@ -2058,6 +2061,7 @@ function resetCustomBattleDefaults() {
   FFA_SETUP.heliEnabled = false;
   FFA_SETUP.powerupMultiplier = FFA_DEFAULT_POWERUP_MULTIPLIER;
   tdmControlZonesEnabled = true;
+  if (typeof spectateEnabled !== 'undefined') spectateEnabled = false;
   refreshCustomBattleControls();
 }
 function syncModeMapDefault(mode) {
@@ -2096,8 +2100,8 @@ function refreshStartControlZonesUI() {
 function bindStartControlZonesUI() {
   if (!el.stylerow || typeof el.stylerow.querySelectorAll !== 'function') return;
   bindOptionRow(el.stylerow, [
-    { text: 'ON', attrs: { 'control-zones': 'on' }, sel: tdmControlZonesEnabled !== false },
-    { text: 'OFF', attrs: { 'control-zones': 'off' }, sel: tdmControlZonesEnabled === false }
+    { text: '开', attrs: { 'control-zones': 'on' }, sel: tdmControlZonesEnabled !== false },
+    { text: '关', attrs: { 'control-zones': 'off' }, sel: tdmControlZonesEnabled === false }
   ], function (b) {
     if (typeof isFfaMode === 'function' && isFfaMode()) return;
     tdmControlZonesEnabled = b.getAttribute('data-control-zones') !== 'off';
@@ -2112,7 +2116,7 @@ function bindStartMapUI() {
     function syncTime(persist) {
       startMatchTime = Math.max(1, Math.min(60, Math.round(+el.timeinput.value) || 15));
       el.timeinput.value = startMatchTime;
-      if (el.timeval) el.timeval.textContent = startMatchTime + ' min';
+      if (el.timeval) el.timeval.textContent = startMatchTime + ' 分钟';
       if (persist && typeof saveCustomBattleSettings === 'function') saveCustomBattleSettings();
     }
     el.timeinput.addEventListener('input', function () { syncTime(true); });
@@ -2341,7 +2345,7 @@ function bindStartSetupUI() {
   if (isFfaMode()) {
     var fbox = document.createElement('div');
     fbox.className = 'setupcard ffa-setupcard';
-    var ft = document.createElement('div'); ft.className = 'setupcard-t'; ft.textContent = 'FREE-FOR-ALL ROSTER'; fbox.appendChild(ft);
+    var ft = document.createElement('div'); ft.className = 'setupcard-t'; ft.textContent = '自由混战编制'; fbox.appendChild(ft);
     function ffaRow(label, input, note, output) {
       var rr = document.createElement('div'); rr.className = 'srow';
       var ll = document.createElement('span'); ll.textContent = label; rr.appendChild(ll); rr.appendChild(input);
@@ -2355,7 +2359,7 @@ function bindStartSetupUI() {
     reserveIn.type = 'number'; reserveIn.min = 0; reserveIn.max = 50; reserveIn.value = FFA_SETUP.playerReserves;
     var heliIn = document.createElement('select');
     heliIn.className = 'ffa-heli-select';
-    [['0', 'DISABLED'], ['1', 'ENABLED']].forEach(function (opt) {
+    [['0', '禁用'], ['1', '启用']].forEach(function (opt) {
       var o = document.createElement('option'); o.value = opt[0]; o.textContent = opt[1]; heliIn.appendChild(o);
     });
     heliIn.value = FFA_SETUP.heliEnabled ? '1' : '0';
@@ -2371,10 +2375,10 @@ function bindStartSetupUI() {
     }
     powerOut.textContent = powerupMultiplierLabel(+powerIn.value);
     // 只保留数值/开关控件本身，不再在人数与备用载具后附加说明文字。
-    ffaRow('Active vehicles', activeIn);
-    ffaRow('Player reserve vehicles', reserveIn);
-    ffaRow('Helicopters', heliIn);
-    ffaRow('Powerup density', powerIn, 'per survivor', powerOut);
+    ffaRow('在场载具数', activeIn);
+    ffaRow('玩家备用载具', reserveIn);
+    ffaRow('直升机', heliIn);
+    ffaRow('补给道具密度', powerIn, '每名幸存者', powerOut);
     function syncFfaSetup(refreshKinds) {
       FFA_SETUP.vehicleCount = clamp(Math.round(+activeIn.value || 100), 2, 200);
       FFA_SETUP.playerReserves = clamp(Math.round(+reserveIn.value || 0), 0, 50);
@@ -2410,7 +2414,7 @@ function bindStartSetupUI() {
     box.className = 'setupcard';
     var title = document.createElement('div');
     title.className = 'setupcard-t';
-    title.textContent = tm === 'red' ? 'RED OOB' : 'BLUE OOB';
+    title.textContent = tm === 'red' ? '红方编制' : '蓝方编制';
     box.appendChild(title);
 
     function row(label, inp) {
@@ -2424,10 +2428,10 @@ function bindStartSetupUI() {
     }
 
     var pIn = document.createElement('input'); pIn.type = 'number'; pIn.min = 0; pIn.max = 2000; pIn.value = S.pool;
-    row('Combat strength', pIn);
+    row('参战兵力', pIn);
     var cIn = document.createElement('input'); cIn.type = 'number'; cIn.min = 0; cIn.max = 2000; cIn.value = S.cap;
     S.ins.cap = cIn;
-    row('Max vehicles in play', cIn);
+    row('最大在场载具数', cIn);
 
     VEHICLE_KINDS.forEach(function (vk) {
       if (!vehicleKindAllowed(tm, vk.kind)) return;
