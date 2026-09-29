@@ -2643,6 +2643,8 @@ function _tacTick(){                                 // 每帧(_comicFxTick 登�
   }
   if(!_tacMesh.visible)_tacMesh.visible=true;
   var sn=typeof scoped!=='undefined'&&scoped;
+  var refTeam=(player&&player.team)||'red';        // 敌我参照:玩家所在方;观战时取当前观战目标所在方
+  if(window.Spectator&&Spectator.active&&Spectator.active()&&Spectator.state&&Spectator.state.target)refTeam=Spectator.state.target.team||refTeam;
   var out=0;
   for(var i=0;i<aliveList.length&&out<TAC_CAP;i++){
     var t=aliveList[i];
@@ -2657,7 +2659,7 @@ function _tacTick(){                                 // 每帧(_comicFxTick 登�
     // 置于敌我箭头(中心=基准高,尺寸 1.45·dk)正上方:箭头半高 + 标识半高 + 间隙,随距离缩放同步
     _tacP.set(p.x,p.y+_tacBaseH(t)+(0.725+1.05*TAC_S+0.12)*dk,p.z);_tacS.set(sc,sc,1);
     _tacM4.compose(_tacP,_tacQ,_tacS);_tacMesh.setMatrixAt(out,_tacM4);
-    _tacUvA[out*2]=(g2._intent|0)+(t.team==='red'?0:4);_tacUvA[out*2+1]=0;out++;
+    _tacUvA[out*2]=(g2._intent|0)+(t.team===refTeam?0:4);_tacUvA[out*2+1]=0;out++;   // 按敌我:与视角方同队=绿,否则=红
   }
   _tacMesh.count=out;
   _tacMesh.instanceMatrix.needsUpdate=true;

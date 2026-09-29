@@ -3894,9 +3894,12 @@ function buildHangarRearLineArt(g) {
 
     // A missing record (or the legacy bare kind value) gets the default BLUE-MBT-2.
     // Valid team|kind pairs, including RED-MBT-1 and RED-MBT-2, must remain restorable.
-    if (!saved || saved === 'tank') {
-      saveGarageSelection('blue', 'td');
-      return { team: 'blue', kind: 'td' };
+    // 默认展示改为 RED-MBT-2(99式);旧版自动写入的默认值 blue|td 一次性迁移为 99式。
+    var migrated = null;
+    try { migrated = localStorage.getItem('ac_default99'); localStorage.setItem('ac_default99', '1'); } catch (e) {}
+    if (!saved || saved === 'tank' || (saved === 'blue|td' && !migrated)) {
+      saveGarageSelection('red', '99');
+      return { team: 'red', kind: '99' };
     }
 
     if (typeof saved === 'string') {
@@ -4029,8 +4032,8 @@ function buildHangarRearLineArt(g) {
 
   // 载具创建与精确定位 (前轮坐落于转台 y=0.19m，机身超长伸出转台的后起落架尾轮精准落地于水泥地坪 y=0.00m)
   function setVehicle(team, kind) {
-    curTeam = team || 'blue';
-    curKind = kind || 'td';
+    curTeam = team || 'red';
+    curKind = kind || '99';
     saveGarageSelection(curTeam, curKind);
     window.startSide = curTeam;
     window.startKind = curKind;
