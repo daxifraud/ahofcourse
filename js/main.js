@@ -1009,8 +1009,9 @@ function dcAuditShow() {
         var v = b.getAttribute('data-gfx');
         if (v !== 'high' && v !== 'mid' && v !== 'low') return;
         try { localStorage.setItem(LS, v); } catch (e) { /* 无存储环境:本次会话内仍按原档 */ }
+        var ok = typeof window.acApplyQuality === 'function' && window.acApplyQuality('gfx', v);   // 热切换,立即生效(部署环境不依赖刷新页面)
         apply();
-        if (val) val.textContent = 'SEL: ' + NAMES[v] + ' (RESTART TO APPLY)';
+        if (val) val.textContent = ok ? ('CUR: ' + NAMES[v] + ' (APPLIED)') : ('SEL: ' + NAMES[v] + ' (RESTART TO APPLY)');
       });
     })(btns[i]);
     apply();
@@ -1049,8 +1050,9 @@ function dcAuditShow() {
         var v = b.getAttribute('data-fxq');
         if (v !== 'high' && v !== 'mid' && v !== 'low') return;
         try { localStorage.setItem(LS, v); } catch (e) { /* 无存储环境:本次会话内仍按原档 */ }
+        var ok = typeof window.acApplyQuality === 'function' && window.acApplyQuality('fxq', v);   // 热切换,立即生效(部署环境不依赖刷新页面)
         apply();
-        if (val) val.textContent = 'SEL: ' + NAMES[v] + ' (RESTART TO APPLY)';
+        if (val) val.textContent = ok ? ('CUR: ' + NAMES[v] + ' (APPLIED)') : ('SEL: ' + NAMES[v] + ' (RESTART TO APPLY)');
       });
     })(btns[i]);
     apply();
@@ -1089,8 +1091,9 @@ function dcAuditShow() {
         var v = b.getAttribute('data-modq');
         if (v !== 'high' && v !== 'mid' && v !== 'low') return;
         try { localStorage.setItem(LS, v); } catch (e) { /* 无存储环境:本次会话内仍按原档 */ }
+        var ok = typeof window.acApplyQuality === 'function' && window.acApplyQuality('modq', v);   // 热切换,立即生效(部署环境不依赖刷新页面)
         apply();
-        if (val) val.textContent = 'SEL: ' + NAMES[v] + ' (RESTART TO APPLY)';
+        if (val) val.textContent = ok ? ('CUR: ' + NAMES[v] + ' (APPLIED)') : ('SEL: ' + NAMES[v] + ' (RESTART TO APPLY)');
       });
     })(btns[i]);
     apply();

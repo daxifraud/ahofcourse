@@ -197,10 +197,11 @@ function bindHeliWeaponBarUI() {
       var aaAtgm3 = player._techAaAtgm === true ||
         (typeof vehicleTechAaAtgmInstalled === 'function' && vehicleTechAaAtgmInstalled(player)) ||
         (typeof vehicleTechRedAaAtgmInstalled === 'function' && vehicleTechRedAaAtgmInstalled(player));
-      if (player.team === 'red' && aaAtgm3) {
+      // 红方防空车的机炮按钮始终是第 3 个格子(未装 ATGM 时 2 号格隐藏、键位标为 2),点它就切机炮
+      if (player.team === 'red') {
         player._heliWeapon = 1;
         if (typeof camAimP !== 'undefined') camAimP = playerAimPitchClamp(player, camAimP);
-        if (typeof aimHint === 'function') aimHint('WEAPON [3]: TWIN GUN');
+        if (typeof aimHint === 'function') aimHint(aaAtgm3 ? 'WEAPON [3]: TWIN GUN' : 'WEAPON [2]: TWIN GUN');
       } else if (typeof aimHint === 'function') aimHint('NO GUN EQUIPPED');
       return;
     }

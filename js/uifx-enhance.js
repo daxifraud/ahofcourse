@@ -4482,6 +4482,26 @@ function buildHangarRearLineArt(g) {
     }
   }
 
+  /* 模型质量档热切换(设置页点选即生效,无需刷新页面):像素比/阴影尺寸/阴影类型即时重配;
+     MSAA 是 WebGL 上下文创建参数,车库画布保持原上下文(切换 MSAA 需新上下文,代价过高)。 */
+  window.__hgApplyModQ = function () {
+    _hgLow = modQ('modAA', true) === false;
+    _hgShadowSize = modQ('modShadow', 2048);
+    if (_hgTouch) _hgShadowSize = Math.min(_hgShadowSize, 1024);
+    if (!renderer) return;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, _hgTouch ? 1.5 : modQ('modPR', 2)));
+    resize();
+    var soft = modQ('modShadowSoft', true) ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
+    if (renderer.shadowMap.type !== soft) {
+      renderer.shadowMap.type = soft;
+      if (scene) scene.traverse(function (o) {
+        var m = o.material; if (!m) return;
+        (Array.isArray(m) ? m : [m]).forEach(function (mm) { mm.needsUpdate = true; });
+      });
+    }
+    if (!_hgShadowDropped) hgShadowApply(_hgShadowSize);
+  };
+
   function init() {
     canvas = document.getElementById('hangar-canvas');
     if (!canvas) return;
