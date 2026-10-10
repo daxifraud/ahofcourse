@@ -1054,6 +1054,7 @@ function possessByKind(kind) {
   player = t2;
   cmdLeave(t2);                      // 被接管车脱离 AI 指挥编组
   t2.isPlayer = true;
+  if (typeof emergencyRepairReset === 'function') emergencyRepairReset(t2);
   if (typeof vehicleTechApplyToTank === 'function') vehicleTechApplyToTank(t2);
   // 接管开启新的生命段，但不计入出击次数。
   if (window.Achievements && typeof window.Achievements.beginLife === 'function') window.Achievements.beginLife(t2);
@@ -1187,6 +1188,7 @@ function redeployFreeForAll() {
   if (kind !== 'tank') opt.kind = kind;
   var nt = createTank(opt);
   player = nt;
+  if (typeof emergencyRepairReset === 'function') emergencyRepairReset(nt);
   startSide = team; startKind = kind;
   if (nt) {
     nt.reload = 0; nt._heliMissileTarget = null; nt._prevLockedKeys = {};
@@ -1221,6 +1223,7 @@ function redeployPlayer() {
   var nt;
   if (respawnSel.kind !== 'tank') opt.kind = respawnSel.kind; nt=createTank(opt);
   player = nt;
+  if (typeof emergencyRepairReset === 'function') emergencyRepairReset(nt);
   // 仅正常重新部署计入出击；接管友军走 possessByKind，不调用此记账入口。
   if (nt && window.Achievements && typeof window.Achievements.noteDeployment === 'function') {
     window.Achievements.noteDeployment(nt);

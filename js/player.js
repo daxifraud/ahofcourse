@@ -1682,6 +1682,11 @@ function playerUpdate(dt) {
       fwdIn = touchJoyY;
       latIn = -touchJoyX;   // 摇杆右推=右倾(与坦克 turnIn=-touchJoyX 同口径;x 右+)
     }
+    /* 紧急修车期间完全锁住玩家移动输入；修车模块在 commonUpdate 中再
+       用锁定位置兜底，避免空中载具惯性漂移。 */
+    if (typeof emergencyRepairIsActive === 'function' && emergencyRepairIsActive(player)) {
+      fwdIn = 0; latIn = 0; turnIn = 0;
+    }
     updateHeli(player, dt, fwdIn, latIn, turnIn, false);
 
     // 直升机多武器计时与雷达锁定循环
@@ -1726,6 +1731,15 @@ function playerUpdate(dt) {
   // 防空载具:多武器计时与雷达锁定循环(与直升机 updateHeliWeapons 同套;RED_AA 雷达常亮,蓝方防空车雷达空转不扫描)
   if (isAAVehicle(player)) updateHeliWeapons(player, dt);
 
+  /* R 键/触控启动的紧急修车是动作锁：维修期间不接受油门、转向或
+     火箭炮驻车蠕行输入；炮塔瞄准和武器逻辑仍按原规则运行。 */
+  var emergencyRepairLocked = typeof emergencyRepairIsActive === 'function' && emergencyRepairIsActive(player);
+  if (emergencyRepairLocked) {
+    fwdIn = 0;
+    turnIn = 0;
+    player._artyCreepFwd = 0;
+  }
+
   var sm = speedMult(player), tm = turnMult(player) * slopeTurnMul(player);
   // 火箭炮齐射中车辆锁死(与 AI 同规则:射击时不能移动)
   var salvoLock = player.kind === 'arty' && player.salvoLeft > 0;
@@ -1741,10 +1755,13 @@ function playerUpdate(dt) {
   /* 车体瞄准(炮塔损毁,旗标由 combat.js 触发器置位——损毁事件/接管瞬间,此处零状态检测):
      鼠标左右(camAimY 世界方位)驱动车体伺服,车头目标=瞄准方位−固定炮塔偏角(炮管指向鼠标;
      与 ai.js 炮塔卡死车体瞄准同机理同钳制 turn0×turnMult×dt);A/D 键输入优先(倒车调头不被抢)。 */
-  if (player._hullAim && !turnIn && !salvoLock) {
+  if (!emergencyRepairLocked && player._hullAim && !turnIn && !salvoLock) {
     var hDiff = normAng(camAimY - (player.turretYaw || 0) - player.yaw);
     var _hyD = clamp(hDiff, -player.turn0 * tm * dt, player.turn0 * tm * dt);
     groundYawInertia(player, dt > 0 ? _hyD / dt : 0, player.turn0 * tm, dt);   // 履带指令带速:带惯性的车体瞄准伺服
+  } else if (emergencyRepairLocked) {
+    player._steerRate = 0;
+    player._turnCmd = 0;
   } else {
     groundYawInertia(player, turnIn * player.turn0 * tm, player.turn0 * tm, dt);   // 履带指令带速:带惯性的转向输入
   }

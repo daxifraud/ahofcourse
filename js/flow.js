@@ -372,6 +372,7 @@ function spawnFreeForAll() {
   var pSpot = ffaSpawnSpot(true);
   player = createTank({ isPlayer: !noPlayer, team: pTeam, x: pSpot.x, z: pSpot.z,
     yaw: rand(-Math.PI, Math.PI), kind: pKind === 'tank' ? undefined : pKind, name: noPlayer ? vehicleKindName(pTeam, pKind) : 'YOU' });
+  if (typeof emergencyRepairReset === 'function') emergencyRepairReset(player);
   respawnSel.kind = pKind; respawnSel.team = pTeam; respawnSel.wing = HQ_WING_CENTER;
   if (player) {
     player.reload = 0;
@@ -442,6 +443,7 @@ function spawnTeams() {
   player = createTank({ isPlayer: !noPlayer, team: startSide, x: 0, z: pZ0, yaw: pYaw0,
     kind: pKind === 'tank' ? undefined : pKind,
     name: noPlayer ? (startSide === 'red' ? 'RED-MBT-1' : 'BLUE-MBT-1') : 'YOU' });
+  if (typeof emergencyRepairReset === 'function') emergencyRepairReset(player);
   respawnSel.kind = pKind;                               // 阵亡重生默认沿用开局兵种
   respawnSel.wing = HQ_WING_CENTER;                      // 翼位复位到中央(开局落位即中轴;防跨局/上一条命的旧索引残留)
   playerEquipSync();                                     // 部署边沿:座车夜战设备缓存+触控键显隐(禁逐帧检测)
@@ -923,6 +925,14 @@ function isWeaponBarMouseTarget(target) {
   }
   return false;
 }
+function isEmergencyRepairMouseTarget(target) {
+  var n = target;
+  while (n && n !== document.body) {
+    if (n.id === 'emergency-repair-hud' || n.id === 'emergency-repair-button') return true;
+    n = n.parentNode;
+  }
+  return false;
+}
 function initInput() {
 
   addEventListener('keydown', function (e) {
@@ -935,6 +945,17 @@ function initInput() {
         !(e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA'))) {
       e.preventDefault();
       if (typeof minimapCycleSize === 'function') minimapCycleSize();
+    }
+    /* R is reserved for the player emergency repair when the per-vehicle
+       charge is available.  The old manual claimed a KeyR radar toggle, but
+       this build has no KeyR radar listener: helicopter/AA radar is automatic,
+       so the guide below is corrected instead of inventing a conflicting path. */
+    if (e.code === 'KeyR' && !e.repeat &&
+        !(e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA')) &&
+        gameState === 'playing' && player && player.alive &&
+        typeof emergencyRepairCanUse === 'function' && emergencyRepairCanUse(player)) {
+      e.preventDefault();
+      if (typeof emergencyRepairUse === 'function') emergencyRepairUse(player);
     }
     if (e.code === 'Backspace' && !e.repeat && !(e.target && e.target.tagName === 'INPUT')) {   // 指挥模式键(输入框退格不劫持):战术标识/指挥星与指挥模式联动开关
       e.preventDefault();                                 // 阻止浏览器后退等默认行为
@@ -1060,7 +1081,7 @@ function initInput() {
   });
   addEventListener('mousedown', function (e) {
     if (isGhostMouse(e)) return;   // 触屏合成的兼容鼠标事件:否则点一次 HUD 控件就会误开火 + 误申请指针锁定
-    if (isWeaponBarMouseTarget(e.target)) return;   // 武器栏点击只换武器,绝不误触发当前武器或指针锁
+    if (isWeaponBarMouseTarget(e.target) || isEmergencyRepairMouseTarget(e.target)) return;   // HUD 点击只执行控件动作,绝不误触发当前武器或指针锁
     // 复活/接管界面开着时点按钮绝不再锁指针(防光标被吃掉,选钮无需先按 ESC)
     if (gameState === 'playing' && !respawnUiOpen && !possessUiOpen) {
       if (e.button === 0) {
@@ -1251,6 +1272,7 @@ function updateLockHint() {
 
   var base = document.getElementById('tjoy'), knob = document.getElementById('tjoyknob');
   var fire = document.getElementById('tfire');
+  var repairB = document.getElementById('temergency-repair');
   var scpBtn = document.getElementById('tscope'), quitBtn = document.getElementById('tquit');
   var menuB = document.getElementById('tmenu'), cmdB = document.getElementById('tsqb');
   var capB = document.getElementById('tcap'), folB = document.getElementById('tfol');   // 指挥指令键(占领/跟随,仅指挥模式显示)
@@ -1278,7 +1300,7 @@ function updateLockHint() {
   var CTL_W = { tfire: { w: 84, h: 84 }, tscope: { w: 64, h: 64 }, tquit: { w: 64, h: 64 },
                 tmenu: { w: 52, h: 52 }, tsqb: { w: 64, h: 64 }, tnv: { w: 64, h: 64 },
                 tth: { w: 64, h: 64 }, tcap: { w: 64, h: 64 }, tfol: { w: 64, h: 64 },
-                tlas: { w: 52, h: 52 },
+                tlas: { w: 52, h: 52 }, 'temergency-repair': { w: 64, h: 64 },
                 theliu: { w: 146, h: 146 }, thelid: { w: 146, h: 146 }, heliradarmfd: { w: 200, h: 251 } };
   /* CSS 基准宽高(transform scale 不改布局盒,居中定位用;弃车/热成像与其余同 64,仅开火 84)。
      heliradarmfd 高 251 是 CSS 推算值(2 边框 + 6 内边距)×2 + 顶栏 17.2 + 显示区 180 + 底栏 30 + 2×4 间距;
@@ -1289,7 +1311,7 @@ function updateLockHint() {
     return { w: w, h: h };
   }
   function layApply() {                          // 布局落地(事件级:进出编辑/拖动/缩放/转屏时调)
-    var L = curLay(), m = { tfire: fire, tscope: scpBtn, tquit: quitBtn, tmenu: menuB, tsqb: cmdB, tnv: nvB, tth: thB, tcap: capB, tfol: folB, tlas: lasB, theliu: heliU, thelid: heliD, heliradarmfd: mfdB }, id, el2, e3, bx;
+    var L = curLay(), m = { tfire: fire, tscope: scpBtn, tquit: quitBtn, tmenu: menuB, tsqb: cmdB, tnv: nvB, tth: thB, tcap: capB, tfol: folB, tlas: lasB, 'temergency-repair': repairB, theliu: heliU, thelid: heliD, heliradarmfd: mfdB }, id, el2, e3, bx;
     for (id in m) {
       el2 = m[id]; if (!el2) continue;
       e3 = L[id];
@@ -1339,6 +1361,11 @@ function updateLockHint() {
     if (fire) fire.classList.toggle('hidden', !on);
     if (scpBtn) scpBtn.classList.toggle('hidden', !on);
     if (quitBtn) quitBtn.classList.toggle('hidden', !on);
+    if (repairB) {
+      var repairReady = on && typeof emergencyRepairCanUse === 'function' && emergencyRepairCanUse(player);
+      repairB.classList.toggle('hidden', !repairReady);
+      repairB.classList.toggle('ready', repairReady);
+    }
     if (menuB) menuB.classList.toggle('hidden', !on);
     if (nvB) {
       nvB.classList.toggle('hidden', !on || (typeof playerHasNV !== 'undefined' && !playerHasNV));   // 座车无夜视仪(基础坦克)=隐藏;编辑器内由 custShow 全量显示
@@ -1475,7 +1502,7 @@ function updateLockHint() {
   function heliReleaseByTid(tid) { for (var dir in heliTouch) if (heliTouch[dir].tid === tid) heliRelease(dir); }
   function heliHasTid(tid) { for (var dir in heliTouch) if (heliTouch[dir].tid === tid) return true; return false; }
   function heliReleaseAll() { for (var dir in heliTouch) heliRelease(dir); }
-  var TCTL_IDS = ['tfire', 'tscope', 'tquit', 'tmenu', 'tsqb', 'tnv', 'tth', 'tcap', 'tfol', 'tlas', 'theliu', 'thelid'];   // 触控层自有键 ID 表(uiTarget/ctrlOf 共用单一出处;tlas=99式激光压制)
+  var TCTL_IDS = ['tfire', 'tscope', 'tquit', 'temergency-repair', 'tmenu', 'tsqb', 'tnv', 'tth', 'tcap', 'tfol', 'tlas', 'theliu', 'thelid'];   // 触控层自有键 ID 表(uiTarget/ctrlOf 共用单一出处;tlas=99式激光压制)
   /* ===== 触屏上靠"浏览器合成 click"驱动的 HUD 控件(div 结构,非 <button>) =====
      武器切换栏 #heliweaponbar 及其三个选项。这些控件不是触控层操控键(不参与按压语义),
      但同样必须放行合成 click —— 否则会掉进本段末尾那句 e.preventDefault(),
@@ -1526,6 +1553,12 @@ function updateLockHint() {
         scopeToggle(); scpBtn.classList.toggle('lit', scopeMode);
       } else if (cid === 'tquit') {                            // 弃车键:长按 3s(KeyJ 同位,倒数/红环/松手复位全链复用)
         quitId = t.identifier; keys.KeyJ = true; quitBtn.classList.add('pressed');
+      } else if (cid === 'temergency-repair') {                 // 紧急修车:点击沿与 R 键完全同一入口,一次性消耗
+        var emergencyUsed = typeof emergencyRepairUse === 'function' && emergencyRepairUse(player);
+        if (emergencyUsed && repairB) {
+          repairB.classList.add('pressed');
+          setTimeout(function () { if (repairB) repairB.classList.remove('pressed'); }, 130);
+        }
       } else if (cid === 'tsqb') {                             // 指挥模式键:战术标识/指挥星与指挥模式同步开关(Backspace 同入口)
         if (gameState === 'playing' && player && player.alive) {
           if (isHeliVehicle(player) && typeof heliABGToggle === 'function') heliABGToggle();   // 直升机座舱= A射B导
@@ -1657,7 +1690,7 @@ function updateLockHint() {
      tjoy 条目=摇杆杆位/大小。全事件驱动。 ===== */
   var custOv = document.getElementById('tcustomov');
   var edId = null, edCtl = null, edX = 0, edY = 0, edP2 = null, edD0 = 1, edS0 = 1;
-  function custCtls() { return { tjoy: base, tfire: fire, tscope: scpBtn, tquit: quitBtn, tmenu: menuB, tsqb: cmdB, tnv: nvB, tth: thB, tcap: capB, tfol: folB, tlas: lasB, theliu: heliU, thelid: heliD, heliradarmfd: mfdB, tsense: sense }; }
+  function custCtls() { return { tjoy: base, tfire: fire, tscope: scpBtn, tquit: quitBtn, 'temergency-repair': repairB, tmenu: menuB, tsqb: cmdB, tnv: nvB, tth: thB, tcap: capB, tfol: folB, tlas: lasB, theliu: heliU, thelid: heliD, heliradarmfd: mfdB, tsense: sense }; }
   function custShow(on) {
     custOn = on;
     /* 跨 IIFE 通知:player.js 的 renderHeliRadarMFD 每帧驱动 MFD 显隐,编辑期间必须让路——
@@ -1687,7 +1720,7 @@ function updateLockHint() {
     custShow(false);
   });
   function hitCtl(x, y) {                        // 手动命中检测(tjoy pointer-events:none 收不到 target;事件时一次矩形查询)
-    var m = custCtls(), order = ['tmenu', 'tquit', 'tlas', 'tsqb', 'tcap', 'tfol', 'tscope', 'tnv', 'tth', 'tfire', 'heliradarmfd', 'theliu', 'thelid', 'tjoy', 'tsense'], i, el2, r;   // tsense 最大置末(内圈优先命中);heliradarmfd 右上角,与右下键区不重叠,顺序仅影响重叠时的归属;tlas 在弃车正上方,与键区无重叠
+    var m = custCtls(), order = ['tmenu', 'tquit', 'tlas', 'temergency-repair', 'tsqb', 'tcap', 'tfol', 'tscope', 'tnv', 'tth', 'tfire', 'heliradarmfd', 'theliu', 'thelid', 'tjoy', 'tsense'], i, el2, r;   // tsense 最大置末(内圈优先命中);heliradarmfd 右上角,与右下键区不重叠,顺序仅影响重叠时的归属;tlas 在弃车正上方,与键区无重叠
     for (i = 0; i < order.length; i++) {
       el2 = m[order[i]]; if (!el2) continue;
       r = el2.getBoundingClientRect();

@@ -1041,7 +1041,9 @@ var CONF = {
           speed: 7.5, turn: 0.35, turretRate: 1.0, accel: 1.4, decel: 3.8,   // 发射架伺服 1.0rad/s(与开镜瞄具转速一致)
           mob: { mass: 22000, power: 253538, eta: 0.80, mu: 0.50, muLat: 0.35, crr: 0.12, vCrawl: 1.0 } },   // 轮式卡车:22t/340hp(估);极限≈38%,越野弱一档
   // 蓝方火箭炮 = BLUE-MLRS 227mm 高机动火箭炮(6 联装):射程 40km/伤害 120/装填 12s/齐射 6 发
-  artyE: { p: 0.22,   // reload=6×1s×(120/60)=12s(伤害系数=2,单发更重装填更快)
+  // 这里必须保持与 CONF.arty 相同的完整字段集合。此前误写成 p:0.22，导致
+  // struct/dmg/salvo/reload/salvoGap 全部为 undefined：玩家无法建立齐射，AI 也永远无法进入齐射分支。
+  artyE: { struct: 300, dmg: 120, reload: 12, salvo: 6, salvoGap: 0.22,
           rocketSpeed: 640, splashR: 44, minRange: 130, maxRange: 40000,   // 溅射半径 44m=120×22/60(splashRadiusFromDamage 同源自洽)
           pen: 1200,   // 战斗部化学能定型值,与 RED-MLRS 同级
           speed: 7.5, turn: 0.35, turretRate: 1.0, accel: 1.4, decel: 3.8,   // 发射架伺服 1.0rad/s(与开镜瞄具转速一致)
@@ -1161,8 +1163,8 @@ var VEHICLE_KINDS = [
   { kind: 'arty', def: 'artyPerTeam', names: { red: 'RED-MLRS', blue: 'BLUE-MLRS' },
     respawnDelay: 24, spawnName: { red: 'RED-MLRS', blue: 'BLUE-MLRS' }, aiAnchor: true,
     modelKey: 'arty', frontalArea: { red: 5.90, blue: 6.20 }, nv: true, th: false },
-  { kind: 'aa', def: 'aaPerTeam', names: { red: 'RED-AA', blue: 'BLUE-AA' },
-    respawnDelay: 12, spawnName: { red: 'RED-AA', blue: 'BLUE-AA' }, aiAnchor: true,
+  { kind: 'aa', def: 'aaPerTeam', names: { red: 'RED-AA', blue: '复仇者防空系统' },
+    respawnDelay: 12, spawnName: { red: 'RED-AA', blue: '复仇者防空系统' }, aiAnchor: true,
     modelKey: 'aa', frontalArea: { red: 5.20, blue: 4.10 }, nv: true, th: false }
 ];
 function vehicleKindEntry(kind) {                // 注册表条目查询(未知型号返回 null)

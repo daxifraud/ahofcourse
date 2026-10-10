@@ -79,6 +79,8 @@ function commonUpdate(t, dt) {
   /* BLUE-MBT-1 battlefield repair is consumed here, in the real per-vehicle
      update path after fire damage has been applied.  It is not a HUD-only timer. */
   if (typeof vehicleTechBattlefieldRepairTick === 'function') vehicleTechBattlefieldRepairTick(t, dt);
+  /* 玩家紧急修车:真实模块 HP 更新路径,每次部署/接管实例只有一充。 */
+  if (typeof emergencyRepairTick === 'function') emergencyRepairTick(t, dt);
 }
 
 /* ============================================================

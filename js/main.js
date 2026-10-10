@@ -50,6 +50,7 @@ function step(dt) {
   playerHudTick();                                       // 载具状态 3D 迷你 HUD:换车引用比较+姿态变更门(未变=零渲染;高亮走事件钩子)
   if (typeof vehicleTechBurstLoadingHudTick === 'function') vehicleTechBurstLoadingHudTick();
   if (typeof vehicleTechBattlefieldRepairHudTick === 'function') vehicleTechBattlefieldRepairHudTick();
+  if (typeof emergencyRepairHudTick === 'function') emergencyRepairHudTick();
 
   // 开镜状态(Shift 点按切换):平滑过渡 + 测距/弹着仿真节流
   var wantScope = scopeMode && player && player.alive;

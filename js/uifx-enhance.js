@@ -1730,7 +1730,7 @@ var Hangar3D = (function () {
         hp: '1300 HP', hpSub: 'Readiness 100%'
       },
       aa: {
-        name: 'BLUE-AA', sub: 'BLUE-AIR DEFENSE',
+        name: '复仇者防空系统', sub: 'AVENGER AIR DEFENSE SYSTEM',
         fire: '8x SAM missiles', fireSub: 'Surface-to-air missiles - Fire-and-forget',
         armor: 'Light armored 4x4', armorSub: '4x4 tactical chassis',
         speed: '89 km/h', speedSub: 'V8 diesel',

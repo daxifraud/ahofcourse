@@ -97,10 +97,10 @@
       ]
     },
     'blue|aa': {
-      key: 'blue|aa', team: 'blue', kind: 'aa', title: 'BLUE-AA', subtitle: 'BLUE AIR DEFENSE',
+      key: 'blue|aa', team: 'blue', kind: 'aa', title: '复仇者防空系统', subtitle: 'AVENGER AIR DEFENSE SYSTEM',
       nodes: [
-        { id: 'improved-optics', label: 'IMPROVED OPTICS', short: 'THERMAL OPTICS', effect: 'Unlocks the player BLUE-AA thermal imaging function in the gun sight and normal view.' },
-        { id: 'anti-tank-missile', label: 'ANTI-TANK MISSILE', short: 'ATGM 5KM', effect: 'Player-only selectable SAM / ATGM loadout matching RED-AA: 180 damage, 800mm penetration, low-drag EO/IR ground guidance, effective range about 5km. AI BLUE-AA keeps the default SAM.' }
+        { id: 'improved-optics', label: 'IMPROVED OPTICS', short: 'THERMAL OPTICS', effect: 'Unlocks the player Avenger air defense system thermal imaging function in the gun sight and normal view.' },
+        { id: 'anti-tank-missile', label: 'ANTI-TANK MISSILE', short: 'ATGM 5KM', effect: 'Player-only selectable SAM / ATGM loadout for the Avenger air defense system: 180 damage, 800mm penetration, low-drag EO/IR ground guidance, effective range about 5km. AI Avenger units keep the default SAM.' }
       ]
     }
   };
