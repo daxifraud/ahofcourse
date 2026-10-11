@@ -108,6 +108,10 @@ function step(dt) {
       if (DBG_ON) shirkTrack(t, dt);
     }
   });
+  /* Player emergency repair runs explicitly after every vehicle's common update.
+     This is the authoritative real-module HP path; it must not depend on the
+     player remaining in the generic aliveList iteration. */
+  if (typeof emergencyRepairTick === 'function' && player && player.alive) emergencyRepairTick(player, dt);
   /* Control-area capture, force-pool income, and player repair run once after
      all player/AI movement for this simulation step, so entry/exit counts use
      the same positions that the renderer and navigation consumed. */

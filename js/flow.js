@@ -946,8 +946,8 @@ function initInput() {
       e.preventDefault();
       if (typeof minimapCycleSize === 'function') minimapCycleSize();
     }
-    /* R is reserved for the player emergency repair when the per-vehicle
-       charge is available.  The old manual claimed a KeyR radar toggle, but
+    /* R is reserved for the player emergency repair when its 30-second
+       cooldown is clear.  The old manual claimed a KeyR radar toggle, but
        this build has no KeyR radar listener: helicopter/AA radar is automatic,
        so the guide below is corrected instead of inventing a conflicting path. */
     if (e.code === 'KeyR' && !e.repeat &&
@@ -1553,7 +1553,7 @@ function updateLockHint() {
         scopeToggle(); scpBtn.classList.toggle('lit', scopeMode);
       } else if (cid === 'tquit') {                            // 弃车键:长按 3s(KeyJ 同位,倒数/红环/松手复位全链复用)
         quitId = t.identifier; keys.KeyJ = true; quitBtn.classList.add('pressed');
-      } else if (cid === 'temergency-repair') {                 // 紧急修车:点击沿与 R 键完全同一入口,一次性消耗
+      } else if (cid === 'temergency-repair') {                 // 紧急修车:点击沿与 R 键完全同一入口,使用后冷却30秒
         var emergencyUsed = typeof emergencyRepairUse === 'function' && emergencyRepairUse(player);
         if (emergencyUsed && repairB) {
           repairB.classList.add('pressed');

@@ -23,7 +23,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason;var m=(r
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Armored Corps</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23060905'/%3E%3Ccircle cx='32' cy='32' r='22' fill='none' stroke='%239dffa8' stroke-width='4'/%3E%3Cpath d='M32 17l12 18-12 12-12-12z' fill='none' stroke='%239dffa8' stroke-width='3'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="css/main.css?v=20261010emergencyrepair">
+<link rel="stylesheet" href="css/main.css?v=20261011emergencyrepairsquare">
 
 <link id="game-boot-loader-css" rel="stylesheet" href="css/boot-loader.css?v=mob3">
 
@@ -83,11 +83,19 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason;var m=(r
       <div id="battle-repair-detail" class="powerup-slot-note">SYSTEM READY</div>
     </div>
   </div>
-  <div id="emergency-repair-hud" class="hidden" aria-label="Emergency repair available" aria-hidden="true">
+  <div id="emergency-repair-hud" class="hidden" aria-label="Emergency repair status" aria-hidden="true">
     <button id="emergency-repair-button" class="emergency-repair-slot" type="button" title="Emergency repair" aria-label="Emergency repair">
       <span id="emergency-repair-icon" class="powerup-slot-icon emergency-repair-icon"><span class="powerup-slot-glyph">R+</span></span>
-      <span class="emergency-repair-label">REPAIR</span>
     </button>
+    <div id="emergency-repair-progress" class="emergency-repair-slot emergency-repair-progress hidden" role="status" aria-label="Emergency repair countdown" aria-live="polite" aria-hidden="true">
+      <span id="emergency-repair-progress-icon" class="powerup-slot-icon emergency-repair-progress-icon"><span class="powerup-slot-glyph">R+</span></span>
+      <span class="emergency-repair-progress-track"><i id="emergency-repair-progress-fill"></i></span>
+      <span id="emergency-repair-progress-time" class="emergency-repair-progress-time">0.0s</span>
+    </div>
+    <div id="emergency-repair-cooldown" class="emergency-repair-slot emergency-repair-cooldown hidden" role="status" aria-label="Emergency repair cooldown" aria-live="polite" aria-hidden="true">
+      <span id="emergency-repair-cooldown-icon" class="powerup-slot-icon emergency-repair-cooldown-icon"><span class="powerup-slot-glyph">CD</span></span>
+      <span id="emergency-repair-cooldown-time" class="emergency-repair-cooldown-time">30.0s</span>
+    </div>
   </div>
   <div id="control-zone-capture-hud" class="hidden" aria-label="Control zone capture status" aria-hidden="true">
     <div class="powerup-slot control-zone-capture-slot">
@@ -733,7 +741,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason;var m=(r
               <div><em>Right click</em>: Lock target / laser suppress</div>
               <div><em>Shift</em>: Gunner sight</div>
               <div><em>Wheel</em>: Zoom / heli lift</div>
-              <div><em>R</em>: Emergency repair (once per vehicle)</div>
+              <div><em>R</em>: Emergency repair (30s cooldown)</div>
               <div><em>Radar</em>: Auto-scan on helicopters / AA vehicles</div>
               <div><em>H</em>: Thermal imaging (FLIR)</div>
               <div><em>N</em>: Night vision (NV)</div>
@@ -758,7 +766,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason;var m=(r
               <div><em>CMD</em>: Command mode</div>
               <div><em>CAP / FOLLOW</em>: Squad orders</div>
               <div><em>BAIL</em>: Bail out / redeploy</div>
-              <div><em>REPAIR</em>: Tap once per vehicle; glowing edge means ready</div>
+              <div><em>REPAIR</em>: Tap when READY; cooldown icon shows remaining time</div>
               <div><em>LWS</em>: Hold for laser suppress</div>
               <div><em>Weapon bar</em>: Tap to switch weapons</div>
               <div><em>Mini-map</em>: Tap to change size</div>
@@ -837,7 +845,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason;var m=(r
 <script src="js/fx_common.js?v=20260910fx4-mob3"></script>
 <script src="js/fx.js?v=20260910fx4-mob3"></script>
 <script src="js/vehicles_common.js?v=20260920depth1-mob3"></script>
-<script src="js/vehicles.js?v=20261010emergencyrepair"></script>
+<script src="js/vehicles.js?v=20261011emergencyrepaircooldown"></script>
 <script src="js/combat.js?v=20261010emergencyrepair"></script>
 <script src="js/weapons.js?v=20260922blueaa2-mob3"></script>
 <script src="js/player.js?v=20261010emergencyrepair"></script>
@@ -845,23 +853,23 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason;var m=(r
 <script src="js/ai.js?v=20260923tdmfix1-mob3"></script>
 <script src="js/ai_nav.js?v=20260910fx4-mob3"></script>
 <script src="js/control-zones.js?v=20260923zoneflow5-mob3"></script>
-<script src="js/emergency-repair.js?v=20261010emergencyrepair"></script>
-<script src="js/world.js?v=20261010emergencyrepair"></script>
-<script src="js/ui.js?v=20261010emergencyrepair"></script>
+<script src="js/emergency-repair.js?v=20261011emergencyrepairsquare"></script>
+<script src="js/world.js?v=20261011emergencyrepaircooldown"></script>
+<script src="js/ui.js?v=20261011emergencyrepairsquare"></script>
 <script src="js/achievements.js?v=20260919ach3-mob3"></script>
 <script src="js/preview.js?v=20260910fx4-mob3"></script>
-<script src="js/flow.js?v=20261010emergencyrepair"></script>
+<script src="js/flow.js?v=20261011emergencyrepaircooldown"></script>
 <script src="js/minimap.js?v=20260923control4-mob3"></script>
 <script src="js/strategic-support.js?v=20260923zoneflow1-mob3"></script>
 <script src="js/powerups.js?v=20260921repair1-mob3"></script>
 <script src="js/spectator.js?v=spec2-mob3"></script>
-<script src="js/main.js?v=20261010emergencyrepair"></script>
+<script src="js/main.js?v=20261011emergencyrepaircooldown"></script>
 <script src="js/comic_common.js?v=20260910fx4-mob3"></script>
 <script src="js/comic.js?v=20260929tac2"></script>
 <script src="js/battlefield-fx.js?v=20260910fx4-mob3"></script>
 <script src="js/uifx-enhance.js?v=20261010avenger"></script>
 <script src="js/gfx-live.js?v=1"></script>
-<script src="js/zh-localization.js?v=zh13emergency"></script>
+<script src="js/zh-localization.js?v=zh14emergencycooldown"></script>
 </body>
 </html>
 

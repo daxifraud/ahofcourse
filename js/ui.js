@@ -21,7 +21,7 @@ function grabEls() {
    'timeinput','timeval','leninput','widinput','timeremain','roughinput','roughval','sizeinput','bdinput_tank','bdinput_arty','bdinput_heli',
    'hourinput','hourval',                                        // 时间拖动条(小时 0~24)
    'continuebtn',   // 胜利结算"继续游戏"按钮
-   'possessov','posskindrow','emergency-repair-hud','emergency-repair-button',   // 接管类型钮排 / 玩家紧急修车图标
+   'possessov','posskindrow','emergency-repair-hud','emergency-repair-button','emergency-repair-progress','emergency-repair-progress-icon','emergency-repair-progress-fill','emergency-repair-progress-time','emergency-repair-cooldown','emergency-repair-cooldown-icon','emergency-repair-cooldown-time',   // 接管类型钮排 / 玩家紧急修车状态卡
    'startsub','settingssub',   // 主菜单四视图(主/遭遇战/手册/设置)
    'startbtnrow',                                                 // 遭遇战参数子菜单:开始战斗按钮行
    'setuproot',                                                   // 遭遇战编制配置(红/蓝独立,型号输入动态生成)

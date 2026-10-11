@@ -170,26 +170,42 @@
   #battle-repair-hud[data-state="PREPARING"] .battle-repair-slot { --pu-color:#ffd447; }
   #battle-repair-hud[data-state="REPAIRING"] .battle-repair-slot { --pu-color:#9dffa8; }
   #battle-repair-note { color:#ffcf73; }
-  /* Player emergency repair: a separate one-use icon, deliberately not the
-     technology-tree battlefield-repair card or the control-zone card. */
+  /* Player emergency repair: every state uses the same square panel.  The
+     repair countdown replaces READY, then the cooldown panel replaces it. */
   #emergency-repair-hud { position:absolute; top:64px; left:calc(50% + 246px); z-index:43;
-    display:flex; align-items:flex-start; justify-content:center; pointer-events:auto; }
+    display:flex; align-items:flex-start; justify-content:flex-start; pointer-events:auto; }
   #emergency-repair-hud.hidden { display:none !important; }
-  .emergency-repair-slot { min-width:64px; box-sizing:border-box; padding:4px 5px 5px;
-    display:block; color:#d8ffe5; background:rgba(6,12,5,.88);
-    border:1px solid rgba(157,255,168,.58); box-shadow:2px 2px 0 #040704;
-    text-align:center; font-family:VT323,"Courier New",monospace; letter-spacing:.5px;
-    cursor:pointer; touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
+  .emergency-repair-slot { width:64px; min-width:64px; height:64px; box-sizing:border-box; padding:2px;
+    display:grid; grid-template-rows:38px 5px 11px; align-content:center; justify-items:center; gap:1px;
+    color:#d8ffe5; background:rgba(6,12,5,.88); border:1px solid rgba(157,255,168,.58);
+    box-shadow:2px 2px 0 #040704; text-align:center; font-family:VT323,"Courier New",monospace;
+    letter-spacing:.5px; cursor:pointer; touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
   .emergency-repair-slot:disabled { cursor:default; opacity:.65; }
+  .emergency-repair-slot.hidden { display:none !important; }
+  .emergency-repair-slot .powerup-slot-icon { margin:0; }
   .emergency-repair-icon { --pu-color:#9dffa8; width:38px; height:38px; }
-  .emergency-repair-label { display:block; color:#fcf9f0; font-size:11px; line-height:12px; }
+  .emergency-repair-label { display:none; }
   #emergency-repair-hud.is-available .emergency-repair-slot {
     border-color:#9dffa8; box-shadow:0 0 15px rgba(157,255,168,.34),2px 2px 0 #040704;
   }
   #emergency-repair-hud.is-available .emergency-repair-icon {
     animation:emergencyRepairReadyPulse 1.15s steps(2,start) infinite;
   }
+  .emergency-repair-progress { color:#9dffa8; cursor:default; border-color:#9dffa8; }
+  .emergency-repair-progress-icon { --pu-color:#9dffa8; width:38px; height:38px; }
+  .emergency-repair-progress-track { display:block; position:relative; width:48px; height:5px;
+    overflow:hidden; background:rgba(20,25,20,.92); border:1px solid rgba(157,255,168,.48); }
+  #emergency-repair-progress-fill { display:block; width:0%; height:100%; background:linear-gradient(90deg,#ffd447,#9dffa8);
+    box-shadow:0 0 8px rgba(157,255,168,.75); transition:width .08s linear; }
+  .emergency-repair-progress-time { display:block; color:#9dffa8; font:bold 12px/12px Consolas,monospace; white-space:nowrap; }
+  .emergency-repair-cooldown { color:#ffd447; cursor:default; border-color:rgba(255,212,71,.62); }
+  .emergency-repair-cooldown-icon { --pu-color:#ffd447; width:34px; height:34px; }
+  .emergency-repair-cooldown-time { display:block; color:#ffd447; font:bold 12px/12px Consolas,monospace; white-space:nowrap; }
+  #emergency-repair-hud.is-repairing .emergency-repair-progress-icon { animation:emergencyRepairRepairPulse 1s steps(2,start) infinite; }
+  #emergency-repair-hud.is-cooldown .emergency-repair-cooldown-icon { animation:emergencyRepairCooldownPulse 1s steps(2,start) infinite; }
   @keyframes emergencyRepairReadyPulse { 0%,100% { filter:brightness(1); } 50% { filter:brightness(1.3); } }
+  @keyframes emergencyRepairRepairPulse { 0%,100% { filter:brightness(.95); } 50% { filter:brightness(1.2); } }
+  @keyframes emergencyRepairCooldownPulse { 0%,100% { filter:brightness(.9); } 50% { filter:brightness(1.2); } }
 
   /* The capture card stays in the upper HUD strip and reports the live
      remaining progress rather than a fixed capture duration. */
@@ -1074,8 +1090,10 @@
   #theliu { left:24px; top:160px; }     /* 上十字=总距/偏航:竖屏在指令键下方 */
   @media (max-width:700px) {
     #emergency-repair-hud { top:58px; left:auto; right:12px; transform:none; }
-    #emergency-repair-hud .emergency-repair-slot { min-width:58px; padding:3px 4px 4px; }
-    #emergency-repair-hud .emergency-repair-icon { width:34px; height:34px; }
+    #emergency-repair-hud .emergency-repair-slot { width:58px; min-width:58px; height:58px; padding:3px; }
+    #emergency-repair-hud .emergency-repair-icon,
+    #emergency-repair-hud .emergency-repair-progress-icon { width:34px; height:34px; }
+    #emergency-repair-hud .emergency-repair-progress-track { width:44px; }
   }
   @media (orientation:landscape) { #theliu { left:186px; top:auto; bottom:88px; } }   /* 横屏:双键并排(下左上右) */
   .hsub { width:46px; height:46px; }

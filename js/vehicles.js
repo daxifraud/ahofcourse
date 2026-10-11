@@ -7390,11 +7390,16 @@ function createTank(o) {
     errBase: rand(0.08, 0.14),                               // 车组散布系数全体发放(玩家与 AI 同分布)——统一散布公式按载具取用,玩家不再特殊化
     nightEff: nightAimEffOf(kind, team),                     // 夜战瞄准效率(设备表出生缓存:热像1.2/夜视0.8/裸眼0.5;ai 伺服夜间消费)
     _ffaSpawnInvulUntil: 0,                                 // 个人死斗玩家出生保护截止时间(仅玩家部署时写入)
-    /* 玩家紧急修车:每个玩家载具实例独立一次;AI 出生不赋予,接管时由接管边沿显式重置。 */
+    /* 玩家紧急修车:每个玩家载具实例独立拥有冷却状态;AI 出生不赋予,接管时由接管边沿显式重置。 */
     _emergencyRepairAvailable: isP,
+    _emergencyRepairCooldown: 0,
     _emergencyRepairActive: false,
     _emergencyRepairTarget: null,
     _emergencyRepairLockPos: null,
+    _emergencyRepairRepairStart: 0,
+    _emergencyRepairRepairMax: 0,
+    _emergencyRepairRepairTotal: 0,
+    _emergencyRepairRepairRemaining: 0,
     alive: true, unitState: UNIT_ALIVE, velX: 0, velZ: 0,
     accel0: C.accel || 2.5, decel0: C.decel || 5,
     lastHitBy: null, lastDamageT: -Infinity,
