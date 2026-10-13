@@ -1555,7 +1555,7 @@ function artyUpdate(t, dt) {
   var A = t.ai, tp = t.group.position;
   var B = CONF.bounds - 14;
   var homeSign = homeSignOf(t);   // arty.homeZ 带半场符号(生成/部署时落位),未设时按出生线兜底
-  var AC = artyConfOf(t);   // 阵营规格路由:红 RED_MLRS(40发/60伤) 蓝 BLUE_MLRS(6发/120伤),射程均 40km
+  var AC = artyConfOf(t);   // 阵营规格路由:红 RED_MLRS(40发/60伤) 蓝 BLUE_MLRS(6发/40伤),射程均 40km
   A.destT -= dt;
 
   // —— 齐射进行中:车辆锁定不动,停稳后按间隔射出 ——

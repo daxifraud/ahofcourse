@@ -210,7 +210,7 @@ function redMbtMissileReloadTimeOf(t) {
 var AA_AI_MSL_INFLIGHT = 2;
 var AA_AI_MSL_INTERVAL = 3.0;
 /* 火箭弹类装填(大修): 基础=1 秒 × 装弹量,再乘伤害系数=该弹伤害/60(伤害越低系数越小,装填越快)。
-   RED_MLRS: 40 联 × 1s × (60/60=1.0) = 40s;BLUE_MLRS: 6 联 × 1s × (120/60=2.0) = 12s;
+   RED_MLRS: 40 联 × 1s × (60/60=1.0) = 40s;BLUE_MLRS: 6 联 × 1s × (40/60) ≈ 4s;
    红方火箭弹: 14 × (40/60) ≈ 9.33s;蓝方火箭弹: 14 × (60/60) = 14s。导弹不走本函数。 */
 function rocketPodCountOf(t) {
   if (!t) return 14;
@@ -442,7 +442,7 @@ var ARTY_SALVO_PATTERN = [
   [-72.28, -23.49], [-44.67, -61.49], [0.00, -76.00], [44.67, -61.49], [72.28, -23.49]
 ];
 /* 齐射弹数不同 → 图案按弹数取表:首发恒为落区中心(红点=首发铁律),其余黄金角螺旋均布,
-   间距随溅射半径等比缩放(锚点:溅射 22m → 间距 38m;BLUE_MLRS 溅射 44m → 间距 76m)。 */
+   间距随溅射半径等比缩放(锚点:溅射 22m → 间距 38m;BLUE_MLRS 40伤/溅射14.67m → 6发间距约25.33m)。 */
 function _artySpiralPattern(n, spacing) {
   var p = [[0, 0]];
   for (var i = 1; i < n; i++) {
@@ -451,7 +451,8 @@ function _artySpiralPattern(n, spacing) {
   }
   return p;
 }
-var ARTY_SALVO_PATTERNS = { 16: ARTY_SALVO_PATTERN, 40: _artySpiralPattern(40, 38), 6: _artySpiralPattern(6, 76) };
+var BLUE_MLRS_SALVO_SPACING = 76 * ((typeof CONF !== 'undefined' && CONF.artyE && CONF.artyE.splashR) ? (CONF.artyE.splashR / 44) : 1);
+var ARTY_SALVO_PATTERNS = { 16: ARTY_SALVO_PATTERN, 40: _artySpiralPattern(40, 38), 6: _artySpiralPattern(6, BLUE_MLRS_SALVO_SPACING) };
 function artySalvoPattern(total) { return ARTY_SALVO_PATTERNS[total] || ARTY_SALVO_PATTERN; }
 
 function fireShell(t, disp) {  // disp(仅火箭炮齐射第 2 发起):真物理散布=初速向量/初速扰动,发射架不动

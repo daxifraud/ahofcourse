@@ -1040,11 +1040,12 @@ var CONF = {
           pen: 1200,   // 火箭弹直击穿深(mm,战斗部化学能定型值):全场最硬板面(RED-MBT-2首上极限等效≈1058)必穿,与RED-MBT-2主炮1090同量级取上界
           speed: 7.5, turn: 0.35, turretRate: 1.0, accel: 1.4, decel: 3.8,   // 发射架伺服 1.0rad/s(与开镜瞄具转速一致)
           mob: { mass: 22000, power: 253538, eta: 0.80, mu: 0.50, muLat: 0.35, crr: 0.12, vCrawl: 1.0 } },   // 轮式卡车:22t/340hp(估);极限≈38%,越野弱一档
-  // 蓝方火箭炮 = BLUE-MLRS 227mm 高机动火箭炮(6 联装):射程 40km/伤害 120/装填 12s/齐射 6 发
+  // 蓝方火箭炮 = BLUE-MLRS 227mm 高机动火箭炮(6 联装):射程 40km/伤害 40/装填 4s/齐射 6 发
+  // 装填与溅射半径均按全项目既有伤害比例规则由 40 伤派生(而非影响红方 MLRS 或直升机火箭)。
   // 这里必须保持与 CONF.arty 相同的完整字段集合。此前误写成 p:0.22，导致
   // struct/dmg/salvo/reload/salvoGap 全部为 undefined：玩家无法建立齐射，AI 也永远无法进入齐射分支。
-  artyE: { struct: 300, dmg: 120, reload: 12, salvo: 6, salvoGap: 0.22,
-          rocketSpeed: 640, splashR: 44, minRange: 130, maxRange: 40000,   // 溅射半径 44m=120×22/60(splashRadiusFromDamage 同源自洽)
+  artyE: { struct: 300, dmg: 40, reload: 4, salvo: 6, salvoGap: 0.22,
+          rocketSpeed: 640, splashR: 14.6666666667, minRange: 130, maxRange: 40000,   // 溅射半径 14.67m=40×22/60(splashRadiusFromDamage 同源自洽)
           pen: 1200,   // 战斗部化学能定型值,与 RED-MLRS 同级
           speed: 7.5, turn: 0.35, turretRate: 1.0, accel: 1.4, decel: 3.8,   // 发射架伺服 1.0rad/s(与开镜瞄具转速一致)
           mob: { mass: 22000, power: 253538, eta: 0.80, mu: 0.50, muLat: 0.35, crr: 0.12, vCrawl: 1.0 } },   // FMTV M1140 6×6:机动与 RED_MLRS 同级

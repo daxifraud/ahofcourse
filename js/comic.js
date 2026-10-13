@@ -2358,7 +2358,7 @@ function comicArtyBurst(bp, rSplash) {
   e.life = e.deg ? 1.2 : 2.8;
   if (e.deg) _cbDegN++;
   var splashRadius = (rSplash != null && rSplash > 0) ? rSplash : 22.0;
-  e.yieldK = Math.min(splashRadius / 22.0, gfxFx('fxYieldMax', 2.0));   // 贴图大小与爆炸半径自动线性关联 (22m=1.0x, 11m=0.5x);★E1-2:当量放大上限按档钳(BLUE_MLRS 44m 本来吃满 2.0)
+  e.yieldK = Math.min(splashRadius / 22.0, gfxFx('fxYieldMax', 2.0));   // 贴图大小与爆炸半径自动线性关联 (22m=1.0x, 11m=0.5x);★E1-2:当量放大上限按档钳(44m及以上吃满 2.0)
   e.burstY = bp.y; e.group.position.copy(bp);
   _cbRefreshRocketGround(e);                              // 火光/高亮先钉当前地表;爆心高度另存给炮镜判定
   e.fire.visible = e.smoke.visible = true; e.light.visible = !e.deg && _cbGroundLight; _cbRefreshActiveScale(e); _cbAnim(e, 0);   // ★任务27⑥:降级卡省掉 36m 加法高亮面;★E1-5:触屏档整档关闭该面

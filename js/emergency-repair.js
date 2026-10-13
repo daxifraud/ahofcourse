@@ -20,11 +20,17 @@ function emergencyRepairCooldownValue(t) {
   var v = t && Number(t._emergencyRepairCooldown);
   return isFinite(v) && v > 0 ? v : 0;
 }
+function emergencyRepairIsHelicopter(t) {
+  return !!t && ((typeof isHeliVehicle === 'function' && isHeliVehicle(t)) || t.kind === 'ah64' || t.kind === 'wz10');
+}
+function emergencyRepairVehicleAllowed(t) {
+  return !!t && t.isPlayer === true && !emergencyRepairIsHelicopter(t);
+}
 function emergencyRepairRefreshAvailable(t) {
   if (!t) return;
   /* _emergencyRepairAvailable is retained as a readable compatibility flag;
      cooldown and active state are the authoritative gates. */
-  t._emergencyRepairAvailable = t.isPlayer === true && !t._emergencyRepairActive && emergencyRepairCooldownValue(t) <= 1e-9;
+  t._emergencyRepairAvailable = emergencyRepairVehicleAllowed(t) && !t._emergencyRepairActive && emergencyRepairCooldownValue(t) <= 1e-9;
 }
 
 /* Called at every new player vehicle boundary.  A new AI vehicle is never
@@ -33,17 +39,18 @@ function emergencyRepairReset(t) {
   if (!t) return;
   t._emergencyRepairCooldown = 0;
   t._emergencyRepairActive = false;
-  t._emergencyRepairAvailable = t.isPlayer === true;
+  t._emergencyRepairAvailable = emergencyRepairVehicleAllowed(t);
   t._emergencyRepairTarget = null;
   t._emergencyRepairLockPos = null;
   t._emergencyRepairRepairStart = 0;
   t._emergencyRepairRepairMax = 0;
   t._emergencyRepairRepairTotal = 0;
   t._emergencyRepairRepairRemaining = 0;
+  if (typeof player !== 'undefined' && t === player) emergencyRepairHudTick();
 }
 
 function emergencyRepairCanUse(t) {
-  return !!t && t === player && t.isPlayer === true && t.alive === true &&
+  return emergencyRepairVehicleAllowed(t) && t === player && t.alive === true &&
     !t._emergencyRepairActive && emergencyRepairCooldownValue(t) <= 1e-9;
 }
 
@@ -72,6 +79,10 @@ function emergencyRepairPickTarget(t) {
 
 function emergencyRepairFinish(t, finishedKey) {
   if (!t) return;
+  if (!emergencyRepairVehicleAllowed(t)) {
+    emergencyRepairReset(t);
+    return;
+  }
   t._emergencyRepairActive = false;
   t._emergencyRepairTarget = null;
   t._emergencyRepairLockPos = null;
@@ -137,16 +148,6 @@ function emergencyRepairUse(t) {
   t._motionVz = 0;
   t.velX = 0;
   t.velZ = 0;
-  /* Helicopter translational velocity is also zeroed; the per-frame lock below
-     keeps the repair action stationary even when the aircraft is airborne. */
-  if (typeof isHeliVehicle === 'function' && isHeliVehicle(t)) {
-    t._heliVx = 0;
-    t._heliVy = 0;
-    t._heliVz = 0;
-    t._heliPitchRate = 0;
-    t._heliRollRate = 0;
-    t._heliYawRate = 0;
-  }
   if (typeof aimHint === 'function') aimHint('EMERGENCY REPAIR');
   if (typeof window !== 'undefined' && typeof window._touchUISync === 'function') window._touchUISync();
   emergencyRepairHudTick();
@@ -154,13 +155,25 @@ function emergencyRepairUse(t) {
 }
 
 function emergencyRepairIsActive(t) {
-  return !!t && t._emergencyRepairActive === true;
+  return emergencyRepairVehicleAllowed(t) && t._emergencyRepairActive === true;
 }
 
 function emergencyRepairTick(t, dt) {
   /* This function is deliberately player-only.  main.js calls it once at the
      explicit player simulation boundary, never as an AI ability. */
-  if (!t || t !== player || t.isPlayer !== true) return;
+  if (!t || t !== player || !emergencyRepairVehicleAllowed(t)) {
+    if (t && emergencyRepairIsHelicopter(t)) {
+      /* A vehicle-type switch must also clear stale state from a prior
+         non-helicopter player object; helicopters never expose this ability. */
+      t._emergencyRepairActive = false;
+      t._emergencyRepairCooldown = 0;
+      t._emergencyRepairAvailable = false;
+      t._emergencyRepairTarget = null;
+      t._emergencyRepairLockPos = null;
+      emergencyRepairHudTick();
+    }
+    return;
+  }
   var stepDt = Math.max(0, Number(dt) || 0);
   if (!t.alive) return;
 
@@ -237,10 +250,11 @@ function emergencyRepairHudTick() {
   if (!_emergencyRepairHud) return;
   var t = typeof player !== 'undefined' ? player : null;
   var playingNow = typeof gameState !== 'undefined' && gameState === 'playing';
-  var active = !!t && t.isPlayer === true && t.alive === true && t._emergencyRepairActive === true;
-  var cooldown = t && t.isPlayer === true && t.alive === true ? emergencyRepairCooldownValue(t) : 0;
+  var allowed = emergencyRepairVehicleAllowed(t);
+  var active = allowed && t.alive === true && t._emergencyRepairActive === true;
+  var cooldown = allowed && t.alive === true ? emergencyRepairCooldownValue(t) : 0;
   var ready = playingNow && emergencyRepairCanUse(t);
-  var visible = playingNow && !!t && t.isPlayer === true && t.alive === true && (ready || active || cooldown > 0);
+  var visible = playingNow && allowed && t.alive === true && (ready || active || cooldown > 0);
   var state = active ? 'REPAIRING' : (cooldown > 0 ? 'COOLDOWN' : (ready ? 'READY' : 'HIDDEN'));
 
   _emergencyRepairHud.classList.toggle('hidden', !visible);

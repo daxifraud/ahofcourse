@@ -1907,7 +1907,7 @@ function playerUpdate(dt) {
     }
   }
 
-  // 玩家火箭炮:齐射推进(与 AI 同节奏——锁车停稳后按间隔放完全部火箭(RED_MLRS 40 发/BLUE_MLRS 6 发),随后长装填(40s/12s);
+  // 玩家火箭炮:齐射推进(与 AI 同节奏——锁车停稳后按间隔放完全部火箭(RED_MLRS 40 发/BLUE_MLRS 6 发),随后长装填(40s/4s);
   // salvoLeft 必须在此清零,否则打不出弹且锁死移动)
   if (player.kind === 'arty' && player.salvoLeft > 0) {
     playerArtyApplySalvoLock(player, false);

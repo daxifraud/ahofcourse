@@ -7383,7 +7383,7 @@ function createTank(o) {
     radius: kind === 'aa' ? (team === 'blue' ? 1.7 : 2.0) : (kind === 'arty' ? (team === 'blue' ? 3.6 : 3.2) : (kind === 'ah64' ? 3.40 : (kind === 'wz10' ? 3.35 : (m1Platform ? 2.90 : (kind === 'td' ? 2.60 : (kind === '99' ? 2.55 : 2.45)))))), blockedT: 0,
     structMax: o.struct || C.struct, struct: o.struct || C.struct,
     mods: mods, fire: null,
-    reload: 0, reloadTime: (kind === 'arty' && typeof rocketReloadTimeOf === 'function') ? rocketReloadTimeOf({ kind: 'arty', team: team }) : C.reload,             // 火箭炮=1s/发×伤害系数(dmg/60)×齐射发数(红40s/蓝12s);其余 CONF.reload
+    reload: 0, reloadTime: (kind === 'arty' && typeof rocketReloadTimeOf === 'function') ? rocketReloadTimeOf({ kind: 'arty', team: team }) : C.reload,             // 火箭炮=1s/发×伤害系数(dmg/60)×齐射发数(红40s/蓝4s);其余 CONF.reload
     pen: o.pen || C.pen, penKd: C.penKd || 0, dmg: C.dmg,   // penKd=穿深存速衰减系数(1/m,见 CONF 注记)
     shellSpeed0: C.shellSpeed || CONF.shellSpeedE,           // 分阵营炮口初速
     speed0: C.speed, turn0: C.turn, turretRate0: C.turretRate, mob: C.mob || null,   // mob=坡度物理机动档案(直升机分支无,读时兜底)
@@ -7391,7 +7391,7 @@ function createTank(o) {
     nightEff: nightAimEffOf(kind, team),                     // 夜战瞄准效率(设备表出生缓存:热像1.2/夜视0.8/裸眼0.5;ai 伺服夜间消费)
     _ffaSpawnInvulUntil: 0,                                 // 个人死斗玩家出生保护截止时间(仅玩家部署时写入)
     /* 玩家紧急修车:每个玩家载具实例独立拥有冷却状态;AI 出生不赋予,接管时由接管边沿显式重置。 */
-    _emergencyRepairAvailable: isP,
+    _emergencyRepairAvailable: isP && kind !== 'wz10' && kind !== 'ah64',
     _emergencyRepairCooldown: 0,
     _emergencyRepairActive: false,
     _emergencyRepairTarget: null,

@@ -425,7 +425,7 @@ function simRocketImpact(from, dir, v) {
 }
 /* ===== 火箭炮俯视火控 · 地面战术标记:火力覆盖范围环 + 装定点红环 + 车→装定点射击线 =====
    覆盖半径 = 齐射散布图案最大半径 + 溅射半径(按实弹图案表 artySalvoPattern 逐车型计算:
-   RED_MLRS 40 发黄金角螺旋 ≈147m + 22m;BLUE_MLRS 6 发 ≈105m + 44m);环贴地形上浮 0.8m,
+   RED_MLRS 40 发黄金角螺旋 ≈147m + 22m;BLUE_MLRS 6 发 ≈35m + 14.67m);环贴地形上浮 0.8m,
    depthTest 关闭 = 战术叠加恒可见(俯瞰下不被山体/建筑遮挡)。 */
 var _topRV = new THREE.Vector3();                        // 光标反投影射线 scratch
 var _artyTopGrp = null, _artyTopRing = null, _artyTopDot = null, _artyTopLine = null, _artyTopLinePos = null;
