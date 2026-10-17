@@ -1424,7 +1424,6 @@ function endAirSupport() {
       try {
         freePlay = true;
         gameState = 'playing';
-        if (window.CrazyGamesAdapter) window.CrazyGamesAdapter.gameplayStart();
         if (player && !player.alive && typeof redeployPlayer === 'function') {
           redeployPlayer();
         } else if (player && player.alive) {
@@ -1672,7 +1671,7 @@ var Hangar3D = (function () {
         hp: '3200 HP', hpSub: 'Readiness 100%'
       },
       '99a': {
-        name: '99A型', sub: 'RED-HEAVY MBT // 99A',
+        name: '99A型', sub: '99A',
         fire: '125mm smoothbore gun', fireSub: 'PEN 1420mm - Autoloader',
         armor: 'Heavy composite + ERA', armorSub: 'Hull 420/412mm / Turret 800/250-150mm',
         speed: '85 km/h', speedSub: '1500HP turbo diesel // +10 KM/H 99A',

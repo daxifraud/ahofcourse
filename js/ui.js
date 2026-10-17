@@ -65,9 +65,6 @@ function showMenuView(name) {
 /* 返回主菜单(对局暂停菜单"主菜单"与二级菜单底部按钮共用):
    刷新页面完全清空本局,回到主菜单。切回车库。 */
 function returnToMenu() {
-  if (window.CrazyGamesAdapter) {
-    window.CrazyGamesAdapter.gameplayStop();
-  }
   if (window.uifxReturnToMenu) { window.uifxReturnToMenu(); } else { location.reload(); }
 }
 /* 通用"主菜单"返回按钮(暂停/二级子菜单/结算共用):
@@ -363,7 +360,6 @@ function buildMenuButtons() {
   el.resumebtn = createMenuButton(pauseBtns, 'RESUME', function () {
     el.pauseov.classList.add('hidden');
     gameState = 'playing';
-    if (window.CrazyGamesAdapter) window.CrazyGamesAdapter.gameplayStart();
     if (typeof sfxUiDi === 'function') sfxUiDi(2);
     updateLockHint();
     attemptLock();
@@ -378,7 +374,6 @@ function buildMenuButtons() {
     el.endov.classList.add('hidden');
     freePlay = true;
     gameState = 'playing';
-    if (window.CrazyGamesAdapter) window.CrazyGamesAdapter.gameplayStart();
     if (player && player.alive) {
       attemptLock();
     } else {
@@ -400,7 +395,6 @@ function buildMenuButtons() {
       freePlay = true;
       gameState = 'playing';
       if (typeof logMsg === 'function') logMsg('★ AIR REINFORCEMENTS ARRIVED: +50 FORCES', 'sys');
-      if (window.CrazyGamesAdapter) window.CrazyGamesAdapter.gameplayStart();
       if (player && !player.alive && typeof redeployPlayer === 'function') {
         redeployPlayer();
       }

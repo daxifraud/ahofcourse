@@ -1,5 +1,4 @@
 (function () {
-  if (window.CrazyGamesAdapter) window.CrazyGamesAdapter.loadingStart();
   var pct = 0;
   var targetPct = 20;
   var fillEl = null, pctEl = null, statEl = null, loaderEl = null;
@@ -27,7 +26,6 @@
         }
       }, 380);
     }
-    if (window.CrazyGamesAdapter) window.CrazyGamesAdapter.loadingStop();
     if (typeof playMenuBgm === 'function') {
       try { playMenuBgm(); } catch (eBgm) {}
     }

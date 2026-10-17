@@ -127,10 +127,6 @@ function gameOver(win, cause) {
   try {
     if (window.Achievements && typeof window.Achievements.commitMatch === 'function') window.Achievements.commitMatch();
   } catch (eAchEnd) {}
-  if (window.CrazyGamesAdapter) {
-    window.CrazyGamesAdapter.gameplayStop();
-    if (win) window.CrazyGamesAdapter.happytime();
-  }
   if (typeof window !== 'undefined' && window._touchUISync) window._touchUISync();   // 触控层即时收起
   document.exitPointerLock && document.exitPointerLock();
   hideRespawnUI();
@@ -762,7 +758,6 @@ function startGame() {
     _drsFxDeep = false;
     if (typeof drsApply === 'function') drsApply();
   }
-  if (window.CrazyGamesAdapter) window.CrazyGamesAdapter.gameplayStart();
   window._pointerPauseArmed = false;
   startT = gameT;
   try {
@@ -1176,7 +1171,6 @@ function initInput() {
     if (window._pointerPauseArmed && !nowLocked && gameState === 'playing' && lockAvailable && !respawnUiOpen && !possessUiOpen) {
       window._pointerPauseArmed = false;
       gameState = 'paused';
-      if (window.CrazyGamesAdapter) window.CrazyGamesAdapter.gameplayStop();
       el.pauseov.classList.remove('hidden');
       if (typeof sfxUiDi === 'function') sfxUiDi(2);
     }

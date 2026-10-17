@@ -3,7 +3,7 @@
    本地成就档案系统
    · 具体成就定义暂不接入，catalog 保持空数组。
    · 对局统计先写入 match 暂存区；只有 gameOver 后 commitMatch 才合并到本地档案。
-   · 存档只写入玩家本地 localStorage，不依赖 CrazyGames 账号或网络。
+   · 存档只写入玩家本地 localStorage，不依赖外部账号或网络。
    ============================================================ */
 (function (window, document) {
   'use strict';
