@@ -46,14 +46,14 @@ function armorOf(mod, ln, force, lp) {   // lp=命中点(命中壳局部系,可�
     if (ln.z < -0.35) return a.rear;
     var ax9 = Math.abs(ln.x), ay9 = Math.abs(ln.y);
     if (ay9 >= ax9) return ln.y > 0 ? a.top : (a.bottom || a.top);
-    return lp && lp.z < -0.85 ? a.sideR : a.sideF;          // 侧甲按命中点 z 分区:前段 300/发动机段 150(界 -0.85;无附加面片)
+    return lp && lp.z < -0.85 ? a.sideR : a.sideF;          // 99/99A 侧甲按命中点 z 分区，厚度由各自 CONF 的 sideF/sideR 读取
   }
   if (force === 't99turret') {                              // 红方重型坦克炮塔(唯一真面壳):按面归属返回物理厚度
     var azT = Math.abs(ln.z);
     if (Math.abs(ln.y) > 0.97 && azT < 0.2) return ln.y > 0 ? a.top : (a.bottom || a.top);   // 平顶/底
     if (ln.z > 0.2) return a.front;                         // 前楔的物理厚度交给统一入射角公式折算,不再预先乘 |nz|
     if (ln.z < -0.2) return a.rear;
-    return lp && lp.z < -0.45 ? a.sideR : a.sideF;          // 侧甲按命中点 z 分区:前带 200/后带 100(界 -0.45)
+    return lp && lp.z < -0.45 ? a.sideR : a.sideF;          // 99/99A 炮塔侧甲分区，厚度由各自 CONF 的 sideF/sideR 读取
   }
   /* 命中壳法线走通用分区:装甲=物理厚度,等效=物理/cos入射角,全载具同一算法。 */
   if (force === 'mantlet') return (a.front !== undefined ? a.front : (a.side || 0)) * 0.5; // vehicle.js 炮盾=同平台正面装甲一半
@@ -80,7 +80,7 @@ function fueled(t) { var m = t.mods.fuel; return !m || m.hp > 0; }          // �
    弹药架方案(自动装弹机/火箭炮):装填链在弹药架内,炮塔(火箭炮=转盘,只管转动)受损
      不降低装填 → 弹药架血量%线性,同 0.5 下限(火箭炮弹药架=发射架/发射舱,火箭弹就装在
      那里,装填作业围绕它进行)。新增自动装弹机型号只需入册 AUTOLOADER_KINDS。 ===== */
-var AUTOLOADER_KINDS = { '99': true };
+var AUTOLOADER_KINDS = { '99': true, '99a': true };
 function isAutoloader(t) { return !!AUTOLOADER_KINDS[t.kind]; }
 function _calcReloadMult(t) {
   if (isAutoloader(t) || t.kind === 'arty') {   // 火箭炮装填走弹药架(发射架/发射舱)血量方案:转盘(turret)只管转动

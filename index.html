@@ -12,7 +12,19 @@ window.addEventListener('error',function(e){if(e.target&&e.target!==window&&e.ta
 window.addEventListener('unhandledrejection',function(e){var r=e.reason;var m=(r&&(r.message||r))+'';if(/CrazySDK|crazygames/i.test(m))return;show('Promise: '+m);});
 })();
 </script>
-<script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
+<script>
+/* CrazyGames SDK 只在正式托管环境加载；本地/沙箱预览没有外网时走 adapter fallback，避免把 SDK 网络失败误报成资源载入故障。 */
+(function () {
+  var h = (window.location && window.location.hostname) || '';
+  var proto = (window.location && window.location.protocol) || '';
+  var isPreview = !h || proto === 'file:' || /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i.test(h) || /\.e2b\.app$/i.test(h);
+  if (isPreview) return;
+  var s = document.createElement('script');
+  s.src = 'https://sdk.crazygames.com/crazygames-sdk-v3.js';
+  s.async = true;
+  (document.head || document.documentElement).appendChild(s);
+})();
+</script>
 <script src="js/crazygames-adapter.js?v=mob3"></script>
 
 <link id="mm-skin-css" rel="stylesheet" href="css/mm-skin.css?v=20260923garage1-mob3">
@@ -393,6 +405,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason;var m=(r
               <div class="mm-drawer-item active" data-team="red" data-kind="99">
                 <span class="mm-drawer-item-name">RED-MBT-2</span>
                 <span class="mm-drawer-item-en">RED-HEAVY MBT</span>
+              </div>
+              <div class="mm-drawer-item" data-team="red" data-kind="99a">
+                <span class="mm-drawer-item-name">99A型</span>
+                <span class="mm-drawer-item-en">RED-HEAVY MBT // 99A</span>
               </div>
               <div class="mm-drawer-item" data-team="red" data-kind="td">
                 <span class="mm-drawer-item-name">RED-TD</span>
@@ -834,43 +850,41 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason;var m=(r
 <script src="js/debug-flag.js?v=20260910fx4-mob3"></script>
 <script src="js/vendor/three-r128.js?v=20260910fx4-mob3"></script>
 <script src="js/core_util.js?v=20260923driveinertia1-mob3"></script>
-<script src="js/vehicle-tech.js?v=20261010avenger"></script>
-<script src="js/core.js?v=20261012m142damage"></script>
+<script src="js/vehicle-tech.js?v=20261015t99a"></script>
+<script src="js/core.js?v=20261017t99a-lowerglacis562"></script>
 <script src="js/wonder.js?v=20260910fx4-mob3"></script>
 <script src="js/audio_common.js?v=20260910fx4-mob3"></script>
-<script src="js/audio.js?v=20260920mm1-mob3"></script>
+<script src="js/audio.js?v=20261015t99a"></script>
 <script src="js/scene.js?v=20261012m142damage"></script>
 <script src="js/map_common.js?v=20260910fx4-mob3"></script>
 <script src="js/map.js?v=20260920depth1-mob3"></script>
 <script src="js/fx_common.js?v=20260910fx4-mob3"></script>
 <script src="js/fx.js?v=20260910fx4-mob3"></script>
-<script src="js/vehicles_common.js?v=20260920depth1-mob3"></script>
-<script src="js/vehicles.js?v=20261012m142damage"></script>
-<script src="js/combat.js?v=20261010emergencyrepair"></script>
+<script src="js/vehicles_common.js?v=20261016prismfix1"></script>
+<script src="js/vehicles.js?v=20261017t99-gridremove-front39-baffle094"></script>
+<script src="js/combat.js?v=20261015t99a"></script>
 <script src="js/weapons.js?v=20261012m142damage"></script>
 <script src="js/player.js?v=20261012m142damage"></script>
 <script src="js/ai_common.js?v=20260910fx4-mob3"></script>
-<script src="js/ai.js?v=20261012m142damage"></script>
+<script src="js/ai.js?v=20261015t99a"></script>
 <script src="js/ai_nav.js?v=20260910fx4-mob3"></script>
 <script src="js/control-zones.js?v=20260923zoneflow5-mob3"></script>
 <script src="js/emergency-repair.js?v=20261012m142damage"></script>
-<script src="js/world.js?v=20261012m142damage"></script>
-<script src="js/ui.js?v=20261011emergencyrepairsquare"></script>
+<script src="js/world.js?v=20261015t99a"></script>
+<script src="js/ui.js?v=20261015t99a"></script>
 <script src="js/achievements.js?v=20260919ach3-mob3"></script>
 <script src="js/preview.js?v=20260910fx4-mob3"></script>
-<script src="js/flow.js?v=20261011emergencyrepaircooldown"></script>
+<script src="js/flow.js?v=20261016t99aname1"></script>
 <script src="js/minimap.js?v=20260923control4-mob3"></script>
-<script src="js/strategic-support.js?v=20260923zoneflow1-mob3"></script>
+<script src="js/strategic-support.js?v=20261015t99a"></script>
 <script src="js/powerups.js?v=20260921repair1-mob3"></script>
 <script src="js/spectator.js?v=spec2-mob3"></script>
 <script src="js/main.js?v=20261011emergencyrepaircooldown"></script>
 <script src="js/comic_common.js?v=20260910fx4-mob3"></script>
 <script src="js/comic.js?v=20260929tac2"></script>
 <script src="js/battlefield-fx.js?v=20260910fx4-mob3"></script>
-<script src="js/uifx-enhance.js?v=20261010avenger"></script>
+<script src="js/uifx-enhance.js?v=20261016t99aname1"></script>
 <script src="js/gfx-live.js?v=1"></script>
 <script src="js/zh-localization.js?v=zh14emergencycooldown"></script>
 </body>
-</html>
-
 </html>

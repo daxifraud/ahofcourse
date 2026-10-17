@@ -1671,6 +1671,13 @@ var Hangar3D = (function () {
         speed: '70 km/h', speedSub: '1500HP turbo diesel',
         hp: '3200 HP', hpSub: 'Readiness 100%'
       },
+      '99a': {
+        name: '99A型', sub: 'RED-HEAVY MBT // 99A',
+        fire: '125mm smoothbore gun', fireSub: 'PEN 1420mm - Autoloader',
+        armor: 'Heavy composite + ERA', armorSub: 'Hull 420/412mm / Turret 800/250-150mm',
+        speed: '85 km/h', speedSub: '1500HP turbo diesel // +10 KM/H 99A',
+        hp: '3200 HP', hpSub: 'Readiness 100%'
+      },
       td: {
         name: 'RED-TD', sub: 'RED-TANK DESTROYER',
         fire: '120mm smoothbore gun', fireSub: 'PEN 832mm - MV 1700m/s - Semi-auto loader',
@@ -3776,7 +3783,7 @@ function buildHangarRearLineArt(g) {
 
         if (lbl4) lbl4.textContent = 'MATERIAL';
         var matName = 'RHA STEEL';
-        if (curKind === '99') matName = 'HEAVY COMPOSITE + FY-4 ERA';
+        if (curKind === '99' || curKind === '99a') matName = 'HEAVY COMPOSITE + FY-4 ERA';
         else if (curKind === 'm1' || (curKind === 'td' && curTeam === 'blue')) matName = 'DU COMPOSITE';
         else if (curKind === 'ah64') matName = 'KEVLAR/CERAMIC LIGHT';
         else if (curKind === 'wz10') matName = 'ARMORED PLATE + COMPOSITE COCKPIT';
@@ -4076,7 +4083,7 @@ function buildHangarRearLineArt(g) {
         curTankObj.group.position.set(0, -0.2205, 0);
       } else {
         curTankObj.group.rotation.x = 0;
-        curTankObj.group.position.set(0, 0.19 + ((curKind === 'tank' && curTeam === 'red') ? T59_LIFT : (curKind === '99' ? T99_LIFT : ((curKind === 'td' && curTeam === 'red') ? TD89_LIFT : ((curKind === 'td' && curTeam === 'blue') ? M1_LIFT : ((curKind === 'tank' && curTeam === 'blue') ? M60_LIFT : 0))))), 0);   // RED-MBT-1叠加T59_LIFT(与对局出生点同口径);RED-MBT-2/RED-TD/BLUE-MBT-2同理
+        curTankObj.group.position.set(0, 0.19 + ((curKind === 'tank' && curTeam === 'red') ? T59_LIFT : ((curKind === '99' || curKind === '99a') ? (curKind === '99a' ? T99A_LIFT : T99_LIFT) : ((curKind === 'td' && curTeam === 'red') ? TD89_LIFT : ((curKind === 'td' && curTeam === 'blue') ? M1_LIFT : ((curKind === 'tank' && curTeam === 'blue') ? M60_LIFT : 0))))), 0);   // RED-MBT-1叠加T59_LIFT(与对局出生点同口径);RED-MBT-2/RED-TD/BLUE-MBT-2同理
       }
 
       scene.add(curTankObj.group);

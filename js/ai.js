@@ -80,6 +80,7 @@ var MODEL_SPREAD = {                // 型号散布公式参数库:disp = clamp(
   m1a1: { k: 0.004,  kd: 0.000025,   lo: 0.00075,  hi: 0.00175, mul: 0.66 * SPREAD_RADIUS_MUL }, // 蓝方 BLUE-MBT-2 主炮散布半径 = RED-MBT-2 (t99) 的 1.1 倍
   td89: { k: 0.004,  kd: 0.000025,   lo: 0.00075,  hi: 0.00175, mul: 0.5  * SPREAD_RADIUS_MUL },   // 红方歼击车保持原收紧档
   t99:  { k: 0.004,  kd: 0.000025,   lo: 0.00075,  hi: 0.00175, mul: 0.6  * SPREAD_RADIUS_MUL },   // 红方重型坦克=红方歼击车散布×1.2(mul 0.5→0.6,含钳位端同倍)
+  t99a: { k: 0.004,  kd: 0.000025,   lo: 0.00075,  hi: 0.00175, mul: 0.6  * SPREAD_RADIUS_MUL },   // 99A沿用99式火控散布，但保留独立AI档案键
   arty: { fixed: 0.0015 * SPREAD_RADIUS_MUL * 0.2 }    // 火箭炮瞄准散布: 射程10KM按10KM:2KM比例缩减为1/5,使10KM处散布等于原2KM散布
 };
 function spreadOf(modelKey, errBase, d) {         // 统一散布公式(单一实现;errBase=车组系数)
@@ -110,7 +111,7 @@ function initBallisticsDB() {                     // 开局调用一次(flow.js 
     for (j = 0; j < _MCD_N; j++) _floorTab[i][j] = maxCombatDist(_MCD_KEYS[i], VEHICLE_FRONTAL_AREAS[_MCD_KEYS[j]]);
     _floorTab[i][_MCD_NO] = maxCombatDist(_MCD_KEYS[i], 5);   // Use the standard 5 m² no-target area.
   }
-  var reps = { t59: 800, m60: 800, td89: 1500, m1a1: 1200, t99: 1000 };  // 各型号代表交战距离(仅散布公式预热用,无行为影响;未登记型号自动跳过)
+  var reps = { t59: 800, m60: 800, td89: 1500, m1a1: 1200, t99: 1000, t99a: 1000 };  // 各型号代表交战距离(仅散布公式预热用,无行为影响;未登记型号自动跳过)
   for (i = 0; i < _MCD_N; i++) if (reps[_MCD_KEYS[i]] != null) classDispAt(_MCD_KEYS[i], reps[_MCD_KEYS[i]]);   // 散布公式代表值预热(无消费端,仅保缓存热)
 }
 /* 与 aiBaseDispersion 同源(同一弹道数据库,errBase 取代表值)——最远战斗距离解算专用 */
@@ -1196,7 +1197,7 @@ function nearestFriendOf(t, x, z) {                        // 最近友军位置
 function aaGroundTargetKind(o) {
   if (!o || !o.group || isHeliVehicle(o)) return false;
   // ground domain 明确覆盖常规坦克、歼击车、两种 MBT、火箭炮和敌方防空车。
-  return o.kind === 'tank' || o.kind === 'td' || o.kind === '99' || o.kind === 'arty' || o.kind === 'aa';
+  return o.kind === 'tank' || o.kind === 'td' || o.kind === '99' || o.kind === '99a' || o.kind === 'arty' || o.kind === 'aa';
 }
 function aaHostileHeliAlive(t, roster) {
   for (var i = 0; i < roster.length; i++) {

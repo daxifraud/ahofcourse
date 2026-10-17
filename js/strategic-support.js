@@ -12,8 +12,8 @@ var STRATEGIC_SUPPORT_INTERVAL = 2;
 var STRATEGIC_SUPPORT_WARNING_SEC = 3;
 var STRATEGIC_SUPPORT_DURATION = 30;
 var STRATEGIC_SUPPORT_TYPES = ['bombardment', 'transport', 'air', 'artillery', 'tank'];
-var STRATEGIC_SUPPORT_LAND_KINDS = { tank: true, '99': true, td: true, aa: true, arty: true };
-var STRATEGIC_SUPPORT_TANK_KINDS = { tank: true, '99': true, td: true };
+var STRATEGIC_SUPPORT_LAND_KINDS = { tank: true, '99': true, '99a': true, td: true, aa: true, arty: true };
+var STRATEGIC_SUPPORT_TANK_KINDS = { tank: true, '99': true, '99a': true, td: true };
 var strategicSupportState = {
   progress: { red: 0, blue: 0 },
   pending: [],

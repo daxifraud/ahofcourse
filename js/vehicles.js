@@ -26,7 +26,7 @@ var TRACK_POLY = [   // 带中心线轮廓 (z,y):顶带 ≈0.95 微后倾/底 -0
   [-2.960, 0.904]];// 后上角(绕主动轮 (-2.30,0.60) 弧:R0.31=轮缘 0.26+0.05)
 var TRACK_FILLET = [0.33, 0.24, 0.24, 0.31];   // 旧59带型圆角(现59视觉走trackLoop59物理环,此仅作trackRingGeo缺省回退保留)
 var T59_LIFT = 0.1375;   // 59轮系下沉后的整车抬升量=履带板外底-0.1375→贴地(出生点/车库叠加,仅RED_MBT_1;车体相对几何全保留)
-var T99_LIFT = 0.12, TD89_LIFT = 0.052, M1_LIFT = 0.056, M60_LIFT = 0.05;
+var T99_LIFT = 0.12, T99A_LIFT = 0.12, TD89_LIFT = 0.052, M1_LIFT = 0.056, M60_LIFT = 0.05;
 
 /* ===== 扭杆悬挂·全履带车型规格表(2026-09-09)=============================
    五车型统一使用 59 式同款简化扭杆模型:摆臂长 L、静止摆角 φ0 全车通用,
@@ -65,7 +65,7 @@ var SUSP_PHI0  = Math.atan2(0.193, 0.307);      // 0.5612rad=32.16° 静止摆�
 var SUSP_RC    = 0.425;                          // 轮心→履带外底距(轮辋 0.375 + 板厚 0.05;59 口径,他车按各自 rimR+0.05 覆写)
 function suspKeyOf(team, kind) {                 // team|kind → 规格表键(非履带车返回 null)
   if (kind === 'tank')  return team === 'red' ? 't59' : 'm60';
-  if (kind === '99')    return 't99';
+  if (kind === '99' || kind === '99a')    return 't99';
   if (kind === 'td')    return team === 'red' ? 'td89' : 'm1';
   if (kind === 'aa')    return team === 'red' ? 'pgz95' : null;   // 红 RED_AA 履带扭杆悬挂;蓝BLUE_AA轮式(无悬挂,轮转子走 arty 同款通道)
   return null;                                   // arty/heli 无扭杆悬挂
@@ -998,15 +998,22 @@ var M1_LOWER_GLACIS_ANGLE = 75 * Math.PI / 180;      // 用户指定:首下与�
 var M1_LOWER_GLACIS_RISE = 0.54, M1_LOWER_GLACIS_NOSE_Z = 2.80;
 var M1_LOWER_GLACIS_BOTTOM_Z = M1_LOWER_GLACIS_NOSE_Z - M1_LOWER_GLACIS_RISE / Math.tan(M1_LOWER_GLACIS_ANGLE);
 var M1_LOWER_GLACIS_RX = -M1_LOWER_GLACIS_ANGLE;
-var M1_TURRET_CENTER_Z = 0.00;                       // 炮塔座圈与旋转轴都回到车体纵向中心
+/* M1A1 炮塔前移基准：车体驾驶员舱盖后缘 z=1.77-0.58/2=1.48，
+   炮塔底部最前缘局部 z=1.18；前移 0.30m 后两条边缘相接。
+   炮塔组、炮架组及其命中壳均挂在同一 turret/gunPivot 层，统一消费此偏移。 */
+var M1_TURRET_FORWARD_Z = 0.30;
+var M1_TURRET_CENTER_Z = M1_TURRET_FORWARD_Z;         // 炮塔座圈/旋转轴前移到与驾驶员舱盖后缘相接
 var M1_HULL_PTS = [
   // 首下高度投影保持0.54m,但纵向投影收至0.1447m,表面长0.5590m,精确75°;首上仍为窄浅带。
   [M1_LOWER_GLACIS_BOTTOM_Z, 0.34], [M1_LOWER_GLACIS_NOSE_Z, 0.88], [2.10, 1.10],
   [-2.56, 1.10], [-2.75, 0.73], [-2.62, 0.34]
 ];
 var M1_ENGINE_DECK_HALF_W = 1.02;                 // AGT-1500后机舱高于前乘员舱
-var M1_ENGINE_DECK_PTS = [                         // 闭合梯形发动机舱盖:前坡抬升、后肩落回主壳
-  [-1.50, 1.085], [-1.67, 1.25], [-2.45, 1.25], [-2.56, 1.085]
+var M1_ENGINE_DECK_FORWARD_EXT_Z = M1_TURRET_FORWARD_Z;
+var M1_ENGINE_DECK_PTS = [                         // 闭合梯形发动机舱盖:前端向前延长同一0.30m,后肩保持不动
+  [-1.50 + M1_ENGINE_DECK_FORWARD_EXT_Z, 1.085],
+  [-1.67 + M1_ENGINE_DECK_FORWARD_EXT_Z, 1.25],
+  [-2.45, 1.25], [-2.56, 1.085]
 ];
 var M1_TUR_LO = [                                  // [x,z],十边下环;仅炮盾下前缘两点收回(1.42→1.18),颊甲/尾舱不动
   [-0.38, 1.18], [0.38, 1.18], [1.10, 0.75], [1.15, -1.26], [1.16, -1.39],
@@ -4024,6 +4031,7 @@ var T99_TUR_TOP = [[0.17, 0.51], [0.99, 0.32], [1.03, 0.26], [0.919, -0.70], [0.
 var T99_TUR_BOT = [[0.55, 1.04], [1.04, 0.55], [1.08, 0.26], [0.939, -0.70], [0.80, -1.65], [0.80, -1.74]];   // [2026-09-07]前尖z0.886→1.04下前角39°;后与赤道重合
 var T99_TUR_ROOF = [[0.085, 0.16], [0.495, 0.03], [0.515, -0.01], [0.46, -0.63], [0.39, -1.25], [0.39, -1.31]];   // [2026-09-07]屋面环(y0.645)=顶边半宽,z向冠(-0.50)内收35%消前后垂直折面(前鼻7°/尾6°顺接,冠仍最高)
 var T99_TUR_BOT_Y = [0.05, 0.05, 0.05, 0.05, 0.17, 0.18];   // [2026-09-07]底y分站:前平0.05避翼子板,后底斜上抬(尾0.18)
+var T99_TUR_CROWN_Y = 0.66;                              // 原99式炮塔顶冠最高点，与储物篮顶缘统一
 function _t99RingBase(baseHalf, y) {         // 分段镜像专用:以单侧幅值(x>0)为基准生成全环[右前→后 + 左后→前镜像],上下带各调一次保证带内对称
   var r = [], i;
   for (i = 0; i < baseHalf.length; i++) r.push([baseHalf[i][0], y, baseHalf[i][1]]);
@@ -4097,6 +4105,248 @@ function _t99BuildShell(eqH, midH, topH, loopH, botH, botY, cz) {   // [2026-09-
   return g;
 }
 function t99TurretGeo() { return _t99BuildShell(T99_TUR_EQ, T99_TUR_MID, T99_TUR_TOP, T99_TUR_ROOF, T99_TUR_BOT, T99_TUR_BOT_Y, -0.2); }   // 视觉/命中同一全壳(统一标准:炮塔=一个命中体;侧甲前 200/后 100 由 armorOf 命中点 z 分区,切面 -0.45)
+
+/* 99A 独立几何：以 99 式炮塔的平面轮廓为基准重做，不覆盖 99 式。
+   设计口径：
+   1) 俯视外形沿用 T99_TUR_* 的前尖、肩部和后收锥；
+   2) 只提高各层高度并重算前/后斜面，不再使用 99 式的连续弧面/拱冠；
+   3) 99A 外壳由“底环→腰环→上环→屋面环”的大平面三角片组成，屋面为平顶；
+   4) 视觉与车体 hull 命中壳均使用 T99A_BASE_HULL_PTS + T99A_ENGINE_DECK_PTS 两块同源闭合棱柱；T99A_HULL_PTS 仅保留为逻辑包络。 */
+var T99A_ENGINE_DECK_HALF_W = 0.95;
+var T99A_ENGINE_DECK_PTS = [[-1.95, 1.13], [-2.24, 1.255], [-3.20, 1.255], [-3.20, 1.13]]; // 高度 0.125m：前斜面 + 后垂直面，半高且与车体等宽
+// 99A 车体采用与 M1 相同的“凸主壳 + 凸发动机舱”闭合结构；两块只在 y=1.13 的内侧边接合，避免凹多边形斜面开口。
+var T99A_BASE_HULL_PTS = [[2.32, 0.30], [2.50, 0.68], [1.48, 1.13], [-3.20, 1.13], [-3.20, 0.58], [-2.95, 0.30]];
+// 逻辑包络保留给尺寸/诊断；视觉与命中均实际使用上面的两块闭合凸棱柱。
+var T99A_HULL_PTS = [[2.32, 0.30], [2.50, 0.68], [1.48, 1.13], [-1.95, 1.13], [-2.24, 1.255], [-3.20, 1.255], [-3.20, 0.58], [-2.95, 0.30]];
+var T99A_ENGINE_DECK_TOP_Y = 1.255;
+var T99A_ENGINE_GRILLE_Z = -2.66;   // 平顶范围[-2.24,-3.20]内，较原中心后移0.36m
+var T99A_ENGINE_GRILLE_L = 0.76;    // 适配平顶长度，前后各留约0.1m余量
+
+// 俯视轮廓逐点沿用 99 式；只改层高/底部后缘高度，避免把 99A 做成另一种炮塔。
+var T99A_TUR_EQ   = [[0.26, 1.35], [1.04, 0.94], [1.08, 0.26], [0.939, -0.70], [0.80, -1.65], [0.80, -1.74]];
+var T99A_TUR_MID  = [[0.23, 1.03], [1.03, 0.63], [1.07, 0.26], [0.929, -0.70], [0.79, -1.65], [0.79, -1.74]];
+var T99A_TUR_TOP  = [[0.17, 0.51], [0.99, 0.32], [1.03, 0.26], [0.919, -0.70], [0.78, -1.65], [0.78, -1.74]];
+var T99A_TUR_ROOF = [[0.085, 0.16], [0.495, 0.03], [0.515, -0.01], [0.46, -0.63], [0.39, -1.25], [0.39, -1.31]];
+// 后下缘从 99 式的 0.17/0.18 抬到 0.25/0.30，形成更明显的后部斜面。
+var T99A_TUR_BOT  = [[0.55, 1.04], [1.04, 0.55], [1.08, 0.26], [0.939, -0.70], [0.80, -1.65], [0.80, -1.74]];
+var T99A_TUR_BOT_Y = [0.05, 0.05, 0.05, 0.08, 0.25, 0.29]; // 后端留1cm闭合小斜面，避免与赤道环 y=0.30 完全重合产生零面积三角形
+var T99A_TUR_EQ_Y = 0.30;
+var T99A_TUR_MID_Y = 0.50;
+var T99A_TUR_TOP_Y = 0.67;
+var T99A_TUR_ROOF_Y = 0.72;
+var T99A_TUR_CROWN_Y = 0.72; // 与屋面环同高，形成真正平顶；比 99 式顶冠 0.66 高约 6cm
+var T99_GUN_MUZZLE_Z_BASE = 3.85;
+var T99_GUN_LENGTH_SCALE = 1.20;                                      // 99/99A 共用主炮身管长度基准
+var T99_GUN_MUZZLE_Z = T99_GUN_MUZZLE_Z_BASE * T99_GUN_LENGTH_SCALE; // 99式炮口/炮弹出生点同步前移到4.62m
+var T99A_GUN_LENGTH_SCALE = T99_GUN_LENGTH_SCALE;
+var T99A_GUN_MUZZLE_Z = T99_GUN_MUZZLE_Z;                             // 99A与99式共用炮口锚点
+
+function _t99AFlatRing(baseHalf, y) { return _t99RingBase(baseHalf, y); }
+function _t99AFlatRingY(baseHalf, yArr) { return _t99RingY(baseHalf, yArr); }
+function _t99AFlatCtr(ring, y) {
+  var x = 0, z = 0;
+  for (var i = 0; i < ring.length; i++) { x += ring[i][0]; z += ring[i][2]; }
+  return [x / ring.length, y, z / ring.length];
+}
+function _t99AFlatTurretGeo() {
+  var base = _t99AFlatRingY(T99A_TUR_BOT, T99A_TUR_BOT_Y);
+  var eq = _t99AFlatRing(T99A_TUR_EQ, T99A_TUR_EQ_Y);
+  var mid = _t99AFlatRing(T99A_TUR_MID, T99A_TUR_MID_Y);
+  var top = _t99AFlatRing(T99A_TUR_TOP, T99A_TUR_TOP_Y);
+  var roof = _t99AFlatRing(T99A_TUR_ROOF, T99A_TUR_ROOF_Y);
+  var rings = [base, eq, mid, top, roof], pos = [];
+  var cx = 0, cy = 0.43, cz = -0.25;
+  function tri(a, b, c) {
+    var ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+    var vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+    var nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    var mx = (a[0] + b[0] + c[0]) / 3 - cx, my = (a[1] + b[1] + c[1]) / 3 - cy, mz = (a[2] + b[2] + c[2]) / 3 - cz;
+    if (nx * mx + ny * my + nz * mz < 0) { var t = b; b = c; c = t; }
+    pos.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
+  }
+  function band(lo, hi) {
+    for (var i = 0; i < lo.length; i++) {
+      var j = (i + 1) % lo.length;
+      // 完全沿用99式的镜像拓扑：中线前/后横面用中心点四分，左右侧面使用相反对角线。
+      // 旧版所有面固定同一条对角线，前脸左下斜面会产生与右侧不同的折线/明暗，读成“左凹右凸”。
+      var qx = (lo[i][0] + lo[j][0] + hi[j][0] + hi[i][0]) / 4;
+      if (Math.abs(qx) < 1e-9) {
+        var bc = [(lo[i][0] + lo[j][0] + hi[j][0] + hi[i][0]) / 4,
+          (lo[i][1] + lo[j][1] + hi[j][1] + hi[i][1]) / 4,
+          (lo[i][2] + lo[j][2] + hi[j][2] + hi[i][2]) / 4];
+        tri(lo[i], lo[j], bc);
+        tri(lo[j], hi[j], bc);
+        tri(hi[j], hi[i], bc);
+        tri(hi[i], lo[i], bc);
+      } else if (qx > 0) {
+        tri(lo[i], lo[j], hi[j]);
+        tri(lo[i], hi[j], hi[i]);
+      } else {
+        tri(lo[i], lo[j], hi[i]);
+        tri(lo[j], hi[j], hi[i]);
+      }
+    }
+  }
+  for (var r = 0; r < rings.length - 1; r++) band(rings[r], rings[r + 1]);
+  var roofC = _t99AFlatCtr(roof, T99A_TUR_CROWN_Y);
+  var baseC = _t99AFlatCtr(base, 0.08);
+  for (var k = 0; k < roof.length; k++) { var kn = (k + 1) % roof.length; tri(roofC, roof[k], roof[kn]); }
+  for (var q = 0; q < base.length; q++) { var qn = (q + 1) % base.length; tri(baseC, base[qn], base[q]); }
+  var g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+  var pn = pos.length / 3, idx = pn > 65535 ? new Uint32Array(pn) : new Uint16Array(pn);
+  for (var pi = 0; pi < pn; pi++) idx[pi] = pi;
+  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  g.computeVertexNormals();
+  return g;
+}
+function t99ATurretGeo() { return _t99AFlatTurretGeo(); }   // 99A恢复上一轮独立斜平面炮塔壳；99式继续使用自己的旧炮塔壳
+
+/* ===== 99A炮塔斜面网格：LineSegments线条，不生成任何网格实体 =====
+   99式已删除炮塔网格；本组几何仅供99A使用，保留两块前向斜面与中央正面，
+   删除左右两块侧面，不取屋面带和后部侧面。线段局部坐标贴在原始斜面上，
+   交给 vehGridAttach 作为共享 LineSegments 渲染；因此网格没有三角面、没有实体厚度。 */
+function _t99GridNormal(a, b, c, center) {
+  var ab = new THREE.Vector3(b[0]-a[0], b[1]-a[1], b[2]-a[2]);
+  var ac = new THREE.Vector3(c[0]-a[0], c[1]-a[1], c[2]-a[2]);
+  var n = new THREE.Vector3().crossVectors(ab, ac).normalize();
+  var mid = new THREE.Vector3((a[0]+b[0]+c[0])/3, (a[1]+b[1]+c[1])/3, (a[2]+b[2]+c[2])/3);
+  var out = mid.sub(new THREE.Vector3(center[0], center[1], center[2]));
+  if (n.dot(out) < 0) n.negate();
+  return n;
+}
+function _t99GridLerp(a, b, t) { return [a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t, a[2] + (b[2]-a[2])*t]; }
+function _t99PushRawLine(pos, a, b) {
+  pos.push(a[0], a[1], a[2], b[0], b[1], b[2]);
+}
+function _t99AddGridLine(pos, a, b, n, offset) {
+  pos.push(a[0] + n.x*offset, a[1] + n.y*offset, a[2] + n.z*offset,
+           b[0] + n.x*offset, b[1] + n.y*offset, b[2] + n.z*offset);
+}
+function _t99FrontSlopeGridGeo(rings, center, edgeList, seamPath) {
+  var pos = [], offset = 0.008;
+  // 本几何当前仅供99A调用；其默认边界仍兼容中央正面单段测试路径。
+  var edges = edgeList || [[11,0]];
+  var seamNormal = {}, seamOrder = seamPath || (edges.length === 1 ? [11, 0] : [9, 10, 11, 0, 1, 2]), top = rings[3], seamPts = {};
+  function seamAdd(k, n) {
+    if (!seamNormal[k]) seamNormal[k] = n.clone();
+    else seamNormal[k].add(n);
+  }
+  function faceNormal(lo, hi, e) {
+    var i = edges[e][0], j = edges[e][1], p0 = lo[i], p1 = lo[j], q0 = hi[i], n;
+    // 中央正面跨中线面法线不应带 X 分量，否则偏移后左右端点会整体偏向一侧。
+    if (i === 11 && j === 0) {
+      n = _t99GridNormal(p0, p1, q0, center);
+      n.x = 0; n.normalize();
+    // 左右对应面共用右侧基准法线再镜像，保留旧的多边缘调用路径。
+    } else if (i === 9 && j === 10) {
+      var nr0 = _t99GridNormal(lo[2], lo[1], hi[2], center);
+      n = new THREE.Vector3(-nr0.x, nr0.y, nr0.z);
+    } else if (i === 1 && j === 2) {
+      n = _t99GridNormal(lo[2], lo[1], hi[2], center);
+    } else if (i === 10 && j === 11) {
+      var nr1 = _t99GridNormal(lo[1], lo[0], hi[1], center);
+      n = new THREE.Vector3(-nr1.x, nr1.y, nr1.z);
+    } else if (i === 0 && j === 1) {
+      n = _t99GridNormal(lo[1], lo[0], hi[1], center);
+    } else {
+      n = _t99GridNormal(p0, p1, q0, center);
+    }
+    return n;
+  }
+  // 先用最后一道斜面带的各片法线求共享顶缘节点，确保边界线和每根竖向网格线共端点。
+  for (var te = 0; te < edges.length; te++) {
+    var ti = edges[te][0], tj = edges[te][1], tn = faceNormal(rings[2], rings[3], te);
+    seamAdd(ti, tn); seamAdd(tj, tn);
+  }
+  for (var si = 0; si < seamOrder.length; si++) {
+    var sk = seamOrder[si], sn = seamNormal[sk].normalize(), sp = top[sk];
+    seamPts[sk] = [sp[0] + sn.x * offset, sp[1] + sn.y * offset, sp[2] + sn.z * offset];
+  }
+  // 99/99A 的五环炮塔中，底→赤道→腰→顶是前斜面，顶→屋面是屋面带。
+  for (var r = 0; r <= 2; r++) {
+    var lo = rings[r], hi = rings[r + 1];
+    for (var e = 0; e < edges.length; e++) {
+      var i = edges[e][0], j = edges[e][1], p0 = lo[i], p1 = lo[j], q0 = hi[i], q1 = hi[j];
+      var n = faceNormal(lo, hi, e);
+      [0.25, 0.50, 0.75].forEach(function (u) {
+        var aa = _t99GridLerp(p0, p1, u);
+        if (r === 2) {
+          // 最上排网格线的端点直接落在共享边界线上，视觉上形成一条不间断的封边。
+          var bbTop = _t99GridLerp(seamPts[i], seamPts[j], u);
+          pos.push(aa[0] + n.x * offset, aa[1] + n.y * offset, aa[2] + n.z * offset,
+                   bbTop[0], bbTop[1], bbTop[2]);
+        } else {
+          _t99AddGridLine(pos, aa, _t99GridLerp(q0, q1, u), n, offset);
+        }
+      });
+      _t99AddGridLine(pos, _t99GridLerp(p0, q0, 0.50), _t99GridLerp(p1, q1, 0.50), n, offset);
+    }
+  }
+  // 斜面与顶面的交接线：使用共享端点连接五个前向斜面片，绝不把边界线带到屋面/后侧。
+  for (var sl = 0; sl < seamOrder.length - 1; sl++)
+    _t99PushRawLine(pos, seamPts[seamOrder[sl]], seamPts[seamOrder[sl + 1]]);
+
+  var g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+  g.computeBoundingSphere();
+  g.userData = {
+    _shared: true, _t99SlopeGrid: true, _lineOnly: true,
+    _bands: [0, 1, 2], _frontEdges: edges,
+    _lowerFrontSlopeBand: 0, _lowerFrontSlopeEdges: edges,
+    _topBoundaryBand: 3, _topBoundaryEdges: edges, _topBoundaryConnected: true
+  };
+  return g;
+}
+/* 炮塔储物篮两侧挡板的外侧面网格：只在线面上绘制，不给挡板增加任何实体厚度。 */
+function _t99BasketGridGeo(is99A) {
+  var pos = [], sideX = is99A ? (2.288 * 1.10 * 0.5 - 0.024) : 0.95;
+  var rearZ = -1.95, frontZ = is99A ? -0.45 : -1.05;
+  // 99式保留旧版矩形侧篮；99A恢复上一轮直角梯形侧篮表面，网格严格贴合各自轮廓。
+  var rearBottomY = is99A ? 0.30 : 0.20, frontBottomY = is99A ? 0.04 : 0.20;
+  var topY = is99A ? T99A_TUR_CROWN_Y - 0.03 : 0.46;
+  var out = 0.025 + 0.006;                           // prism half-thickness + 6mm 线条贴面偏移
+  function add(a, b) { _t99PushRawLine(pos, a, b); }
+  function lerp2(a, b, t) { return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; }
+  for (var side = -1; side <= 1; side += 2) {
+    var x = side * (sideX + out);
+    var bl = [rearZ, rearBottomY], br = [frontZ, frontBottomY];
+    var tl = [rearZ, topY], tr = [frontZ, topY];
+    function p2(q) { return [x, q[1], q[0]]; }
+    // 矩形挡板外轮廓四边，配合内部网格形成完整的分块边界。
+    add(p2(bl), p2(br)); add(p2(br), p2(tr)); add(p2(tr), p2(tl)); add(p2(tl), p2(bl));
+    // 三列两行规整分块，所有端点严格落在矩形挡板边界上。
+    [0.25, 0.50, 0.75].forEach(function (u) {
+      add(p2(lerp2(bl, br, u)), p2(lerp2(tl, tr, u)));
+    });
+    [0.33, 0.66].forEach(function (v) {
+      add(p2(lerp2(bl, tl, v)), p2(lerp2(br, tr, v)));
+    });
+  }
+  var g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+  g.computeBoundingSphere();
+  g.userData = { _shared: true, _lineOnly: true, _t99BasketGrid: true, _basketSides: 2, _segmentsPerSide: 9 };
+  return g;
+}
+function t99FrontSlopeGrid() {
+  return _t99FrontSlopeGridGeo([
+    _t99RingY(T99_TUR_BOT, T99_TUR_BOT_Y),
+    _t99RingBase(T99_TUR_EQ, 0.30), _t99RingBase(T99_TUR_MID, 0.48),
+    _t99RingBase(T99_TUR_TOP, 0.60), _t99RingBase(T99_TUR_ROOF, 0.645)
+  ], [0, 0.29, -0.20]);
+}
+function t99AFrontSlopeGrid() {
+  return _t99FrontSlopeGridGeo([
+    _t99AFlatRingY(T99A_TUR_BOT, T99A_TUR_BOT_Y),
+    _t99AFlatRing(T99A_TUR_EQ, T99A_TUR_EQ_Y), _t99AFlatRing(T99A_TUR_MID, T99A_TUR_MID_Y),
+    _t99AFlatRing(T99A_TUR_TOP, T99A_TUR_TOP_Y), _t99AFlatRing(T99A_TUR_ROOF, T99A_TUR_ROOF_Y)
+  ], [0, 0.43, -0.25],
+    // 删除99A炮塔左右两块侧面网格；保留两块前向斜面和中央正面。
+    [[10,11], [11,0], [0,1]],
+    [10,11,0,1]);
+}
+
 /* =====================================================================================
    防空载具(AA)建模桥 + demo 构建器移植 (TASK 18)
    蓝方 = 蓝方防空车 (BLUE_AA) (源: uploads/AN-TWQ1BLUE_AA-建模演示 (1).html, M1097A2 悍马底盘 8×防空导弹)
@@ -4750,8 +5000,8 @@ function createTank(o) {
     C = { struct: WZ.struct, pen: WZ.pen, penKd: WZ.penKd, dmg: WZ.dmg, reload: WZ.reload, speed: WZ.speed, shellSpeed: WZ.shellSpeed,
           turn: WZ.turn, turretRate: WZ.turretRate, accel: WZ.accel, decel: WZ.decel, color: 0x4b5a43,
           hullArmor: WZ.hullArmor, turretArmor: WZ.turretArmor };
-  } else if (kind === '99') {                                     // 红方RED_MBT_2:第四类载具(数值见 CONF.t99 口径注)
-    var T9 = CONF.t99;
+  } else if (isT99Kind(kind)) {                                     // 99/99A 共享建模链，但运行时各自读取独立物理性能档
+    var T9 = kind === '99a' && CONF.t99a ? CONF.t99a : CONF.t99;
     C = { struct: T9.struct, pen: T9.pen, penKd: T9.penKd, dmg: T9.dmg, reload: T9.reload, speed: T9.speed, shellSpeed: T9.shellSpeed,
           turn: T9.turn, turretRate: T9.turretRate, accel: T9.accel, decel: T9.decel, color: C.color, mob: T9.mob,
           hullArmor: T9.hullArmor, turretArmor: T9.turretArmor };
@@ -4801,7 +5051,7 @@ function createTank(o) {
     if (team === 'red') { turret.position.set(0, 1.115, -1.25); gunPivot.position.set(0, 0.44, 0.85 + TD89_GUN_PULL); }   // 红方RED_TD:旋转轴位于后置炮塔中心,炮轴随塔360°回转;塔底-0.04落1.075埋甲板1.08下0.005接死(座圈裙已删,转扫无触碰)
     else { turret.position.set(0, 1.10, M1_TURRET_CENTER_Z); gunPivot.position.set(0, 0.44, 1.12); } // 蓝方 BLUE_MBT_2:座圈/旋转轴居中车体,炮轴世界 y1.54/z1.12
   }
-  else if (kind === '99') { turret.position.set(0, 1.075, -0.35); gunPivot.position.set(0, 0.30, 0.60); var _lz = new THREE.Object3D(); _lz.position.set(0.55, 0.92, -0.72); turret.add(_lz); }   // RED_MBT_2:旋转中心=车体几何中心 z-0.35([2.50,-3.20] 中点),炮轴世界 y1.375; 07 压制器镜片(_lz 函数域提升,建后挂塔,载具对象构造后回填 tank._lwsLens,随镜箱下移-0.05同步);[2026-09-08 塔降0.065:底1.125埋甲板1.13下0.005接死,转扫翼顶余0.02]
+  else if (isT99Kind(kind)) { turret.position.set(0, 1.075, -0.35); gunPivot.position.set(0, 0.30, 0.60); var _lz = new THREE.Object3D(); _lz.position.set(0.55, 0.92, -0.72); turret.add(_lz); }   // RED_MBT_2:旋转中心=车体几何中心 z-0.35([2.50,-3.20] 中点),炮轴世界 y1.375; 07 压制器镜片(_lz 函数域提升,建后挂塔,载具对象构造后回填 tank._lwsLens,随镜箱下移-0.05同步);[2026-09-08 塔降0.065:底1.125埋甲板1.13下0.005接死,转扫翼顶余0.02]
   else { turret.position.set(0, team === 'red' ? 1.16 : M60_TURRET_Y, 0); gunPivot.position.set(0, team === 'red' ? 0.23 : M60_GUN_Y, team === 'red' ? 0.60 : 1.0); } // RED_MBT_1;M60 主壳直接落甲板(无垫圈),炮轴保持正面中心
   turret.add(gunPivot); group.add(turret); scene.add(group);
 
@@ -5063,7 +5313,7 @@ function createTank(o) {
     }
 
     // 车首:驾驶舱盖/潜望镜仍在窄首上;首下按75°解析面仅保留左右两盏车灯(灯座+灯镜),unused towing, service, and weld details are omitted.
-    vBox(bP, 0.48, 0.045, 0.58, cACC, 0, 1.1175, 1.77);   // 驾驶舱盖平放:底1.095埋甲板1.10下0.005接死(后缘1.48离塔前1.42余0.04,前缘2.06离甲板边2.10余0.04)
+    vBox(bP, 0.48, 0.045, 0.58, cACC, 0, 1.1175, 1.77);   // 驾驶舱盖平放:底1.095埋甲板1.10下0.005接死(后缘1.48与前移后炮塔底前缘1.48相接,前缘2.06离甲板边2.10余0.04)
     vBox(gP, 0.10, 0.055, 0.09, gPERI, -0.18, 1.1625, 2.01, -0.22);
     vBox(gP, 0.10, 0.055, 0.09, gPERI, 0.00, 1.1625, 2.04, -0.22);
     vBox(gP, 0.10, 0.055, 0.09, gPERI, 0.18, 1.1625, 2.01, -0.22);
@@ -5756,10 +6006,18 @@ function createTank(o) {
     vBox(bP, 0.08, 0.64, 0.08, cACC, -0.40, 0.75, -3.50);
     vCyl(bP, 0.60, 0.60, 0.16, 16, cACC, 0, 1.30, -3.10);                    // 转盘基座(固定,缩径不超车尾)
   }
-  /* ===== RED_MBT_2车体(参考图三视复原):59 系倒梯形履带+加长底盘;
-     锯齿下缘深裙板(齿谷 0.52/板底 0.74,轮下半露出)+前橡胶挡泥帘;
-     首上=V 形溅水板+满幅反应装甲砖阵(中央 2 排×5)+首上角车灯组×2(对称);舱盖居中;
-     翼子板工具箱右3左2;机舱纵栅×2;尾部纵置油桶×2;左侧排气 ===== */
+  /* 99A 储物篮正面挡板：保持方形/矩形板，挡板平面与两侧挡板保持90°。
+     左右各一块矩形板，内缘允许向内收至炮塔前端截面并与炮塔衔接，避免悬空断缝。 */
+  function t99BasketFrontBaffle(tP, sideX, frontZ, bottomY, topY, innerX) {
+    if (_skipVis) return;
+    var depth = 0.10, h = topY - bottomY, cy = (topY + bottomY) * 0.5;
+    var width = sideX - innerX, zc = frontZ - depth * 0.5;
+    for (var sg = -1; sg <= 1; sg += 2)
+      vBox(tP, width, h, depth, cACC, sg * (sideX + innerX) * 0.5, cy, zc);
+  }
+
+  /* ===== RED_MBT_2车体：恢复上传旧版 vehicles.js 中的99式车体附件；
+     99A 不走本函数，继续使用自己的独立车体入口。 ===== */
   function hullParts99(bP, gP) {
     segTrackPlates(bP, { trkX: 1.24, plateW: 0.55, loopFn: trackLoop99 }, { dark: cDARK, steel: cSTEEL });   // 分段式履带(物理环路扣轮+顶行下坠,对标59)
     vPrism(bP, cBODY, 0.95, T99_HULL_PTS, 0, 0, 0);
@@ -5817,6 +6075,75 @@ function createTank(o) {
     }
     vBox(bP, 0.16, 0.10, 0.62, cDARK, -1.045, 1.15, -1.75);   // 左排气口落翼顶:底1.10埋翼顶1.105下0.005接死
   }
+  function _hullParts99Variant(bP, gP, is99A) {
+    segTrackPlates(bP, { trkX: 1.24, plateW: 0.55, loopFn: trackLoop99 }, { dark: cDARK, steel: cSTEEL });   // 分段式履带(物理环路扣轮+顶行下坠,对标59)
+    // 99A 使用两块闭合凸棱柱组成同一车体：主壳 + 发动机舱，斜面不再依赖凹多边形端盖。
+    if (is99A) {
+      vPrism(bP, cBODY, 0.95, T99A_BASE_HULL_PTS, 0, 0, 0);
+      vPrism(bP, cBODY, T99A_ENGINE_DECK_HALF_W, T99A_ENGINE_DECK_PTS, 0, 0, 0);
+    } else vPrism(bP, cBODY, 0.95, T99_HULL_PTS, 0, 0, 0);
+    vBox(bP, 0.60, 0.05, 5.60, cACC, -1.248, 1.08, -0.35);          // 翼子板×2(z[-3.15,2.45];内缘0.948埋车侧0.002接死/底1.055接裙顶,外沿1.548盖履带)
+    vBox(bP, 0.60, 0.05, 5.60, cACC,  1.248, 1.08, -0.35);
+    for (var fsgn = -1; fsgn <= 1; fsgn += 2) for (var fsk = -1; fsk <= 1; fsk += 2)
+      fenderSix(bP, fsgn, fsk, { pinF: 2.40, pinR: -3.10, yBase: 1.08, x0: fsk * 0.023, ears: false }, { steel: cSTEEL, dark: cDARK, acc: cACC });   // 翼随板降0.065/内缘埋车侧跟进;铰链耳(翼板-泥板接头黑方块×2/处)删除
+    var gapZ = [2.00, 1.255, 0.495, -0.265, -1.025, -1.785, -2.55];   // 裙板齿位=轮间隙中心(含端轮间隙)
+    for (var sk = -1; sk <= 1; sk += 2) {
+      twinWheelSet(bP, sk, SUSP_SPEC.t99, { rub: cRUBB, steel: cSTEEL, dark: cDARK });   // 两片式负重轮+摆臂扭杆(前两对朝后,规格表驱动)
+      twinEndWheel(bP, sk, { R: 0.28, y: 0.62, z: 2.28, trkX: 1.24, hullX: 0.95 }, { rub: cRUBB, steel: cSTEEL, dark: cDARK });   // 诱导轮两片式(对标59;@前转角弧心,位置不动)
+      twinEndWheel(bP, sk, { R: 0.26, y: 0.60, z: -2.80, trkX: 1.24, hullX: 0.95 }, { rub: cRUBB, steel: cSTEEL, dark: cDARK });   // 主动轮两片式(对标59;@后转角弧心,位置不动)
+      // 深裙板(y[0.65,1.055],随翼下调只缩短/裙底不动)+原版锯齿下缘×7(齿尖 0.52,置轮间隙=轮系下半露出)+挂点块
+      vBox(bP, 0.04, 0.365, 5.45, cACC, sk * 1.53, 0.8725, -0.30);
+      for (var st = 0; st < 7; st++) {
+        vPrism(bP, cACC, 0.02, [[gapZ[st] - 0.34, 0.70], [gapZ[st] + 0.34, 0.70], [gapZ[st], 0.41]], sk * 1.53, 0, 0);
+        if (st > 0) vBox(bP, 0.025, 0.09, 0.14, cDARK, sk * 1.552, 0.75, gapZ[st]);   // 挂点块×6(首格不设=裙前部无黑块)
+      }
+      vBox(gP, 0.12, 0.10, 0.03, gTAIL, sk * 0.80, 0.90, -3.215);     // 尾灯×2
+      vBox(bP, 0.09, 0.12, 0.14, cSTEEL, sk * 0.50, 0.48, 2.40);      // 前牵引钩×2
+      vBox(bP, 0.09, 0.12, 0.14, cSTEEL, sk * 0.50, 0.75, -3.26);     // 后牵引钩×2
+      // —— 首上灯组(仿59结构:立姿楔形灯座+方形外框+沉入式镜片,灯轴水平朝正前;旧3件斜躺灯轴朝天且顶条两端悬空) ——
+      // 99首上中央被ERA占据,单灯/侧置于ERA外缘0.74与车侧0.95之间:灯座半宽0.095→0.08(槽内两隙各0.025);
+      // 灯座截面与59同源(59鼻点与99首上同线同坡23.8°):前面垂直 z=2.255,背缘贴坡埋0.06~0.088;框背埋座面0.002/镜片沉框口0.014
+      vPrism(bP, cDARK, 0.08, [[2.255, 0.960], [2.255, 0.7975], [2.1655, 0.7975], [1.789, 0.960]], sk * 0.845, 0, 0);
+      vBox(bP, 0.135, 0.020, 0.036, cSTEEL, sk * 0.845, 0.935, 2.271);             // 方框上横棱
+      vBox(bP, 0.135, 0.020, 0.036, cSTEEL, sk * 0.845, 0.820, 2.271);             // 方框下横棱
+      vBox(bP, 0.020, 0.075, 0.036, cSTEEL, sk * 0.845 - 0.0565, 0.8775, 2.271);   // 方框侧棱×2(镜片边埋入0.007跨嵌)
+      vBox(bP, 0.020, 0.075, 0.036, cSTEEL, sk * 0.845 + 0.0565, 0.8775, 2.271);
+      vBox(gP, 0.107, 0.108, 0.009, gLENS, sk * 0.845, 0.8775, 2.2705);            // 镜片(玻璃,朝正前)
+    }
+    // 驾驶员舱盖居中+潜望镜×2
+    vCyl(bP, 0.24, 0.25, 0.045, 12, cACC, 0, 1.152, 1.20);
+    vBox(gP, 0.07, 0.04, 0.05, gPERI, -0.17, 1.145, 0.94);
+    vBox(gP, 0.07, 0.04, 0.05, gPERI,  0.17, 1.145, 0.94);
+    // 99A 恢复 99 式首上 ERA 的原设计：五个横向位置、上下两排；明确不恢复 V 字防浪板。
+    for (var ec99 = -2; ec99 <= 2; ec99++) {
+      vBox(bP, 0.28, 0.06, 0.34, cACC, ec99 * 0.30, 0.977, 1.876, 0.4153);
+      vBox(bP, 0.28, 0.06, 0.34, cACC, ec99 * 0.30, 1.067, 1.672, 0.4153);
+    }
+    // 首上更前方新增一排 ERA：只放中间三块，不加左右两个端块，继续保持无 V 字防浪板。
+    for (var ecFront99 = -1; ecFront99 <= 1; ecFront99++)
+      vBox(bP, 0.28, 0.06, 0.34, cACC, ecFront99 * 0.30, 0.900, 2.050, 0.4153);
+    // 按本轮要求再向车首推进一排；仍只保留中间三块，贴合首上更前段斜面。
+    for (var ecFront2_99 = -1; ecFront2_99 <= 1; ecFront2_99++)
+      vBox(bP, 0.28, 0.06, 0.34, cACC, ecFront2_99 * 0.30, 0.808, 2.260, 0.4153);
+    // 翼子板工具箱(参考图俯视:右 3 左 2)
+    vBox(bP, 0.26, 0.14, 0.55, cACC, 1.28, 1.175, 0.90);
+    vBox(bP, 0.26, 0.14, 0.55, cACC, 1.28, 1.175, 0.20);
+    vBox(bP, 0.26, 0.14, 0.55, cACC, 1.28, 1.175, -0.60);
+    vBox(bP, 0.26, 0.14, 0.55, cACC, -1.28, 1.175, 0.55);
+    vBox(bP, 0.26, 0.14, 0.55, cACC, -1.28, 1.175, -0.35);
+    // 发动机舱纵向格栅×2(基板+纵筋×7)+左排气口；99A 后移到平顶发动机舱，底面与顶面贴合。
+    var deckTopY = is99A ? T99A_ENGINE_DECK_TOP_Y + 0.0075 : 1.138;
+    var deckGrilleZ = is99A ? T99A_ENGINE_GRILLE_Z : -2.30;
+    var deckGrilleL = is99A ? T99A_ENGINE_GRILLE_L : 1.15;
+    for (var gs = -1; gs <= 1; gs += 2) {
+      vBox(bP, 0.72, 0.015, deckGrilleL, cDARK, gs * 0.42, deckTopY, deckGrilleZ);
+      for (var gr = -3; gr <= 3; gr++)
+        vBox(bP, 0.018, 0.015, deckGrilleL - 0.06, cSTEEL, gs * 0.42 + gr * 0.10, deckTopY + 0.010, deckGrilleZ);
+    }
+    // 99A 删除发动机舱顶面的黑色长条；99 式原有左排气口保持不变。
+    if (!is99A) vBox(bP, 0.16, 0.10, 0.62, cDARK, -1.045, 1.15, -1.75);
+  }
+  function hullParts99A(bP, gP) { _hullParts99Variant(bP, gP, true); }
   /* ===== RED_MBT_2炮塔(用户红线轮廓复原):主壳=t99TurretGeo 双尖纺锤壳(视觉/命中同源);
      颊面留光面(参考图口径,无贴砖);顶面:炮长镜箱(左前)/车长指挥塔+高架 12.7(右)/装填手舱盖(左后)/
      周视仪(中右)/激光压制×2/横风传感杆(左尾)+天线(右尾);侧壁烟幕弹沿收锥壁逐管贴面;
@@ -5881,13 +6208,117 @@ function createTank(o) {
     vBox(tP, 1.95, 0.26, 0.04, cACC, 0, 0.33, -1.93);
     vBox(tP, 1.95, 0.03, 0.03, cSTEEL, 0, 0.475, -1.93);
   }
-  function gunParts99(uP) {                                          // 125mm 滑膛炮:防尘罩根套/身管/抽烟装置(偏前)/热护套/炮口基准器(轴线沿 z:rx=π/2)
-    vCyl(uP, 0.14, 0.12, 0.66, 12, cCANVAS, 0, 0, 0.72, Math.PI / 2);
-    vCyl(uP, 0.105, 0.105, 1.10, 12, cDARK, 0, 0, 1.40, Math.PI / 2);
-    vCyl(uP, 0.15, 0.15, 0.66, 12, cDARK, 0, 0, 2.28, Math.PI / 2);
-    vCyl(uP, 0.12, 0.12, 0.80, 12, cDARK, 0, 0, 3.01, Math.PI / 2);   // 热护套段(全管统一黑灰)
-    vCyl(uP, 0.098, 0.098, 0.36, 12, cDARK, 0, 0, 3.59, Math.PI / 2);
-    vCyl(uP, 0.11, 0.11, 0.12, 10, cSTEEL, 0, 0, 3.76, Math.PI / 2);
+  /* 99A 炮塔附件:同一炮轴/回转中心，附件随新增平面塔顶抬高；储物篮上移并扩至接近履带外缘。 */
+  function turretParts99A(tP, tG) {
+    // 99A 恢复上一轮对话的独立斜平面炮塔；仅在正面斜面表面绘制规整网格，不生成ERA实体块。
+    visPartPush(tP, cBODY, t99ATurretGeo(), 0, 0, 0);
+    vBox(tP, 0.28, 0.34, 0.30, cCANVAS, 0, 0.30, 1.02);
+
+    // 按最新要求改为第一行3枚、第二行2枚(每侧共5枚)；整体沿炮塔纵向前移恰好约1/3炮塔长度。
+    // 这里按视觉上下顺序命名：top=第一行3，bottom=第二行2；x 随 z 微调并贴合99A收分侧壁。
+    var smokeForwardShiftA = (1.35 - (-1.74)) / 3; // 原炮塔纵向前移锚点
+    var smokeRowTopA = [-0.34, -0.64, -0.94];
+    var smokeRowBottomA = [-0.49, -0.79];
+    // 以当前最靠后的烟雾弹(top row z=-0.94)为固定锚点；所有纵向偏移压缩到原来的1/3。
+    var smokeRearAnchorZA = smokeForwardShiftA + smokeRowTopA[smokeRowTopA.length - 1];
+    function compactSmokeZA(rawZ) {
+      var currentZ = rawZ + smokeForwardShiftA;
+      return smokeRearAnchorZA + (currentZ - smokeRearAnchorZA) / 3;
+    }
+    function smokeSideXA(z, upper) {
+      var x = z >= 0.26 ? 1.08 - 0.04 * (z - 0.26) / 0.68 : 1.08 - 0.14 * (0.26 - z) / 0.96;
+      return x - (upper ? 0.035 : 0.015);
+    }
+    // 两侧使用同一组 z/y/x 幅值，仅对 x 做正负镜像；旋转也严格做 z 轴角度镜像，避免左右呈现不一致。
+    for (var smATop = 0; smATop < smokeRowTopA.length; smATop++) {
+      var smzATop = compactSmokeZA(smokeRowTopA[smATop]);
+      var smxATop = smokeSideXA(smzATop, true);
+      vCyl(tP, 0.035, 0.035, 0.24, 6, cDARK, +smxATop, 0.52, smzATop, 0.35, 0, -0.55);
+      vCyl(tP, 0.035, 0.035, 0.24, 6, cDARK, -smxATop, 0.52, smzATop, 0.35, 0, +0.55);
+    }
+    for (var smABottom = 0; smABottom < smokeRowBottomA.length; smABottom++) {
+      var smzABottom = compactSmokeZA(smokeRowBottomA[smABottom]);
+      var smxABottom = smokeSideXA(smzABottom, false);
+      vCyl(tP, 0.035, 0.035, 0.24, 6, cDARK, +smxABottom, 0.37, smzABottom, 0.35, 0, -0.55);
+      vCyl(tP, 0.035, 0.035, 0.24, 6, cDARK, -smxABottom, 0.37, smzABottom, 0.35, 0, +0.55);
+    }
+
+    // 储物篮在上一轮版本中已加宽至2.5168m；侧板/顶杆外缘同步外移，正面挡板仍保持与侧板垂直。
+    var basketW = 2.288 * 1.10, basketSideX = basketW * 0.5 - 0.024, basketSideZ = -1.20, basketSideL = 1.50;
+    // 上一轮99A侧板为闭合直角梯形，篮顶杆最高点与99A炮塔平顶y=0.72等高。
+    var basketTop99A = T99A_TUR_CROWN_Y - 0.03;
+    var basketRailY99A = T99A_TUR_CROWN_Y - 0.015;
+    var basketSidePts99A = [[-1.95, 0.30], [-0.45, 0.04], [-0.45, basketTop99A], [-1.95, basketTop99A]];
+    vPrism(tP, cACC, 0.025, basketSidePts99A, +basketSideX, 0, 0);
+    vPrism(tP, cACC, 0.025, basketSidePts99A, -basketSideX, 0, 0);
+    vBox(tP, 0.03, 0.03, basketSideL, cSTEEL, +basketSideX, basketRailY99A, basketSideZ);
+    vBox(tP, 0.03, 0.03, basketSideL, cSTEEL, -basketSideX, basketRailY99A, basketSideZ);
+    // 正面挡板仍为独立矩形板，高度低于99A炮塔冠顶；内缘向炮塔侧收至0.94，
+    // 与-0.45前端截面衔接，取消原来约0.11m的悬空间隙。
+    var basketBridgeBottom99A = 0.04, basketFrontTop99A = basketTop99A - 0.05;
+    var basketFrontInnerX99A = 0.94;
+    t99BasketFrontBaffle(tP, basketSideX, -0.45, basketBridgeBottom99A, basketFrontTop99A, basketFrontInnerX99A);
+
+    // 顶部附件严格沿用99式的建模顺序与局部 x/z 锚点；99A 平顶比99式抬高0.075m，所有顶装件统一只做这一项 y 平移。
+    var topY99A = T99A_TUR_ROOF_Y - 0.645; // 99式屋面环 y=0.645，99A 屋面 y=0.72
+    vBox(tP, 0.36, 0.17, 0.44, cDARK, -0.42, 0.703 + topY99A, 0.20);            // 炮长镜箱·左前
+    vBox(tG, 0.26, 0.08, 0.02, gPERI, -0.42, 0.713 + topY99A, 0.43);            // 炮长镜片
+    vCyl(tP, 0.24, 0.26, 0.10, 12, cACC, 0.42, 0.687 + topY99A, -0.35);         // 车长指挥塔·右
+    vCyl(tP, 0.20, 0.20, 0.04, 12, cACC, 0.42, 0.757 + topY99A, -0.35);         // 指挥塔顶盖
+
+    // 99A 车长12.7mm高射机枪：完整复用99式的旋架/机匣/防盾/枪管/弹箱结构，只抬高到新屋面。
+    vCyl(tP, 0.035, 0.035, 0.30, 6, cSTEEL, 0.42, 0.785 + topY99A, 0.05);       // 旋架立柱
+    vBox(tP, 0.10, 0.10, 0.12, cSTEEL, 0.42, 0.94 + topY99A, 0.12);              // 立柱→机匣下承力块
+    vBox(tP, 0.12, 0.14, 0.28, cDARK, 0.42, 0.965 + topY99A, 0.20);              // 机匣主体
+    vBox(tP, 0.10, 0.12, 0.10, cSTEEL, 0.42, 0.99 + topY99A, 0.38);              // 机匣→防盾连接颈
+    vBox(tP, 0.24, 0.20, 0.04, cSTEEL, 0.42, 1.020 + topY99A, 0.43);             // 防盾
+    vCyl(tP, 0.040, 0.040, 0.10, 8, cSTEEL, 0.42, 0.975 + topY99A, 0.45, Math.PI / 2); // 防盾→枪管承口
+    vCyl(tP, 0.025, 0.025, 0.78, 8, cDARK, 0.42, 0.975 + topY99A, 0.84, Math.PI / 2); // 枪管
+    vCyl(tP, 0.032, 0.032, 0.06, 8, cSTEEL, 0.42, 0.975 + topY99A, 1.235, Math.PI / 2); // 枪口箍
+    vBox(tP, 0.14, 0.16, 0.24, cSTEEL, 0.28, 0.925 + topY99A, 0.12);             // 弹箱
+    vBox(tP, 0.08, 0.09, 0.14, cDARK, 0.35, 0.985 + topY99A, 0.30);              // 加宽供弹连接块
+    vCyl(tP, 0.20, 0.21, 0.05, 12, cACC, -0.42, 0.662 + topY99A, -0.35);         // 装填手舱盖·左
+
+    // 激光压制器、周视仪、天线与横风杆沿99式局部锚点整体抬高。
+    vBox(tP, 0.10, 0.05, 0.12, cDARK, 0.55, 0.65 + topY99A, -0.78);
+    vCyl(tP, 0.02, 0.02, 0.32, 6, cSTEEL, 0.55, 0.83 + topY99A, -0.78);
+    vBox(tP, 0.08, 0.10, 0.10, cDARK, 0.55, 1.02 + topY99A, -0.78);
+    vBox(tG, 0.05, 0.06, 0.015, gPERI, 0.55, 1.02 + topY99A, -0.725);
+    vCyl(tP, 0.09, 0.10, 0.26, 10, cDARK, 0.16, 0.774 + topY99A, -0.66);
+    vBox(tP, 0.16, 0.15, 0.20, cDARK, 0.16, 0.974 + topY99A, -0.66);
+    vBox(tG, 0.12, 0.08, 0.02, gPERI, 0.16, 0.984 + topY99A, -0.55);
+    vBox(tP, 0.14, 0.10, 0.12, cDARK,  0.62, 0.659 + topY99A, -1.44);          // 尾顶角件·右
+    vBox(tP, 0.14, 0.10, 0.12, cDARK, -0.62, 0.659 + topY99A, -1.44);          // 尾顶角件·左
+    vCyl(tP, 0.015, 0.015, 0.55, 4, cDARK, -0.50, 0.885 + topY99A, -1.55);     // 横风杆
+    vCyl(tP, 0.012, 0.012, 0.95, 4, cDARK, 0.66, 1.079 + topY99A, -1.59);       // 天线
+
+    // 与99式同源的贴顶底座全部同步抬高，底面落在99A平顶，不再出现悬空或埋入过深。
+    vPrism(tP, cDARK, 0.20, [[0.46, 0.623 + topY99A], [0.46, 0.578 + topY99A], [-0.06, 0.615 + topY99A], [-0.06, 0.623 + topY99A]], -0.42, 0, 0);
+    vCyl(tP, 0.26, 0.29, 0.05, 12, cDARK, 0.42, 0.617 + topY99A, -0.35);
+    vCyl(tP, 0.06, 0.075, 0.03, 10, cDARK, 0.42, 0.625 + topY99A, 0.05);
+    vCyl(tP, 0.21, 0.24, 0.045, 12, cDARK, -0.42, 0.62 + topY99A, -0.35);
+    vBox(tP, 0.14, 0.035, 0.16, cDARK, 0.55, 0.613 + topY99A, -0.78);
+
+    // 篮底/尾板/顶杆随 basketW 同宽；尾板和尾杆同步增高到99A炮塔顶面。
+    vBox(tP, basketW - 0.12, 0.035, 0.40, cSTEEL, 0, 0.32, -1.72);
+    var basketTailBottom99A = 0.30, basketTailHeight99A = basketTop99A - basketTailBottom99A;
+    vBox(tP, basketW, basketTailHeight99A, 0.04, cACC, 0, (basketTop99A + basketTailBottom99A) * 0.5, -1.93);
+    vBox(tP, basketW, 0.03, 0.03, cSTEEL, 0, basketRailY99A, -1.93);
+  }
+  function gunParts99(uP, is99A) {                                  // 125mm滑膛炮；99/99A身管统一沿局部+Z按1.2倍加长，炮盾/机枪保持原锚点
+    var gunScale = T99_GUN_LENGTH_SCALE;
+    function gz(z) { return z * gunScale; }
+    function gl(len) { return len * gunScale; }
+    vCyl(uP, 0.14, 0.12, gl(0.66), 12, cCANVAS, 0, 0, gz(0.72), Math.PI / 2);
+    vCyl(uP, 0.105, 0.105, gl(1.10), 12, cDARK, 0, 0, gz(1.40), Math.PI / 2);
+    vCyl(uP, 0.15, 0.15, gl(0.66), 12, cDARK, 0, 0, gz(2.28), Math.PI / 2);
+    vCyl(uP, 0.12, 0.12, gl(0.80), 12, cDARK, 0, 0, gz(3.01), Math.PI / 2);   // 热护套段
+    vCyl(uP, 0.098, 0.098, gl(0.36), 12, cDARK, 0, 0, gz(3.59), Math.PI / 2);
+    vCyl(uP, 0.11, 0.11, gl(0.12), 10, cSTEEL, 0, 0, gz(3.76), Math.PI / 2);
+    // 99/99A 炮盾右侧同轴 7.62mm 机枪：只随 gunPivot 俯仰，不随主炮身管延长，仍嵌在炮盾内。
+    vBox(uP, 0.10, 0.10, 0.18, cDARK, 0.17, 0.03, 0.47);              // 同轴机枪机匣
+    vCyl(uP, 0.020, 0.020, 0.46, 8, cDARK, 0.17, 0.03, 0.70, Math.PI / 2); // 同轴枪管
+    vCyl(uP, 0.027, 0.027, 0.055, 8, cSTEEL, 0.17, 0.03, 0.952, Math.PI / 2); // 枪口箍
   }
   /* ===== 红方 RED_MLRS 发射转盘(turret=影响旋转的模块;demo buildTurn 共形)=====
      回转环+回转座+俯仰支臂板×2+俯仰轴+平衡机座;局部原点=转盘中心(世界 y1.30,z-0.05)。 */
@@ -6621,9 +7052,12 @@ function createTank(o) {
   } else if (m1Platform) {                                             // BLUE_MBT_2 车体/旋塔/主炮全新分支
     _suspSetRow('m1');
     hullPartsBLUE_MBT_2(gP, gG); turretPartsBLUE_MBT_2(tP, tG, mP); gunPartsBLUE_MBT_2(uP);
-  } else if (kind === '99') {                                          // 红方RED_MBT_2(炮盾并入塔件,mP 恒空)
+  } else if (kind === '99') {                                          // 原 99 式保持不变
     _suspSetRow('t99');
-    hullParts99(gP, gG); turretParts99(tP, tG); gunParts99(uP);
+    hullParts99(gP, gG); turretParts99(tP, tG); gunParts99(uP, false);
+  } else if (kind === '99a') {                                           // 独立 99A:同底盘/武器，专用车体、平面炮塔与命中轮廓
+    _suspSetRow('t99');
+    hullParts99A(gP, gG); turretParts99A(tP, tG); gunParts99(uP, true);
   } else if (team === 'red') {                                    // 我方坦克=59 式(T-54A)形象
     _suspSetRow('t59');
     hullParts59(gP, gG); turretParts59(tP, tG); gunParts59(uP); mantletParts59(tP, tG);   // 炮盾=静态贴体铸造炮翼并入塔件(mP 恒空=无炮盾动件)
@@ -6680,7 +7114,7 @@ function createTank(o) {
   else if (kind === 'td') { var mT = new THREE.Object3D(); mT.position.set(0, 0, team === 'red' ? 5.65 : 4.82); gunPivot.add(mT); muzzle = mT; }   // 红RED_TD膛口车系z5.69;蓝BLUE_MBT_2座圈前移居中后膛口车系z5.94,均走真实muzzle链
    // 59 局部 3.55 补偿耳轴后沉 0.40⇒膛口世界位 (1.53,4.15)=历代1.39+T59_LIFT 与历代逐分毫相同(弹道/曳光/烟焰全挂 getWorldPosition,零感)
   else if (kind === 'aa') { var mAA = new THREE.Object3D(); mAA.position.set(0, 0, team === 'red' ? 3.60 : 0.95); gunPivot.add(mAA); muzzle = mAA; }   // RED_AA 双联机炮炮口(fireAAGun 在 ±1.02 耳轴间切换)/BLUE_AA无机炮(占位,永不消费)
-  else { muzzle = new THREE.Object3D(); muzzle.position.set(0, 0, kind === '99' ? 3.85 : (team === 'red' ? 3.55 : 3.15)); gunPivot.add(muzzle); }
+  else { muzzle = new THREE.Object3D(); muzzle.position.set(0, 0, isT99Kind(kind) ? (kind === '99a' ? T99A_GUN_MUZZLE_Z : T99_GUN_MUZZLE_Z) : (team === 'red' ? 3.55 : 3.15)); gunPivot.add(muzzle); }
 
   /* ===== 直升机精准多边形命中壳生成器 (RED_HELI & BLUE_HELId) =====
      用与美术建模外形严格贴合的简化多边形几何(机身放样/座舱棱柱/尾梁/垂尾/平尾/短翼/双发短舱/颚下炮塔/起落架轮)
@@ -6903,6 +7337,7 @@ function createTank(o) {
   }
   /* ===== 模块碰撞盒 ===== */
   var tA = o.turretArmor || C.turretArmor;
+  var t99GunHitScale = isT99Kind(kind) ? T99_GUN_LENGTH_SCALE : 1;
   var defs = kind === 'aa' ? (team === 'blue' ? [
     /* ===== 蓝方 蓝方防空车 (BLUE_AA)模块表(命中检测=与实际建模轮廓一致的简化共形壳;全长4.95×全宽2.18×全高2.64m)=====
        turret=PMS 炮塔舱;ammo=2×四联 防空导弹 发射箱(弹药架,击毁殉爆);gun=FLIR 光电头;走行=前后轮共形带。 */
@@ -6989,15 +7424,15 @@ function createTank(o) {
     ['hull', modLabel(kind, team, 'hull'),   0, C.hullArmor, [2.10, 0.80, 5.55], [0, 0.72, 0], group],
     ['turret', modLabel(kind, team, 'turret'), 130, tA, [2.20, 0.72, 2.92], [0, 0.37, -0.10], turret],
     ['gun', modLabel(kind, team, 'gun'), 110, { all: 42 }, [0.36, 0.36, 4.90], [0, 0, 2.45], gunPivot]
-  ] : kind === '99' ? [                       // 红方RED_MBT_2:加长车体/圆盘弹药架(炮塔下方,特化壳见 defs 循环)
+  ] : isT99Kind(kind) ? [                       // 红方 RED-MBT-2/99A型:加长车体/圆盘弹药架(炮塔下方,特化壳见 defs 循环)
     ['trackL', modLabel(kind, team, 'trackL'), 90, { all: 25 }, [0.55, 1.00, 6.00], [-1.24, 0.50, -0.25], group], // 履带环带真包络(TRACK_POLY_99)
     ['trackR', modLabel(kind, team, 'trackR'), 90, { all: 25 }, [0.55, 1.00, 6.00], [ 1.24, 0.50, -0.25], group],
-    ['engine', modLabel(kind, team, 'engine'), 130, { all: 20 }, [1.50, 0.58, 1.30], [0, 0.73, -2.35], group],   // 尾段机舱(侧面 sideR=150 分区板同段)
+    ['engine', modLabel(kind, team, 'engine'), 130, { all: 20 }, [1.50, 0.58, 1.30], [0, 0.73, -2.35], group],   // 车体内部动力核心；外突发动机舱顶已并入 hull 真面命中壳
     ['ammo', modLabel(kind, team, 'ammo'), 90, { all: 15 }, [2.00, 0.20, 2.00], [0, 0.65, -0.35], group],        // 厚圆盘弹药架 r0.98×0.20(高度减半,缩减上半,底面 0.55 不动),炮塔正下方(随塔心 z-0.35)
     ['fuel', modLabel(kind, team, 'fuel'),   70, { all: 12 }, [0.76, 0.60, 0.70], [-0.45, 0.70, 1.00], group],
     ['hull', modLabel(kind, team, 'hull'),   0,  C.hullArmor, [1.2, 0.50, 1.2], [0, 0.72, 0], group],            // 内芯锚点盒(棱柱壳=T99_HULL_PTS 真面,见下方专项块)
     ['turret', modLabel(kind, team, 'turret'), 120, tA, [1.2, 0.30, 1.4], [0, 0.30, -0.20], turret],             // 内芯锚点盒(真面壳=t99TurretGeo 双尖纺锤壳)
-    ['gun', modLabel(kind, team, 'gun'),   100, { all: 35 }, [0.34, 0.34, 3.80], [0, 0, 1.90], gunPivot]
+    ['gun', modLabel(kind, team, 'gun'),   100, { all: 35 }, [0.34, 0.34, 3.85 * t99GunHitScale], [0, 0, 1.925 * t99GunHitScale], gunPivot] // 99/99A命中包络与1.2倍身管同基准
   ] : team === 'red' ? [                     // 59 式(命中判定与美术建模严格对齐;数值=棱柱/走行解析,HP/装甲/muzzle 照旧)
     ['trackL', modLabel(kind, team, 'trackL'), 90, { all: 25 }, [0.55, 1.12, 5.46], [-1.24, 0.42, 0], group], // 履带实体 x[0.965,1.515]/局y[-0.14,0.98]/鼓尖 ≈±2.71 全覆盖(随底行下沉加高,整车抬T59_LIFT后贴地)
     ['trackR', modLabel(kind, team, 'trackR'), 90, { all: 25 }, [0.55, 1.12, 5.46], [ 1.24, 0.42, 0], group],
@@ -7056,7 +7491,7 @@ function createTank(o) {
       var trSide=d[0]==='trackL'?-1:1,trGeo,trX;
       if (m1Platform) { trGeo = trackRingGeo(0.25,0.10,M1_TRACK_POLY,M1_TRACK_FILLET,undefined,trackLoopM1()); trGeo.scale(M1_HULL_X_SCALE,1,1); trX = trSide * 1.32 * M1_HULL_X_SCALE; }
       else if (kind === 'td' && team === 'red') { trGeo = trackRingGeo(0.275,0.10,TD89_TRACK_POLY,TD89_TRACK_FILLET,undefined,trackLoop89()); trX = trSide * 1.24; }
-      else if (kind === '99') { trGeo = trackRingGeo(0.275,0.10,TRACK_POLY_99,TRACK_FILLET_99,undefined,trackLoop99()); trX = trSide * 1.24; }   // RED_MBT_2加长环带真包络(物理环路与视觉同源)
+      else if (isT99Kind(kind)) { trGeo = trackRingGeo(0.275,0.10,TRACK_POLY_99,TRACK_FILLET_99,undefined,trackLoop99()); trX = trSide * 1.24; }   // RED_MBT_2加长环带真包络(物理环路与视觉同源)
       else if (kind === 'aa') { trGeo = trackRingGeo(0.22,0.10,TRACK_POLY,TRACK_FILLET,undefined,trackLoopPGZ()); trX = trSide * 1.42; }   // 任务27:RED_AA 环带壳=trackLoopPGZ 物理环路同源(板宽0.44→halfW0.22,带厚T0.10 全车型口径,trkX1.42 随任务20外移);静态默认环,不随悬挂动画
       else if (team === 'red') { trGeo = trackRingGeo(0.275,0.10,TRACK_POLY,TRACK_FILLET,undefined,trackLoop59()); trX = trSide * 1.24; }   // RED_MBT_1:物理环路与视觉分段板同源(旧四折线环仅作回退);带尖±2.64/下沉底行/下坠顶行与自然状态一致
       else{trGeo=trackRingGeo(0.275,0.10,TRACK_POLY_M60,TRACK_FILLET_M60,undefined,trackLoopM60());trX=trSide*1.19;}   // M60 命中壳随视觉内移(视觉=物理同源)
@@ -7203,15 +7638,22 @@ function createTank(o) {
         { g: new THREE.BoxGeometry(0.40, 0.40, 1.92), x: -0.72, y: 0, z: 0.17 },
         { g: new THREE.BoxGeometry(0.40, 0.40, 1.92), x:  0.72, y: 0, z: 0.17 }]), hiddenMat);
       mesh.visible = false; d[6].add(mesh);
-    } else if (kind === '99' && d[0] === 'ammo') {
+    } else if (isT99Kind(kind) && d[0] === 'ammo') {
       var adGeo = new THREE.CylinderGeometry(0.98, 0.98, 0.20, 16);   // 厚圆盘弹药架(用户口径:直径 1.96 略低于炮塔宽 2.04;高 0.20=缩减上半至一半;盘轴竖直)
       mesh = new THREE.Mesh(adGeo, hiddenMat); mesh.visible = false;
       mesh.position.set(d[5][0], d[5][1], d[5][2]); d[6].add(mesh);
-    } else if (kind === '99' && d[0] === 'hull') {
-      mesh = new THREE.Mesh(prismGeo(0.95, T99_HULL_PTS), hiddenMat); // RED_MBT_2车体真面壳(视觉/命中同折点)
+    } else if (kind === '99a' && d[0] === 'engine') {
+      // 99A 外突发动机舱已并入车体 hull 真面命中壳；这里仅保留车体内部动力核心，供穿透后的发动机损伤链使用，避免与 hull 外壳重叠。
+      mesh = hitBox(d[6], d[4][0], d[4][1], d[4][2], d[5][0], d[5][1], d[5][2]);
+    } else if (isT99Kind(kind) && d[0] === 'hull') {
+      var t99HullHitGeo = kind === '99a' ? mergeHitGeos([
+        { g: prismGeo(0.95, T99A_BASE_HULL_PTS) },
+        { g: prismGeo(T99A_ENGINE_DECK_HALF_W, T99A_ENGINE_DECK_PTS) }
+      ]) : prismGeo(0.95, T99_HULL_PTS);
+      mesh = new THREE.Mesh(t99HullHitGeo, hiddenMat); // 99A视觉/命中同源：两块闭合凸棱柱合成一个 hull 命中体；99式保持原壳
       mesh.visible = false; d[6].add(mesh);
-    } else if (kind === '99' && d[0] === 'turret') {
-      mesh = new THREE.Mesh(t99TurretGeo(), hiddenMat);               // RED_MBT_2炮塔真面壳(唯一命中体;侧甲分区由 armorOf 命中点承载)
+    } else if (isT99Kind(kind) && d[0] === 'turret') {
+      mesh = new THREE.Mesh(kind === '99a' ? t99ATurretGeo() : t99TurretGeo(), hiddenMat); // 视觉/命中共用各自炮塔真面壳
       mesh.visible = false; d[6].add(mesh);
     } else if (kind === 'td' && team === 'red' && d[0] === 'hull') {
       mesh = new THREE.Mesh(prismGeo(0.95, TD89_HULL_PTS), hiddenMat); // RED_TD80°内收尾板与视觉车体共用真面壳
@@ -7252,8 +7694,8 @@ function createTank(o) {
     if (kind === 'td' && team === 'red' && d[0] === 'hull') mesh.userData.face = 'hullshell';
     if (m1Platform && d[0] === 'hull') mesh.userData.face = 'm1hull';
     if (m1Platform && d[0] === 'turret') mesh.userData.face = 'm1turret';
-    if (kind === '99' && d[0] === 'hull') mesh.userData.face = 't99hull';       // 首上/首下双前甲分槽(armorOf 't99hull')
-    if (kind === '99' && d[0] === 'turret') mesh.userData.face = 't99turret';   // armorOf 't99turret':前楔物理厚度+统一世界入射角+侧甲命中点 z 分区
+    if (isT99Kind(kind) && d[0] === 'hull') mesh.userData.face = 't99hull';       // 首上/首下双前甲分槽(armorOf 't99hull')
+    if (isT99Kind(kind) && d[0] === 'turret') mesh.userData.face = 't99turret';   // armorOf 't99turret':前楔物理厚度+统一世界入射角+侧甲命中点 z 分区
     // M60 炮塔命中壳不再挂专属 face,走通用法线分区(物理厚度+入射角算法)
     mods[d[0]] = mod;
     targetsList.push(mesh);
@@ -7263,7 +7705,7 @@ function createTank(o) {
     var hm=new THREE.Mesh(geo,hiddenMat);hm.visible=false;hm.position.set(x||0,y||0,z||0);hm.rotation.set(rx||0,ry||0,rz||0);parent.add(hm);
     hm.userData = { tank:null,key:key,mod:mods[key] }; if (face) hm.userData.face = face; targetsList.push(hm); modMeshes.push(hm); return hm;
   }
-  if (kind === '99') {
+  if (isT99Kind(kind)) {
     /* 命中判定统一标准:车体/炮塔各一个真面壳,侧甲位置分区(车体 300/150 界 z-0.85·炮塔 200/100 界 z-0.45)
        由 armorOf 命中点参数承载,无任何附加面片/分段壳 */
     addExactHit(gunPivot, new THREE.BoxGeometry(0.28, 0.34, 0.30), 'turret', 'mantlet', 0, 0, 0.42);   // 炮盾=唯一独立外部件(与视觉块同位同尺寸)
@@ -7369,8 +7811,8 @@ function createTank(o) {
     isPlayer: isP, team: team, kind: kind,
     _strategicSupport: !!o.strategicSupport,
     _strategicSupportSource: o.strategicSupportSource || '',
-    model: kind === '99' ? 't99' : (kind === 'ah64' ? 'ah64' : (kind === 'wz10' ? 'wz10' : undefined)),                         // 新载具独立建档键(dynModelKey 首查 t.model)
-    name: o.name || (isP ? 'YOU' : (kind === 'arty' ? (team === 'red' ? 'RED-MLRS' : 'BLUE-MLRS') : (kind === 'aa' ? (team === 'red' ? 'RED-AA' : '复仇者防空系统') : (kind === 'wz10' ? 'RED-HELI' : (kind === 'ah64' ? 'BLUE-HELI' : (kind === 'td' ? (team === 'red' ? 'RED-TD' : 'BLUE-MBT-2') : (kind === '99' ? 'RED-MBT-2' : (team === 'red' ? 'RED-MBT-1' : 'BLUE-MBT-1')))))))),
+    model: isT99Kind(kind) ? (kind === '99a' ? 't99a' : 't99') : (kind === 'ah64' ? 'ah64' : (kind === 'wz10' ? 'wz10' : undefined)),                         // 新载具独立建档键(dynModelKey 首查 t.model)
+    name: o.name || (isP ? 'YOU' : (kind === 'arty' ? (team === 'red' ? 'RED-MLRS' : 'BLUE-MLRS') : (kind === 'aa' ? (team === 'red' ? 'RED-AA' : '复仇者防空系统') : (kind === 'wz10' ? 'RED-HELI' : (kind === 'ah64' ? 'BLUE-HELI' : (kind === 'td' ? (team === 'red' ? 'RED-TD' : 'BLUE-MBT-2') : (kind === '99a' ? '99A型' : (kind === '99' ? 'RED-MBT-2' : (team === 'red' ? 'RED-MBT-1' : 'BLUE-MBT-1'))))))))),
     platform: m1Platform ? 'm1a1' : (kind === 'td' ? 'td89' : kind),
     group: group, turret: turret, gunPivot: gunPivot, muzzle: muzzle,
     mainRotorGroup: mainRotorGroup, tailRotorGroup: tailRotorGroup,
@@ -7380,7 +7822,7 @@ function createTank(o) {
     mats: [vehBodyMat, vehGlowMat], modMeshes: modMeshes,
     yaw: o.yaw || 0, turretYaw: 0, gunPitch: (kind === 'arty' || kind === 'aa') ? 0.35 : 0, // 火箭炮/防空默认 20° 行军仰角;第三人称可继续抬至 1.05rad(AA 至 70°)
     speed: 0, _throttle: 0, _throttleLock: 0, _driveThrottle: 0, _steerRate: 0, _motionVx: 0, _motionVz: 0, _motionAx: 0, _motionAz: 0, _suspLoad: null, _slideV: 0, _slip: 0, _slipT: 0, _slipOkT: 0, _nav: null, _fAvail: 0,   // 坡度物理状态(油门由 AI/玩家写,speed 由 slopeArbitrate 裁决)
-    radius: kind === 'aa' ? (team === 'blue' ? 1.7 : 2.0) : (kind === 'arty' ? (team === 'blue' ? 3.6 : 3.2) : (kind === 'ah64' ? 3.40 : (kind === 'wz10' ? 3.35 : (m1Platform ? 2.90 : (kind === 'td' ? 2.60 : (kind === '99' ? 2.55 : 2.45)))))), blockedT: 0,
+    radius: kind === 'aa' ? (team === 'blue' ? 1.7 : 2.0) : (kind === 'arty' ? (team === 'blue' ? 3.6 : 3.2) : (kind === 'ah64' ? 3.40 : (kind === 'wz10' ? 3.35 : (m1Platform ? 2.90 : (kind === 'td' ? 2.60 : (isT99Kind(kind) ? 2.55 : 2.45)))))), blockedT: 0,
     structMax: o.struct || C.struct, struct: o.struct || C.struct,
     mods: mods, fire: null,
     reload: 0, reloadTime: (kind === 'arty' && typeof rocketReloadTimeOf === 'function') ? rocketReloadTimeOf({ kind: 'arty', team: team }) : C.reload,             // 火箭炮=1s/发×伤害系数(dmg/60)×齐射发数(红40s/蓝4s);其余 CONF.reload
@@ -7440,7 +7882,7 @@ function createTank(o) {
   if (typeof vehicleTechApplyToTank === 'function') vehicleTechApplyToTank(tank);
   effSync(tank);                                   // 效率族事件缓存初始化(满血=全 1;此后仅受击/火烧事件重算)
   /* 迂回角色唯一来源=指挥官 60s 决策分组 */
-  group.position.set(o.x || 0, terrainH(o.x || 0, o.z || 0) + ((kind === 'tank' && team === 'red') ? T59_LIFT : (kind === '99' ? T99_LIFT : ((kind === 'td' && team === 'red') ? TD89_LIFT : ((kind === 'td' && team === 'blue') ? M1_LIFT : ((kind === 'tank' && team === 'blue') ? M60_LIFT : 0))))), o.z || 0);   // 59叠加T59_LIFT(轮系下沉后贴地);99/89/M1同理各叠自家抬升
+  group.position.set(o.x || 0, terrainH(o.x || 0, o.z || 0) + ((kind === 'tank' && team === 'red') ? T59_LIFT : (isT99Kind(kind) ? (kind === '99a' ? T99A_LIFT : T99_LIFT) : ((kind === 'td' && team === 'red') ? TD89_LIFT : ((kind === 'td' && team === 'blue') ? M1_LIFT : ((kind === 'tank' && team === 'blue') ? M60_LIFT : 0))))), o.z || 0);   // 59叠加T59_LIFT(轮系下沉后贴地);99/89/M1同理各叠自家抬升
   group.rotation.y = tank.yaw;
   turret.rotation.y = tank.turretYaw;
   gunPivot.rotation.x = -tank.gunPitch;                  // 首帧/载具预览立即显示火箭炮默认仰角,不等主循环补写
@@ -7448,8 +7890,9 @@ function createTank(o) {
   for (var mmi = 0; mmi < modMeshes.length; mmi++) modMeshes[mmi].userData.tank = tank;   // 内核+附加斜板全部回填所属坦克
   tank._instSrcs = [_hullMeshRef, _hullGlowRef, turMeshRef, turGlowRef, gunMeshRef, manMeshRef, mainRotorMeshRef, tailRotorMeshRef];   // 实例桶满兜底显隐用个体网格引用表
   if (o.name !== 'PREVIEW') vehInkAttach(tank, _tpl, isP);              // P1: 预览留给车库 EdgesGeometry, 对局挂折边墨线
+  vehGridAttach(tank, isP);                                             // 99/99A前斜面网格始终是独立LineSegments
   if (isP && _hullMeshRef) tank._hullMat = _hullMeshRef.material;     // 玩家车 hull 材质引用(供 trackAnimUpdate 更新 uTrackOffL/uTrackOffR uniform)
-  if (kind === '99') tank._lwsLens = _lz;   // 压制器镜片标记回填(var _lz 函数域提升,仅 '99' 分支已建)
+  if (isT99Kind(kind)) tank._lwsLens = _lz;   // 压制器镜片标记回填(var _lz 函数域提升,仅 '99' 分支已建)
   /* 多联装挂架——每筒位一个独立弹体网格(发射即隐藏该筒,装填完成整侧复现)。
      RED_HELI: 空空导弹 四联装(2×2, 筒距0.11), 外侧挂点 |x|=2.05, 弹体中心 y=1.52 z=-0.20;
      BLUE_HELI: 防空导弹 二联装(横排, 筒距0.10), 内侧挂点 |x|=1.52(与火箭巢交换,巢移外侧), y=1.44 z=0.22。
@@ -7890,6 +8333,8 @@ var VEH_INK_LOD_R2 = 80 * 80;
 var VEH_INK_LOD_MAX = 16;
 var VEH_INK_PARTS = ['hull', 'turret', 'gun', 'mantlet', 'mainRotor', 'tailRotor'];
 var VEH_INK_GEO = {};                              // key=team|kind → {hull,turret,...} EdgesGeometry, 不进 INST_TPL
+var VEH_GRID_GEO = {};                              // key=team|kind → 99/99A前斜面专用线几何, 不进任何实体模板
+var VEH_BASKET_GRID_GEO = {};                       // key=team|kind → 储物篮两侧挡板外侧线几何, 不进任何实体模板
 var vehInkMat = new THREE.LineBasicMaterial({
   color: 0x141610, fog: true, depthTest: true, depthWrite: false,
   polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1
@@ -7951,6 +8396,43 @@ function vehInkParentOf(t, pk) {
   if (pk === 'mainRotor') return t.mainRotorGroup;
   if (pk === 'tailRotor') return t.tailRotorGroup;
   return null;
+}
+function vehGridBuildTpl(team, kind) {
+  var key = team + '|' + kind;
+  if (VEH_GRID_GEO[key]) return VEH_GRID_GEO[key];
+  // 99式不再挂载炮塔网格；99A保留删除侧面后的前向网格。
+  if (kind === '99a') VEH_GRID_GEO[key] = t99AFrontSlopeGrid();
+  return VEH_GRID_GEO[key] || null;
+}
+function vehBasketGridBuildTpl(team, kind) {
+  var key = team + '|' + kind;
+  if (VEH_BASKET_GRID_GEO[key]) return VEH_BASKET_GRID_GEO[key];
+  // 99式不再挂载储物篮网格；99A继续保留储物篮线条网格。
+  if (kind === '99a') VEH_BASKET_GRID_GEO[key] = _t99BasketGridGeo(true);
+  return VEH_BASKET_GRID_GEO[key] || null;
+}
+function vehGridAttachLine(t, geo, isP, isBasket) {
+  if (!geo || !t || !t.turret) return;
+  var ls = new THREE.LineSegments(geo, vehInkMat);
+  ls.userData.isVehInk = true;
+  ls.userData.isVehGrid = true;
+  ls.userData.isVehBasketGrid = !!isBasket;
+  ls.userData.visual = !!isP || !!t._techPreview;
+  ls.castShadow = false;
+  ls.receiveShadow = false;
+  ls.visible = !!isP || !!t._techPreview;            // AI 由 vehInkLodTick 统一近距开启
+  ls.renderOrder = 2;
+  t.turret.add(ls);
+  if (!t._vehInk) t._vehInk = [];
+  t._vehInk.push(ls);
+}
+/* 网格是挂在炮塔回转组上的 LineSegments：不进入 INST_TPL，不生成三角面，
+   并复用对局墨线的挂点/LOD/销毁链路。PREVIEW 不在 aliveList，必须直接保持可见。 */
+function vehGridAttach(t, isP) {
+  // 99式炮塔网格和储物篮网格均删除；只有99A保留对应LineSegments。
+  if (!t || t.kind !== '99a' || !t.turret) return;
+  vehGridAttachLine(t, vehGridBuildTpl(t.team, t.kind), isP, false);
+  vehGridAttachLine(t, vehBasketGridBuildTpl(t.team, t.kind), isP, true);
 }
 function vehInkAttach(t, tpl, isP) {
   var bag = t ? VEH_INK_GEO[t.team + '|' + t.kind] : null;

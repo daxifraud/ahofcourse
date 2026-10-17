@@ -575,7 +575,7 @@ function updateScopeInfo() {
   scopeInfo.laser = laserRange(from, dir);
   /* ★审查C7: 落点显示本就受火控门(基础主战坦克 行进间≥3s 无落点、高阶装甲载具 状态保持 0.5s)——
      隐藏期照跑全额 simulateImpact(≤140 步弹道积分)纯浪费; 99 例外保留(其 LWS 落点解算以 point 为瞄准源)。 */
-  var imp = (player.kind === '99' || _fcsOkVal) ? simulateImpact(from, dir, effectiveShellSpeed(player)) : null;
+  var imp = (isT99Vehicle(player) || _fcsOkVal) ? simulateImpact(from, dir, effectiveShellSpeed(player)) : null;
   scopeInfo.point = imp ? imp.point : null;
   scopeInfo.rkPointL = null;
   scopeInfo.rkPointR = null;

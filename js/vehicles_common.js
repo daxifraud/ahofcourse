@@ -435,7 +435,7 @@ function artyWheel(bP, sk, wz, C, o) {
   _suspTagClear();
 }
 
-/* ===== 一体化棱柱外壳(坦克精细化):(z,y) 凸多边形沿 X 拉伸成型 ——
+/* ===== 一体化棱柱外壳(坦克精细化):(z,y) 简单多边形沿 X 拉伸成型 ——
    斜首/平顶/斜尾一次成型,无拼缝、无悬浮件("不漏风");逐面用叉积自动校正绕向,
    保证外侧朝向永不被背面剔除(凡绘制即实体)。法线逐面平直,读得出焊接折线。 ===== */
 function prismGeo(halfW, pts) {
@@ -461,9 +461,56 @@ function prismGeo(halfW, pts) {
     var C = [halfW, q[1], q[0]], D = [-halfW, q[1], q[0]];
     tri(A, B, C, 0, ny2, nz2); tri(A, C, D, 0, ny2, nz2);
   }
-  for (i = 1; i < n - 1; i++) {                                        // 两端盖:凸多边形扇形三角化
-    tri([halfW, pts[0][1], pts[0][0]], [halfW, pts[i + 1][1], pts[i + 1][0]], [halfW, pts[i][1], pts[i][0]], 1, 0, 0);
-    tri([-halfW, pts[0][1], pts[0][0]], [-halfW, pts[i][1], pts[i][0]], [-halfW, pts[i + 1][1], pts[i + 1][0]], -1, 0, 0);
+  /* 两端盖：不能再用凸多边形扇形三角化。
+     99A 的发动机舱突起让 T99A_HULL_PTS 变成了简单凹多边形；旧 fan 会跨过凹口，
+     在车尾/机舱交界产生悬空三角形、破洞和穿模。耳切只使用多边形内部的耳朵，
+     M1 的两个凸棱柱继续得到相同拓扑，其他旧棱柱也不会改变外轮廓。 */
+  var capIdx = [], capWork = [], capArea = 0, capGuard = 0, capEPS = 1e-10;
+  for (i = 0; i < n; i++) {
+    capWork.push(i);
+    capArea += pts[i][0] * pts[(i + 1) % n][1] - pts[(i + 1) % n][0] * pts[i][1];
+  }
+  var capWinding = capArea >= 0 ? 1 : -1;
+  function capCross(a, b, c) {
+    return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  }
+  function capPointInside(p, a, b, c) {
+    var c1 = capCross(a, b, p), c2 = capCross(b, c, p), c3 = capCross(c, a, p);
+    var allPos = c1 > capEPS && c2 > capEPS && c3 > capEPS;
+    var allNeg = c1 < -capEPS && c2 < -capEPS && c3 < -capEPS;
+    return allPos || allNeg;
+  }
+  while (capWork.length > 3 && capGuard++ < n * n * 4) {
+    var clipped = false;
+    for (var ci = 0; ci < capWork.length; ci++) {
+      var ia = capWork[(ci + capWork.length - 1) % capWork.length];
+      var ib = capWork[ci];
+      var ic = capWork[(ci + 1) % capWork.length];
+      if (capCross(pts[ia], pts[ib], pts[ic]) * capWinding <= capEPS) continue;
+      var isEar = true;
+      for (var cj = 0; cj < capWork.length; cj++) {
+        var ip = capWork[cj];
+        if (ip === ia || ip === ib || ip === ic) continue;
+        if (capPointInside(pts[ip], pts[ia], pts[ib], pts[ic])) { isEar = false; break; }
+      }
+      if (!isEar) continue;
+      capIdx.push([ia, ib, ic]);
+      capWork.splice(ci, 1);
+      clipped = true;
+      break;
+    }
+    if (!clipped) break; // 自交/退化输入的最后兜底见下方；正常简单多边形不会走这里。
+  }
+  if (capWork.length === 3) capIdx.push([capWork[0], capWork[1], capWork[2]]);
+  if (capIdx.length !== n - 2) {
+    // 仅处理历史上可能传入的退化输入；不让它阻断整车生成。
+    capIdx = [];
+    for (i = 1; i < n - 1; i++) capIdx.push([0, i, i + 1]);
+  }
+  for (i = 0; i < capIdx.length; i++) {
+    var ct = capIdx[i], pa = pts[ct[0]], pb = pts[ct[1]], pc = pts[ct[2]];
+    tri([halfW, pa[1], pa[0]], [halfW, pb[1], pb[0]], [halfW, pc[1], pc[0]], 1, 0, 0);
+    tri([-halfW, pa[1], pa[0]], [-halfW, pb[1], pb[0]], [-halfW, pc[1], pc[0]], -1, 0, 0);
   }
   return finishGeo(pos, nrm, null);
 }

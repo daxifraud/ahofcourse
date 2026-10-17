@@ -111,8 +111,9 @@
   }
 
   function supportedKey(team, kind) {
-    var key = String(team || '').toLowerCase() + '|' + String(kind || '').toLowerCase();
-    return TREE[key] ? key : null;
+    var normalizedKind = String(kind || '').toLowerCase() === '99a' ? '99' : String(kind || '').toLowerCase();
+    var key = String(team || '').toLowerCase() + '|' + normalizedKind;
+    return TREE[key] ? key : null; // 99A shares the 99式 tech tree/state while retaining its own vehicle kind.
   }
 
   function makeFlags(key, value) {
@@ -188,7 +189,7 @@
     return !!t && t.isPlayer === true && t.team === 'red' && t.kind === 'td';
   }
   function isPlayerRedMbt2(t) {
-    return !!t && t.isPlayer === true && t.team === 'red' && t.kind === '99';
+    return !!t && t.isPlayer === true && t.team === 'red' && (t.kind === '99' || t.kind === '99a');
   }
   function isPlayerRedHeli(t) {
     return !!t && t.isPlayer === true && t.team === 'red' && t.kind === 'wz10';
@@ -933,10 +934,11 @@
         out.fire = (out.fire || '105mm rifled gun') + ' + HIGH-EXPLOSIVE';
         out.fireSub = (out.fireSub || 'AP') + ' - HE 180 DMG / MV 1400m/s / PEN 500mm / ROCKET BLAST';
       }
-    } else if (team === 'red' && kind === '99') {
+    } else if (team === 'red' && (kind === '99' || kind === '99a')) {
       var t9State = stateFor(team, kind), t9Installed = t9State && t9State.installed;
       if (t9Installed && t9Installed['improved-power-pack']) {
-        var t9BaseSpeed = (typeof CONF !== 'undefined' && CONF && CONF.t99 && CONF.t99.speed != null) ? CONF.t99.speed : 16.7;
+        var t9Conf = (kind === '99a' && typeof CONF !== 'undefined' && CONF && CONF.t99a) ? CONF.t99a : (typeof CONF !== 'undefined' && CONF ? CONF.t99 : null);
+        var t9BaseSpeed = t9Conf && t9Conf.speed != null ? t9Conf.speed : 16.7;
         out.speed = Math.round(t9BaseSpeed * 3.6 + 10) + ' km/h';
         out.speedSub = (out.speedSub || '850HP diesel') + ' - SPEED EFFECT +10 KM/H';
       }

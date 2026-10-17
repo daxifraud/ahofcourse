@@ -892,7 +892,7 @@ function updateLwr(dt) {
   var layerEl = el['lwr-hud-layer'] || document.getElementById('lwr-hud-layer');
   var flashEl = el['maws-edge-flash'] || document.getElementById('maws-edge-flash');
   // 装备门: 重型主战坦克同款 LWR, 直升机同样加装(武装直升机 机身告警接收机; 与玩家共用同一 updateLwr 实现)
-  var on = player && player.alive && gameState === 'playing' && (player.kind === '99' || isM1Vehicle(player) || isHeliVehicle(player));
+  var on = player && player.alive && gameState === 'playing' && (isT99Vehicle(player) || isM1Vehicle(player) || isHeliVehicle(player));
   if (!on) {
     if (_lwrOnPrev) {                    // ★审查A3: 边沿门——off 态是不动点(空表/无音/层已清), 只在 on→off 沿做一次
       _lwrOnPrev = false;
@@ -908,7 +908,7 @@ function updateLwr(dt) {
   for (var i = 0; i < aliveList.length; i++) {
     var t = aliveList[i];
     if (t === player || !t.alive || !areHostile(player, t)) continue;
-    var trig = (t.kind === 'td' || t.kind === '99') || ((isHeliVehicle(t) || (typeof isAAVehicle === 'function' && isAAVehicle(t))) && (t._heliWeapon || 3) === 1);   // 计算机解算载具 / 直升机与防空机炮
+    var trig = (t.kind === 'td' || isT99Vehicle(t)) || ((isHeliVehicle(t) || (typeof isAAVehicle === 'function' && isAAVehicle(t))) && (t._heliWeapon || 3) === 1);   // 计算机解算载具 / 直升机与防空机炮
     if (!trig) continue;
     var gp = t.gunPivot || t.turret;
     gp.getWorldDirection(_lwD);
@@ -983,7 +983,7 @@ function _lwsAimTarget99(t) {   // AI: 当前炮口对齐的计算机解算型�
   for (var i = 0; i < aliveList.length; i++) {
     var o = aliveList[i];
     if (o === t || !o.alive || !areHostile(t, o)) continue;
-    if (!(o.kind === 'td' || o.kind === '99')) continue;
+    if (!(o.kind === 'td' || isT99Vehicle(o))) continue;
     _lwP.copy(o.group.position).sub(t.group.position);
     var d2 = _lwP.lengthSq(); if (d2 < 1 || d2 > _lwR2) continue;   // ★审查A2: 平方预筛(过门再开方, 判定集合与原版逐位一致)
     var d = Math.sqrt(d2);
@@ -1027,7 +1027,7 @@ function sfxLwsCue(kind) {   // 激光压制系统提示音: 压制结束=滴 / 
 function updateLws(dt) {
   for (var i = 0; i < aliveList.length; i++) {
     var t = aliveList[i];
-    if (!t.alive || t.kind !== '99') continue;
+    if (!t.alive || !isT99Vehicle(t)) continue;
     var st = lwsOf(t);
     if (st.phase === 'ready') {
       var want = t.isPlayer ? (_rmbHeld && scoped && gameState === 'playing') : (!!t.ai && !!_lwsAimTarget99(t));
@@ -1248,7 +1248,7 @@ function hudUpdate(dt) {
   }
 
   if (el.lwsring) {                                  // 激光压制环(专属高阶坦克): 空=就绪 / 蓝增长=4s发射 / 黄退去=30s冷却
-    var _lwsOn = !!(player && player.alive && player.kind === '99' && gameState === 'playing');
+    var _lwsOn = !!(player && player.alive && isT99Vehicle(player) && gameState === 'playing');
     if (_lwsOn !== el.lwsring._on) { el.lwsring._on = _lwsOn; if (_lwsOn) el.lwsring.classList.remove('hidden'); else el.lwsring.classList.add('hidden'); }
     if (_lwsOn) {
       var _st9 = lwsOf(player);
@@ -1262,7 +1262,7 @@ function hudUpdate(dt) {
      这里只驱动 firing/cooling 类与环进度(边沿写,不变不写 DOM)。 */
   if (el.tlas) {
     if (!el.tlasPrfg && el.tlas.querySelector) el.tlasPrfg = el.tlas.querySelector('.prfg');   // 进度弧首帧惰性缓存
-    var _lasShow = !!(player && player.alive && player.kind === '99' && gameState === 'playing');
+    var _lasShow = !!(player && player.alive && isT99Vehicle(player) && gameState === 'playing');
     if (_lasShow) {
       var _stL = lwsOf(player), _C = 2 * Math.PI * 47;
       if (_stL.phase === 'emit') {

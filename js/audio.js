@@ -1234,7 +1234,7 @@ function engSoundKind(t) {
   if (t.kind === 'ah64') return 'th64';                 // BLUE_HELI 4叶+双T700 复刻声浪
   if (t.kind === 'wz10') return 'tz10';                 // 红方武装直升机 5叶+WZ-9 复刻声浪
   if (t.kind === 'tank') return t.team === 'red' ? 't59' : 'tm60';
-  if (t.kind === '99') return 't99';
+  if (isT99Vehicle(t)) return 't99';
   if (t.kind === 'td') return t.team === 'red' ? 't89' : 'tm1';
   if (t.kind === 'arty') return 'arty';
   return 'tank';

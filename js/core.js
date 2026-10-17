@@ -1096,7 +1096,15 @@ var CONF = {
         mob: { mass: 53000, power: 1118550, eta: 0.80, mu: 0.70, muLat: 0.44, crr: 0.09, vCrawl: 1.0 },   // 红方重型坦克:53t/1500hp;27.8hp/t 全场最强
         hullArmor:   { front: 320, glacis: 362, side: 150, sideF: 300, sideR: 150, rear: 50, top: 20, bottom: 25, weak: 45 },
         turretArmor: { front: 700, side: 100, sideF: 200, sideR: 100, rear: 50, top: 30, weak: 45 } },
-  /* BLUE-HELI:按真实机型外形比例建模(串列座舱/颚炮/肩置发动机/四叶旋翼+桅顶雷达/短翼双挂点(外火箭巢/内侧二联装防空导弹)/后三点起落架)。
+  /* 99A 独立性能档：在99式基础上，正面装甲+100mm，炮塔侧面/车体首下提高；99A车体首下物理厚度为562mm；主炮穿深+330mm，
+     最高速度+10km/h，炮塔转速+5°/s。视觉和命中壳仍沿用独立99A外形，物理参数在运行时单独读取。 */
+  t99a: { struct: 300, pen: 1090 + 330, penKd: 8.6e-5, dmg: 150, reload: 7.0,
+          speed: 20.8 + 10 / 3.6, turn: 0.55, turretRate: 0.524 + 5 * Math.PI / 180,
+          accel: 2.8, decel: 5.5, shellSpeed: 1750,
+          mob: { mass: 53000, power: 1118550, eta: 0.80, mu: 0.70, muLat: 0.44, crr: 0.09, vCrawl: 1.0 },
+          hullArmor:   { front: 420, glacis: 562, side: 150, sideF: 300, sideR: 150, rear: 50, top: 20, bottom: 25, weak: 45 },
+          turretArmor: { front: 800, side: 150, sideF: 250, sideR: 150, rear: 50, top: 30, weak: 45 } },
+  /* BLUE-HELI: "}按真实机型外形比例建模(串列座舱/颚炮/肩置发动机/四叶旋翼+桅顶雷达/短翼双挂点(外火箭巢/内侧二联装防空导弹)/后三点起落架)。
      轻装甲/航炮框架:M230 30mm 链炮射速每秒4发(0.25s)、穿深 35mm、炮塔转速 60°/s(1.0472rad/s),装甲同属纸甲档。 */
   ah64: { struct: 230, pen: 35, penKd: 5.0e-5, dmg: 50, reload: 0.125, speed: 69.44, turn: 0.86, turretRate: 1.0472,   // 任务25:机炮射速×2(0.25s→0.125s)
           accel: 3.4, decel: 6.0, shellSpeed: 1000,
@@ -1111,7 +1119,7 @@ var CONF = {
           hullArmor: { front: 30, side: 20, rear: 15, top: 12, bottom: 11, weak: 10 },
           turretArmor: { front: 22, side: 16, rear: 12, top: 10, weak: 10 } },
   wz10PerTeam: 4,
-  t99PerTeam: 27, t99PerTeamE: 0, tank59PerTeam: 9,   // 默认编制:红方 RED-MBT-1 9辆/RED-MBT-2 27辆,蓝方无 RED-MBT-2(菜单可改)
+  t99PerTeam: 14, t99PerTeamE: 0, t99aPerTeam: 13, tank59PerTeam: 9,   // 默认编制:原99式27个重型槽位拆为99式14+99A型13，99A分走约一半比例且总槽位不增加
   m1PerTeamE: 28,                                     // 蓝方 td 槽(BLUE_MBT_2)专属默认数(红方 RED-TD 仍用 tdPerTeam;28=原10+新调18)
   // 大本营重新部署(消耗战):初始载具不占兵力;此后每辆被摧毁的载具按兵种延时在大本营 redeploy,
   // 每次 redeploy(无论兵种)消耗 1 点兵力,先把 50 点兵力耗光的一方战败
@@ -1151,6 +1159,9 @@ var VEHICLE_KINDS = [
   { kind: '99',   def: 't99PerTeam', defs: { blue: 't99PerTeamE' }, names: { red: 'RED-MBT-2', blue: 'RED-MBT-2' }, sides: { red: true },
     respawnDelay: 6, spawnName: { red: 'RED-MBT-2', blue: 'RED-MBT-2' },
     modelKey: 't99', frontalArea: 5.297, nv: true, th: true },
+  { kind: '99a',  def: 't99aPerTeam', names: { red: '99A型' }, sides: { red: true },
+    respawnDelay: 6, spawnName: { red: '99A型' },
+    modelKey: 't99a', frontalArea: 5.55, nv: true, th: true },
   { kind: 'td',   def: 'tdPerTeam', defs: { blue: 'm1PerTeamE' }, names: { red: 'RED-TD', blue: 'BLUE-MBT-2' },
     respawnDelay: { red: 3, blue: 6 }, spawnName: { red: 'RED-TD', blue: 'BLUE-MBT-2' },
     modelKey: { red: 'td89', blue: 'm1a1' }, frontalArea: { red: 5.862, blue: 5.174 },
@@ -1168,6 +1179,8 @@ var VEHICLE_KINDS = [
     respawnDelay: 12, spawnName: { red: 'RED-AA', blue: '复仇者防空系统' }, aiAnchor: true,
     modelKey: 'aa', frontalArea: { red: 5.20, blue: 4.10 }, nv: true, th: false }
 ];
+function isT99Kind(kind) { return kind === '99' || kind === '99a'; }
+function isT99Vehicle(t) { return !!t && isT99Kind(t.kind); }
 function vehicleKindEntry(kind) {                // 注册表条目查询(未知型号返回 null)
   for (var vki = 0; vki < VEHICLE_KINDS.length; vki++)
     if (VEHICLE_KINDS[vki].kind === kind) return VEHICLE_KINDS[vki];
@@ -1329,8 +1342,7 @@ function friendlyRosterOf(t) {
 
 /* ===== 触屏端(安卓/移动)默认编制覆盖 =====
    ★2026-09-13:默认战场规模提到每阵营 40 台:直升机 2 / 火箭炮 2 / 防空车 1 台固定,
-   剩余名额在其余载具型号之间平均分配(除不尽的余数按注册表顺序补给靠前的型号)。
-   例:红方其余 tank/99/td 三型分 35 台 = 12+12+11;蓝方其余 tank/td 两型分 35 台 = 18+17。
+   剩余名额按型号权重分配(99A 权重为99式的一半;除不尽的余数按比例小数补齐)。
    桌面端(精确指针)完全不受影响,仍用上面的 CONF 默认编制。
    注意:本段必须放在 VEHICLE_KINDS / vehicleKindAllowed / BATTLE_SETUP 之后。 */
 var IS_TOUCH_SETUP = (window.matchMedia && matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in window;   // ★移动端适配恢复
@@ -1358,11 +1370,23 @@ if (IS_TOUCH_SETUP) {
         if (TOUCH_SETUP_FIXED[k] != null) { next[k] = TOUCH_SETUP_FIXED[k]; fixed += TOUCH_SETUP_FIXED[k]; }
         else { next[k] = 0; rest.push(k); }
       }
-      // 3) 余下名额平均分配,余数补给靠前的型号;严格保证 sum(roster) === cap
+      // 3) 余下名额按默认比例分配:99A 固定为99式的一半权重，其余型号保持一个标准权重。
+      //    这样移动端重算编制时也不会把99A重新平均成与99式等量。
       var left = Math.max(0, TOUCH_SETUP_CAP - fixed);
       if (rest.length > 0) {
-        var each = Math.floor(left / rest.length), extra = left - each * rest.length;
-        for (var oi = 0; oi < rest.length; oi++) next[rest[oi]] = each + (oi < extra ? 1 : 0);
+        var weightSum = 0, weights = {};
+        for (var ri = 0; ri < rest.length; ri++) {
+          weights[rest[ri]] = rest[ri] === '99a' ? 0.5 : 1;
+          weightSum += weights[rest[ri]];
+        }
+        var allocated = 0, fractions = [];
+        for (var oi = 0; oi < rest.length; oi++) {
+          var raw = left * weights[rest[oi]] / weightSum, base = Math.floor(raw);
+          next[rest[oi]] = base; allocated += base;
+          fractions.push({ kind: rest[oi], frac: raw - base });
+        }
+        fractions.sort(function (a, b) { return b.frac - a.frac; });
+        for (var ex = 0; ex < left - allocated; ex++) next[fractions[ex % fractions.length].kind]++;
       }
       // 4) 回写 roster(非本阵营型号一律 0,杜绝幽灵配额)并同步 cap
       var sum = 0;
@@ -1385,7 +1409,7 @@ function isAAVehicle(t) { return !!t && t.kind === 'aa'; }   // 防空载具:红
    新增载具时,只需在 VEH_CLASS 里给其 kind 打上对应标签,计分/规则自动继承——无需再逐处 if kind===... 判定。
    指挥官 AI 伤害计分口径:仅 'ground' 计入(坦克+坦歼);'arty'(火箭炮)与 'air'(直升机)造成的伤害一律不计分。 */
 var VEH_CLASS = {                                  // kind → 大类标签
-  tank: 'ground', '99': 'ground', td: 'ground',   // RED-MBT-1/BLUE-MBT-1 · RED-MBT-2 · RED-TD/BLUE-MBT-2 —— 全部地面载具
+  tank: 'ground', '99': 'ground', '99a': 'ground', td: 'ground',   // RED-MBT-1/BLUE-MBT-1 · RED-MBT-2/99A型 · RED-TD/BLUE-MBT-2 —— 全部地面载具
   arty: 'arty',                                    // 火箭炮 —— 炮兵
   ah64: 'air', wz10: 'air'                         // BLUE-HELI / RED-HELI —— 空中载具
 };

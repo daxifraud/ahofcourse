@@ -282,9 +282,10 @@ var FFA_KIND_WEIGHTS = {
   arty: 10,
   ah64: 5,
   wz10: 5,
-  tank: 65 / 3,
-  '99': 65 / 3,
-  td: 65 / 3
+  tank: 65 / 4,
+  '99': 65 / 4,
+  '99a': 65 / 4,
+  td: 65 / 4
 };
 function ffaRandomVehicleOption(allowHeli) {
   var weighted = [], totalW = 0, i, ti, tm, vk, w;
@@ -465,35 +466,47 @@ function spawnTeams() {
     }
     return slots;
   }
-  var grid = lineSlots(baseZ.tank, aR.tank + (aR['99'] || 0));   // 坦克大本营战线
+  var grid = lineSlots(baseZ.tank, aR.tank + (aR['99'] || 0) + (aR['99a'] || 0));   // 坦克大本营战线
   // 锋线最中央一格空给玩家(只剔离 (0,baseZ.tank) 最近的那一格,其余 = 我方坦克数-1 辆 AI)
   var ci = 0;
   for (i = 1; i < grid.length; i++)
     if (Math.abs(grid[i][0]) + Math.abs(grid[i][1] - baseZ.tank) <
         Math.abs(grid[ci][0]) + Math.abs(grid[ci][1] - baseZ.tank)) ci = i;
   grid.splice(ci, 1);
-  var a59N = aR.tank - (pKind === '99' ? 0 : 1);
+  var a59N = aR.tank - (isT99Kind(pKind) ? 0 : 1);
   var a99N = (aR['99'] || 0) - (pKind === '99' ? 1 : 0);
-  for (i = 0; i < grid.length && (a59N > 0 || a99N > 0); i++) {
-    var use99 = a59N <= 0 || (a99N > 0 && i % 2 === 1);
-    if (use99) a99N--; else a59N--;
+  var a99aN = (aR['99a'] || 0) - (pKind === '99a' ? 1 : 0);
+  for (i = 0; i < grid.length && (a59N > 0 || a99N > 0 || a99aN > 0); i++) {
+    var heavyN = a99N + a99aN;
+    var useHeavy = a59N <= 0 || (heavyN > 0 && i % 2 === 1);
+    var spawnKind = undefined;
+    if (useHeavy) {
+      // 99A 与 99 式共享重型槽位的编队节奏，但车型计数/名称始终独立。
+      if (a99aN > 0 && (a99N <= 0 || i % 3 === 0)) { spawnKind = '99a'; a99aN--; }
+      else { spawnKind = '99'; a99N--; }
+    } else a59N--;
     x = clamp(grid[i][0] + rand(-4, 4), -boundsX + 16, boundsX - 16);
     z = clamp(grid[i][1] + rand(-2, 2), -boundsZ + 16, boundsZ - 16);
     var at = createTank({ isPlayer: false, team: 'red', x: x, z: z, yaw: aYaw + rand(-0.12, 0.12),
-      kind: use99 ? '99' : undefined,
-      struct: CONF.red.struct, name: use99 ? 'RED-MBT-2' : 'RED-MBT-1' });
+      kind: spawnKind,
+      struct: CONF.red.struct, name: spawnKind === '99a' ? '99A型' : (spawnKind === '99' ? 'RED-MBT-2' : 'RED-MBT-1') });
     at.reload = 0;
   }
-  var egrid = lineSlots(-baseZ.tank, eR.tank + (eR['99'] || 0));   // 敌方坦克大本营(镜像)
-  var e59N = eR.tank, e99N = eR['99'] || 0;
-  for (i = 0; i < egrid.length && (e59N > 0 || e99N > 0); i++) {
-    var euse99 = e59N <= 0 || (e99N > 0 && i % 2 === 1);
-    if (euse99) e99N--; else e59N--;
+  var egrid = lineSlots(-baseZ.tank, eR.tank + (eR['99'] || 0) + (eR['99a'] || 0));   // 敌方坦克大本营(镜像)
+  var e59N = eR.tank, e99N = eR['99'] || 0, e99aN = eR['99a'] || 0;
+  for (i = 0; i < egrid.length && (e59N > 0 || e99N > 0 || e99aN > 0); i++) {
+    var eheavN = e99N + e99aN;
+    var euseHeavy = e59N <= 0 || (eheavN > 0 && i % 2 === 1);
+    var espawnKind = undefined;
+    if (euseHeavy) {
+      if (e99aN > 0 && (e99N <= 0 || i % 3 === 0)) { espawnKind = '99a'; e99aN--; }
+      else { espawnKind = '99'; e99N--; }
+    } else e59N--;
     x = clamp(egrid[i][0] + rand(-4, 4), -boundsX + 16, boundsX - 16);
     z = clamp(egrid[i][1] + rand(-2, 2), -boundsZ + 16, boundsZ - 16);
     var et = createTank({ isPlayer: false, team: 'blue', x: x, z: z, yaw: eYaw + rand(-0.12, 0.12),
-      kind: euse99 ? '99' : undefined,
-      struct: CONF.blue.struct, name: euse99 ? 'RED-MBT-2' : 'BLUE-MBT-1' });
+      kind: espawnKind,
+      struct: CONF.blue.struct, name: espawnKind === '99a' ? '99A型' : (espawnKind === '99' ? 'RED-MBT-2' : 'BLUE-MBT-1') });
     et.reload = 0;
   }
   // 特殊装甲编制:红方=RED-TD / 蓝方=BLUE-MBT-2
@@ -1376,7 +1389,7 @@ function updateLockHint() {
       if (on) thB.classList.toggle('lit', typeof thermalOn !== 'undefined' && !!thermalOn);   // 点亮态跟随热像开关记忆(任意视角)
     }
     if (lasB) {   // 激光压制键:仅RED-MBT-2座车显示(与 PC 右键长按 _rmbHeld 同源;炮镜门在 updateLws,不在此)
-      var lasOn = on && player && player.alive && player.kind === '99';
+      var lasOn = on && player && player.alive && isT99Vehicle(player);
       lasB.classList.toggle('hidden', !lasOn);
       if (!lasOn) {   // 藏键=照射必停:防换车/结算瞬间手指还按着导致 _rmbHeld 幽灵常真
         lasB.classList.remove('pressed', 'firing', 'cooling');
@@ -1584,7 +1597,7 @@ function updateLockHint() {
           if (nvB) nvB.classList.toggle('lit', typeof nvOn !== 'undefined' && !!nvOn);             // 互斥后夜视灯随动
         }
       } else if (cid === 'tlas') {                           // 激光压制键(仅RED-MBT-2):按住=照射,松手=停(PC 右键长按 _rmbHeld 同源;炮镜/距离/冷却门全在 updateLws)
-        if (player && player.alive && player.kind === '99') {
+        if (player && player.alive && isT99Vehicle(player)) {
           lasId = t.identifier; _rmbHeld = true; if (lasB) lasB.classList.add('pressed');
         }
       } else if (!isHeliMode() && joyId == null && inSense(t.clientX, t.clientY)) {
